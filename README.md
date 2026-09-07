@@ -147,12 +147,16 @@ When `provider != local` and a key is set, vision/find and UI reasoner/planner m
 export WINOS_BACKEND=fake
 pytest -q -m "not windows and not linux"
 
-# Real LinuxBackend hard tests
+# Real LinuxBackend hard tests — need a reachable X display
 export WINOS_BACKEND=linux
 pytest -q -m linux
 
 # Everything except Windows-only (must stay green on Linux CI)
 pytest -q -m "not windows"
+
+# Headless machine (CI, container, ssh without X)? Wrap with Xvfb, otherwise
+# screenshot capture fails with "Cannot connect to display":
+xvfb-run -a --server-args="-screen 0 1280x1024x24" pytest -q -m linux
 
 # Live Linux smoke (real sleep/jq PID via API)
 python scripts/live_linux_smoke.py

@@ -18,6 +18,14 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e ".[dev]"
+      - name: Install Xvfb (virtual X display)
+        # LinuxBackend screenshot/UI capture needs a reachable X display. The
+        # runner is headless, so without one mss reports
+        # "Cannot connect to display" and the linux suite fails. Xvfb gives the
+        # tests a real X server to exercise instead of skipping the capability.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
       - name: Forensic audit
         run: python scripts/forensic_audit.py
       - name: Validate installer packaging
@@ -27,16 +35,18 @@ jobs:
           WINOS_BACKEND: fake
           WINOS_REQUIRE_AUTH: "true"
         run: pytest -q --tb=short -m "not windows and not linux"
-      - name: Pytest LinuxBackend suite (real OS)
+      - name: Pytest LinuxBackend suite (real OS, under Xvfb)
         env:
           WINOS_BACKEND: linux
           WINOS_REQUIRE_AUTH: "true"
-        run: pytest -q --tb=short -m "linux"
-      - name: Pytest portable+linux exclude windows
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" pytest -q --tb=short -m "linux"
+      - name: Pytest portable+linux exclude windows (under Xvfb)
         env:
           WINOS_BACKEND: fake
           WINOS_REQUIRE_AUTH: "true"
-        run: pytest -q --tb=short -m "not windows"
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" pytest -q --tb=short -m "not windows"
       - name: Live Linux smoke
         env:
           WINOS_BACKEND: linux
