@@ -76,11 +76,37 @@ def find_accessible(
     return None
 
 
+def find_text_vision(text: str) -> dict[str, Any]:
+    """OCR/vision find — used when AT-SPI tree is empty/unsupported."""
+    from windows_os_api.apps.vision.ocr import find_text_on_screen
+
+    return find_text_on_screen(text)
+
+
+def click_text_vision(text: str, *, dry_run: bool = False) -> dict[str, Any]:
+    from windows_os_api.apps.vision.ocr import click_text
+
+    return click_text(text, dry_run=dry_run)
+
+
 def accessible_click(name: str, role: str | None = None) -> dict[str, Any]:
     backend = get_backend()
+    result: dict[str, Any] | None = None
     if hasattr(backend, "accessible_click"):
-        return backend.accessible_click(name, role=role)
-    return {"ok": False, "error": "accessible_click not supported by backend", "backend": backend.name}
+        result = backend.accessible_click(name, role=role)
+        if result.get("ok"):
+            return result
+    # Vision fallback for canvas / games / custom UI without AT-SPI
+    vision = click_text_vision(name, dry_run=False)
+    if vision.get("ok"):
+        return {"ok": True, "fallback": "vision", "vision": vision, "name": name, "atspi": result}
+    return {
+        "ok": False,
+        "error": "accessible_click not supported or element not found",
+        "backend": backend.name,
+        "atspi": result,
+        "vision": vision,
+    }
 
 
 def accessible_set_text(name: str, text: str, role: str | None = None) -> dict[str, Any]:

@@ -346,8 +346,16 @@ class FakeBackend:
             {"id": "mic", "name": "Fake Microphone", "type": "input", "default": True},
         ]
 
+    def audio_set_volume(self, percent: int) -> dict[str, Any]:
+        self._volume = max(0, min(100, int(percent)))
+        return {"ok": True, "volume": self._volume, "backend": "fake"}
+
+    def audio_set_mute(self, muted: bool) -> dict[str, Any]:
+        self._muted = bool(muted)
+        return {"ok": True, "muted": self._muted, "backend": "fake"}
+
     def audio_volume(self) -> dict[str, Any]:
-        return {"volume": self._volume, "muted": False}
+        return {"volume": self._volume, "muted": self._muted}
 
     # --- Devices ---
     def list_devices(self) -> list[dict[str, Any]]:
@@ -369,6 +377,13 @@ class FakeBackend:
             {"username": "alice", "domain": "FAKE", "admin": True},
             {"username": "bob", "domain": "FAKE", "admin": False},
         ]
+
+    def session_info(self) -> dict[str, Any]:
+        return {
+            "session": {"session_type": "fake", "wayland": False, "x11": False},
+            "sessions": self.list_sessions(),
+            "users": self.list_users(),
+        }
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return [

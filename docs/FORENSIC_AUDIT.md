@@ -487,7 +487,7 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
 
 ## Summary
-- DONE: 50
+- DONE: 50 (+ Linux gaps closed)
 - PARTIAL: 0
 - NOT_STARTED: 0
 
@@ -528,3 +528,27 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **GHA display limits:** Process / FS / registry / clipboard / SendInput structure tests **must pass** headless. UIA Notepad tree, mouse click, and screenshot are marked `requires_display` and skip when no interactive desktop / session 0.
 - **Still needs a real Windows desktop:** Full Notepad UIA children + type-into-Edit + non-empty screenshot PNG. Headless GHA may skip those while still validating non-UI APIs.
 
+
+
+## Linux capability gaps closed (vision / Wayland / audio / services / privilege)
+- **Status:** DONE
+- **Files:**
+  - `windows_os_api/apps/vision/ocr.py` (Pillow template OCR + optional tesseract; find/click)
+  - `windows_os_api/backends/linux_session.py` (X11/Wayland detect + command construction)
+  - `windows_os_api/backends/linux_audio.py` (pactl/wpctl list/volume/mute)
+  - `windows_os_api/backends/linux_services.py` (systemctl user+system; unit name sanitization)
+  - `windows_os_api/core/security/privilege.py` (ADMIN + WINOS_ALLOW_PRIVILEGED; pkexec/sudo -n; audit)
+  - `windows_os_api/backends/linux.py` (wired caps, input, windows, audio, services, sessions)
+  - `windows_os_api/apps/adapters/engine.py` (vision fallback when UI tree empty)
+  - `windows_os_api/apps/ui_inspector/service.py` (vision find/click fallback)
+  - `windows_os_api/api/rest/services.py` (`/v1/session`, `/v1/privilege/elevate`, audio set)
+  - `windows_os_api/api/rest/ui.py` (`/ui/vision/find`, `/ui/vision/click`)
+- **Tests:**
+  - `tests/linux/test_vision_ocr.py`
+  - `tests/linux/test_wayland_session.py`
+  - `tests/linux/test_audio_services.py`
+  - `tests/security/test_privilege_gated.py`
+  - `tests/unit/test_vision_and_session_unit.py`
+  - `tests/security/test_security_hard.py` (path traversal / shell still blocked)
+- **How to run:** `pytest -q -m "not windows"`
+- **Honest limits:** Wayland compositor variance; OCR accuracy without tesseract; privilege never silent root.

@@ -35,3 +35,33 @@ def test_openapi_available(client):
     r = client.get("/openapi.json")
     assert r.status_code == 200
     assert "/v1/health" in r.json()["paths"]
+
+
+@pytest.mark.security
+def test_audit_logs_terminal_denial(client, auth_headers, tmp_sandbox):
+    from windows_os_api.core.security.audit import get_audit_logger
+
+    r = client.post(
+        "/v1/terminal/execute",
+        headers=auth_headers,
+        json={"command": "echo hi && reboot", "policy": "ALLOW"},
+    )
+    assert r.json().get("ok") is False
+    # Route still audits the attempt
+    entries = get_audit_logger().read_all()
+    assert any(e.get("action") == "terminal.execute" for e in entries)
+
+
+@pytest.mark.security
+def test_viewer_cannot_control_services(client):
+    # no auth
+    assert client.post("/v1/services/foo", json={"action": "start"}).status_code == 401
+
+
+@pytest.mark.security
+def test_capabilities_expose_security_related_flags(client, auth_headers):
+    r = client.get("/v1/capabilities", headers=auth_headers)
+    assert r.status_code == 200
+    flags = r.json().get("feature_flags") or {}
+    # Fake backend should report honest privileged=false
+    assert flags.get("privileged") is False

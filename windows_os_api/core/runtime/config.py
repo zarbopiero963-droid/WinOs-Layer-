@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     backend: Literal["auto", "windows", "linux", "fake"] = "auto"
     # Only when true may factory fall back to FakeBackend if windows/linux unavailable
     allow_fake_fallback: bool = False
+    # Opt-in for pkexec/sudo elevation (still requires ADMIN permission)
+    allow_privileged: bool = False
 
     # Observability
     metrics_enabled: bool = True

@@ -85,6 +85,17 @@ def list_adapters() -> list[dict[str, Any]]:
         for a in _adapters.values()
     ]
 
+def _ui_tree_empty(tree: dict[str, Any]) -> bool:
+    if not tree:
+        return True
+    if tree.get("supported") is False:
+        return True
+    kids = tree.get("children") or []
+    if not kids and tree.get("control_type") in (None, "", "Unsupported"):
+        return True
+    return False
+
+
 def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     adapter = _adapters.get(app_id)
     if not adapter:
@@ -98,7 +109,37 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     tree = backend.get_ui_tree(adapter.hwnd)
     node = find_by_automation_id(tree, action.automation_id)
     if not node:
-        return {"ok": False, "error": "UI element not found", "automation_id": action.automation_id}
+        vision_result = None
+        if _ui_tree_empty(tree) or getattr(backend, "name", "") == "linux":
+            needle = (
+                params.get("text")
+                or (action.description or "").replace("Click button ", "")
+                or action.name.replace("click_", "").replace("_", " ")
+            )
+            try:
+                from windows_os_api.apps.vision.ocr import click_text
+
+                vision_result = click_text(
+                    str(needle),
+                    dry_run=bool(params.get("dry_run", True)),
+                )
+                if vision_result.get("ok"):
+                    return {
+                        "ok": True,
+                        "action": action_name,
+                        "fallback": "vision",
+                        "vision": vision_result,
+                        "automation_id": action.automation_id,
+                    }
+            except Exception as e:  # noqa: BLE001
+                vision_result = {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": "UI element not found",
+            "automation_id": action.automation_id,
+            "vision": vision_result,
+            "fallback_attempted": "vision" if vision_result is not None else None,
+        }
     if action.control_type == "Edit":
         value = params.get("value", "")
         node["value"] = value

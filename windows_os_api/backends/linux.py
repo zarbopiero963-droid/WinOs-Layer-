@@ -15,6 +15,20 @@ import time
 from pathlib import Path
 from typing import Any
 
+from windows_os_api.backends import linux_audio as _laudio
+from windows_os_api.backends import linux_services as _lsvc
+from windows_os_api.backends.linux_session import (
+    detect_session,
+    probe_wayland_capabilities,
+    build_wayland_type_cmd,
+    build_wayland_click_cmd,
+    build_wayland_key_cmd,
+    build_wayland_list_windows_cmd,
+    wayland_input_tool,
+    wayland_window_tool,
+)
+from windows_os_api.apps.vision.ocr import tesseract_available
+
 
 class LinuxBackendUnavailable(RuntimeError):
     pass
@@ -106,15 +120,20 @@ class LinuxBackend:
             has_mss = True
         except Exception:  # noqa: BLE001
             has_mss = False
-        has_wm = bool(shutil.which("wmctrl") or shutil.which("xdotool"))
+        session = probe_wayland_capabilities()
+        has_wm_x11 = bool(shutil.which("wmctrl") or shutil.which("xdotool"))
+        has_wm = bool(session.get("windows_ui") or has_wm_x11)
         has_clip = bool(
             shutil.which("xclip")
             or shutil.which("xsel")
             or shutil.which("wl-copy")
             or shutil.which("wl-paste")
         )
-        has_pactl = bool(shutil.which("pactl"))
+        audio_tools = _laudio.audio_backend_available()
+        has_audio = bool(audio_tools.get("pactl") or audio_tools.get("wpctl"))
         has_systemctl = bool(shutil.which("systemctl"))
+        has_ocr = bool(tesseract_available() or True)  # template fallback always usable with Pillow
+        # ocr_tesseract distinguishes accuracy class
         return {
             "processes": self._psutil is not None,
             "filesystem": True,
@@ -124,10 +143,16 @@ class LinuxBackend:
             "atspi": has_atspi,
             "clipboard": has_clip,
             "screenshot": has_mss,
-            "audio": has_pactl,
+            "audio": has_audio,
             "services": has_systemctl,
             "registry_compat": True,
             "windows_uia": False,  # never claim Windows UIA on Linux
+            "ocr": has_ocr,
+            "ocr_tesseract": tesseract_available(),
+            "wayland": bool(session.get("wayland")),
+            "x11": bool(session.get("x11")),
+            "privileged": False,  # elevation gated; never claim open privilege
+            "vision": True,
         }
 
     def capability_flags(self) -> dict[str, bool]:
@@ -176,11 +201,14 @@ class LinuxBackend:
         return {"uptime_seconds": time.time() - self._start, "boot_time": self._start}
 
     def power_action(self, action: str) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "error": "power actions require interactive elevation / polkit",
-            "action": action,
-        }
+        """Power ops are hardware/polkit protected — structured denial by default."""
+        from windows_os_api.core.security.privilege import deny_structured
+
+        return deny_structured(
+            "power actions require interactive elevation / polkit and ADMIN + WINOS_ALLOW_PRIVILEGED",
+            code="hardware_protected",
+            detail={"action": action},
+        )
 
     # ------------------------------------------------------------------
     # Processes (REAL)
@@ -401,6 +429,58 @@ class LinuxBackend:
                 return out
             except Exception:  # noqa: BLE001
                 return []
+        # Wayland best-effort window list
+        session = detect_session()
+        if session.get("wayland"):
+            tool = wayland_window_tool()
+            cmd = build_wayland_list_windows_cmd(tool)
+            if cmd and tool not in (None, "wayland-info"):
+                try:
+                    r = subprocess.run(  # noqa: S603
+                        cmd, capture_output=True, text=True, timeout=5
+                    )
+                    out: list[dict[str, Any]] = []
+                    if tool == "hyprctl":
+                        try:
+                            data = json.loads(r.stdout or "[]")
+                            for i, c in enumerate(data if isinstance(data, list) else []):
+                                addr = c.get("address")
+                                if isinstance(addr, str) and addr.startswith("0x"):
+                                    try:
+                                        hwnd = int(addr, 16)
+                                    except ValueError:
+                                        hwnd = i + 1
+                                else:
+                                    hwnd = i + 1
+                                out.append(
+                                    {
+                                        "hwnd": hwnd,
+                                        "title": c.get("title") or c.get("class") or "",
+                                        "visible": True,
+                                        "compositor": "hyprland",
+                                    }
+                                )
+                        except json.JSONDecodeError:
+                            pass
+                    else:
+                        for i, line in enumerate((r.stdout or "").splitlines()):
+                            line = line.strip()
+                            if not line:
+                                continue
+                            out.append(
+                                {
+                                    "hwnd": i + 1,
+                                    "title": line[:200],
+                                    "visible": True,
+                                    "compositor": tool,
+                                }
+                            )
+                    if out:
+                        return out
+                except Exception:  # noqa: BLE001
+                    pass
+            # Honest empty with note when compositor unknown / tools missing
+            return []
         return []
 
     def get_window(self, hwnd: int) -> dict[str, Any] | None:
@@ -795,70 +875,161 @@ class LinuxBackend:
         }
 
     # ------------------------------------------------------------------
-    # Input (xdotool optional)
+    # Input (X11 xdotool / Wayland ydotool|wtype|dotool)
     # ------------------------------------------------------------------
     def mouse_move(self, x: int, y: int) -> dict[str, Any]:
-        if not shutil.which("xdotool"):
-            return {"ok": False, "error": "xdotool not installed"}
-        try:
-            subprocess.run(  # noqa: S603
-                ["xdotool", "mousemove", str(x), str(y)],
-                capture_output=True,
-                timeout=5,
-                check=False,
-                env=_display_env(),
-            )
-            return {"ok": True, "x": x, "y": y}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
+        session = detect_session()
+        if session.get("x11") and shutil.which("xdotool"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "mousemove", str(x), str(y)],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                    env=_display_env(),
+                )
+                return {"ok": True, "x": x, "y": y, "backend": "xdotool"}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if session.get("wayland"):
+            tool = wayland_input_tool()
+            cmd = build_wayland_click_cmd(x, y, tool=tool)
+            # ydotool mousemove+click bundled; for move-only try ydotool mousemove
+            if tool == "ydotool" and shutil.which("ydotool"):
+                try:
+                    subprocess.run(  # noqa: S603
+                        ["ydotool", "mousemove", "--absolute", str(x), str(y)],
+                        capture_output=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    return {"ok": True, "x": x, "y": y, "backend": "ydotool"}
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "error": str(e), "backend": "ydotool"}
+            return {
+                "ok": False,
+                "error": "Wayland mouse move requires ydotool (wtype cannot move pointer)",
+                "wayland": True,
+                "tool": tool,
+            }
+        return {"ok": False, "error": "xdotool not installed and not on Wayland with ydotool"}
 
     def mouse_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
-        self.mouse_move(x, y)
-        if not shutil.which("xdotool"):
-            return {"ok": False, "error": "xdotool not installed", "x": x, "y": y, "button": button}
-        btn = {"left": "1", "middle": "2", "right": "3"}.get(button, "1")
-        try:
-            subprocess.run(  # noqa: S603
-                ["xdotool", "click", btn],
-                capture_output=True,
-                timeout=5,
-                check=False,
-                env=_display_env(),
-            )
-            return {"ok": True, "x": x, "y": y, "button": button}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
+        session = detect_session()
+        if session.get("x11") and shutil.which("xdotool"):
+            self.mouse_move(x, y)
+            btn = {"left": "1", "middle": "2", "right": "3"}.get(button, "1")
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "click", btn],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                    env=_display_env(),
+                )
+                return {"ok": True, "x": x, "y": y, "button": button, "backend": "xdotool"}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if session.get("wayland"):
+            tool = wayland_input_tool()
+            cmd = build_wayland_click_cmd(x, y, button=button, tool=tool)
+            if cmd and tool == "ydotool":
+                try:
+                    # split: move then click for reliability
+                    subprocess.run(  # noqa: S603
+                        ["ydotool", "mousemove", "--absolute", str(x), str(y)],
+                        capture_output=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    btn = {"left": "0xC0", "right": "0xC1", "middle": "0xC2"}.get(button, "0xC0")
+                    subprocess.run(  # noqa: S603
+                        ["ydotool", "click", btn],
+                        capture_output=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    return {"ok": True, "x": x, "y": y, "button": button, "backend": "ydotool"}
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "error": str(e), "backend": "ydotool"}
+            return {
+                "ok": False,
+                "error": "Wayland click requires ydotool; portal input not implemented",
+                "wayland": True,
+                "tool": tool,
+                "x": x,
+                "y": y,
+                "button": button,
+            }
+        return {"ok": False, "error": "xdotool not installed", "x": x, "y": y, "button": button}
 
     def key_press(self, key: str, modifiers: list[str] | None = None) -> dict[str, Any]:
-        if not shutil.which("xdotool"):
-            return {"ok": False, "error": "xdotool not installed", "key": key}
-        seq = "+".join([*(modifiers or []), key])
-        try:
-            subprocess.run(  # noqa: S603
-                ["xdotool", "key", seq],
-                capture_output=True,
-                timeout=5,
-                check=False,
-                env=_display_env(),
-            )
-            return {"ok": True, "key": key, "modifiers": modifiers or []}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
+        session = detect_session()
+        if session.get("x11") and shutil.which("xdotool"):
+            seq = "+".join([*(modifiers or []), key])
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "key", seq],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                    env=_display_env(),
+                )
+                return {"ok": True, "key": key, "modifiers": modifiers or [], "backend": "xdotool"}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if session.get("wayland"):
+            tool = wayland_input_tool()
+            cmd = build_wayland_key_cmd(key, modifiers, tool=tool)
+            if cmd:
+                try:
+                    subprocess.run(cmd, capture_output=True, timeout=5, check=False)  # noqa: S603
+                    return {
+                        "ok": True,
+                        "key": key,
+                        "modifiers": modifiers or [],
+                        "backend": tool,
+                    }
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "error": str(e), "backend": tool}
+            return {
+                "ok": False,
+                "error": "Wayland key requires ydotool/wtype",
+                "wayland": True,
+                "key": key,
+            }
+        return {"ok": False, "error": "xdotool not installed", "key": key}
 
     def type_text(self, text: str) -> dict[str, Any]:
-        if not shutil.which("xdotool"):
-            return {"ok": False, "error": "xdotool not installed"}
-        try:
-            subprocess.run(  # noqa: S603
-                ["xdotool", "type", "--clearmodifiers", "--", text],
-                capture_output=True,
-                timeout=30,
-                check=False,
-                env=_display_env(),
-            )
-            return {"ok": True, "length": len(text)}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
+        session = detect_session()
+        if session.get("x11") and shutil.which("xdotool"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "type", "--clearmodifiers", "--", text],
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                    env=_display_env(),
+                )
+                return {"ok": True, "length": len(text), "backend": "xdotool"}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if session.get("wayland"):
+            tool = wayland_input_tool()
+            cmd = build_wayland_type_cmd(text, tool=tool)
+            if cmd and tool in ("ydotool", "wtype"):
+                try:
+                    subprocess.run(cmd, capture_output=True, timeout=30, check=False)  # noqa: S603
+                    return {"ok": True, "length": len(text), "backend": tool}
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "error": str(e), "backend": tool}
+            return {
+                "ok": False,
+                "error": "Wayland type requires ydotool or wtype",
+                "wayland": True,
+                "tool": tool,
+            }
+        return {"ok": False, "error": "xdotool not installed"}
 
     # ------------------------------------------------------------------
     # Clipboard
@@ -1225,123 +1396,28 @@ class LinuxBackend:
         return out
 
     # ------------------------------------------------------------------
-    # Services (systemctl)
+    # Services (systemctl --user and system)
     # ------------------------------------------------------------------
     def list_services(self) -> list[dict[str, Any]]:
-        if not shutil.which("systemctl"):
-            return [
-                {
-                    "name": "systemctl",
-                    "status": "unavailable",
-                    "note": "systemctl not found",
-                }
-            ]
-        out: list[dict[str, Any]] = []
-        for args in (
-            ["systemctl", "--user", "list-units", "--type=service", "--no-pager", "--plain"],
-            ["systemctl", "list-units", "--type=service", "--no-pager", "--plain"],
-        ):
-            try:
-                r = subprocess.run(  # noqa: S603
-                    args, capture_output=True, text=True, timeout=10
-                )
-                if r.returncode != 0:
-                    continue
-                for line in r.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) < 4 or not parts[0].endswith(".service"):
-                        continue
-                    out.append(
-                        {
-                            "name": parts[0].removesuffix(".service"),
-                            "status": parts[2] if len(parts) > 2 else "unknown",
-                            "load": parts[1] if len(parts) > 1 else "",
-                        }
-                    )
-                if out:
-                    break
-            except Exception:  # noqa: BLE001
-                continue
-        return out[:100] if out else [{"name": "none", "status": "empty", "note": "no units listed"}]
+        return _lsvc.list_services()
 
-    def control_service(self, name: str, action: str) -> dict[str, Any]:
-        if action not in ("start", "stop", "restart", "status"):
-            return {"ok": False, "error": f"unknown action: {action}", "name": name}
-        if not shutil.which("systemctl"):
-            return {"ok": False, "error": "systemctl not installed", "name": name, "action": action}
-        unit = name if name.endswith(".service") else f"{name}.service"
-        try:
-            r = subprocess.run(  # noqa: S603
-                ["systemctl", "--user", action, unit],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            return {
-                "ok": r.returncode == 0,
-                "name": name,
-                "action": action,
-                "stdout": r.stdout[:2000],
-                "stderr": r.stderr[:1000],
-                "exit_code": r.returncode,
-            }
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e), "name": name, "action": action}
+    def control_service(self, name: str, action: str, scope: str = "user") -> dict[str, Any]:
+        return _lsvc.control_service(name, action, scope=scope)
 
     # ------------------------------------------------------------------
-    # Audio (pactl)
+    # Audio (pactl / wpctl)
     # ------------------------------------------------------------------
     def audio_devices(self) -> list[dict[str, Any]]:
-        if not shutil.which("pactl"):
-            return []
-        out: list[dict[str, Any]] = []
-        try:
-            r = subprocess.run(  # noqa: S603
-                ["pactl", "list", "short", "sinks"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 2:
-                    out.append(
-                        {
-                            "id": parts[0],
-                            "name": parts[1],
-                            "type": "output",
-                            "default": False,
-                        }
-                    )
-        except Exception:  # noqa: BLE001
-            pass
-        return out
+        return _laudio.list_devices()
 
     def audio_volume(self) -> dict[str, Any]:
-        if not shutil.which("pactl"):
-            return {"volume": None, "muted": None, "error": "pactl not installed"}
-        try:
-            r = subprocess.run(  # noqa: S603
-                ["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            mute = subprocess.run(  # noqa: S603
-                ["pactl", "get-sink-mute", "@DEFAULT_SINK@"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            vol = None
-            for tok in r.stdout.replace("%", " % ").split():
-                if tok.isdigit():
-                    vol = int(tok)
-                    break
-            muted = "yes" in mute.stdout.lower()
-            return {"volume": vol, "muted": muted}
-        except Exception as e:  # noqa: BLE001
-            return {"volume": None, "muted": None, "error": str(e)}
+        return _laudio.get_volume()
+
+    def audio_set_volume(self, percent: int) -> dict[str, Any]:
+        return _laudio.set_volume(percent)
+
+    def audio_set_mute(self, muted: bool) -> dict[str, Any]:
+        return _laudio.set_mute(muted)
 
     # ------------------------------------------------------------------
     # Devices / printers / users
@@ -1398,6 +1474,21 @@ class LinuxBackend:
         ]
 
     def list_sessions(self) -> list[dict[str, Any]]:
+        if shutil.which("loginctl"):
+            try:
+                from windows_os_api.core.security.privilege import parse_loginctl_sessions
+
+                r = subprocess.run(  # noqa: S603
+                    ["loginctl", "list-sessions", "--no-legend"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                parsed = parse_loginctl_sessions(r.stdout or "")
+                if parsed:
+                    return parsed
+            except Exception:  # noqa: BLE001
+                pass
         users = self.list_users()
         return [
             {
@@ -1405,9 +1496,25 @@ class LinuxBackend:
                 "user": u.get("username", ""),
                 "state": "Active",
                 "client": u.get("terminal") or "local",
+                "source": "psutil",
             }
             for i, u in enumerate(users)
         ]
+
+    def session_info(self) -> dict[str, Any]:
+        """Current display session + seats/sessions snapshot."""
+        session = detect_session()
+        return {
+            "session": session,
+            "sessions": self.list_sessions(),
+            "users": self.list_users(),
+            "capability_flags": self.capability_flags(),
+        }
+
+    def elevate(self, argv: list[str], *, auth_has_admin: bool = False, subject: str = "system") -> dict[str, Any]:
+        from windows_os_api.core.security.privilege import attempt_elevation
+
+        return attempt_elevation(argv, auth_has_admin=auth_has_admin, subject=subject)
 
     # ------------------------------------------------------------------
     # Registry compat → JSON store

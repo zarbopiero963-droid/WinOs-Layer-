@@ -42,6 +42,12 @@ def capabilities() -> dict[str, Any]:
             "registry_compat": True,
             "windows_uia": False,
             "fake_crm": True,
+            "ocr": True,
+            "ocr_tesseract": False,
+            "wayland": False,
+            "x11": False,
+            "privileged": False,
+            "vision": True,
         }
     elif getattr(b, "name", "") == "windows":
         flags = {
@@ -58,6 +64,12 @@ def capabilities() -> dict[str, Any]:
             "registry_compat": False,
             "windows_uia": True,  # real UIA via uiautomation/comtypes/pywinauto
             "fake_crm": False,
+            "ocr": False,
+            "ocr_tesseract": False,
+            "wayland": False,
+            "x11": False,
+            "privileged": False,
+            "vision": False,
         }
     else:
         flags = {"system": True}
@@ -112,7 +124,10 @@ def capabilities() -> dict[str, Any]:
             "windows_uia_on_linux": False,
             "adapter_ui": (
                 "Use WINOS_BACKEND=fake for Contoso CRM UI-tree demos; "
-                "LinuxBackend adapters may have empty actions until AT-SPI is available."
+                "LinuxBackend adapters fall back to vision/OCR when AT-SPI tree is empty."
             ),
+            "wayland": "Compositor-specific tools (ydotool/wtype, wlrctl/swaymsg/hyprctl); portals limited",
+            "ocr": "tesseract preferred; Pillow template fallback always available",
+            "privileged": "Requires ADMIN + WINOS_ALLOW_PRIVILEGED=true; never silent root",
         },
     }

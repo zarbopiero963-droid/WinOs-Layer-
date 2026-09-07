@@ -71,6 +71,44 @@ Open:
 
 `POST /v1/processes` on LinuxBackend **actually starts** binaries (real PIDs via psutil).
 
+
+## Linux optional packages
+
+```bash
+# Screenshots + vision template OCR (Pillow/mss already in deps)
+# Accurate OCR (optional):
+sudo apt install tesseract-ocr
+pip install pytesseract
+
+# Audio (PulseAudio or PipeWire):
+sudo apt install pulseaudio-utils     # provides pactl
+# or: sudo apt install pipewire-utils  # provides wpctl
+
+# Wayland input / window tools (compositor-dependent):
+#   ydotool or wtype or dotool   — typing / clicks
+#   wlrctl / swaymsg / hyprctl   — window list (wlroots/Sway/Hyprland)
+
+# AT-SPI UI tree:
+sudo apt install python3-pyatspi at-spi2-core
+
+# X11 (still supported; auto-selected when XDG_SESSION_TYPE=x11):
+sudo apt install wmctrl xdotool xclip
+```
+
+### Capability honesty (Linux)
+
+`GET /v1/capabilities` `feature_flags` include: `ocr`, `ocr_tesseract`, `wayland`, `x11`,
+`audio`, `services`, `vision`, `privileged` (always false — elevation is gated).
+
+| Flag | Meaning |
+|------|---------|
+| `ocr` / `vision` | Pillow template matcher always; tesseract when installed |
+| `wayland` | Session is Wayland; window/input tools may still be missing |
+| `privileged` | Never open — needs `ADMIN` + `WINOS_ALLOW_PRIVILEGED=true` |
+| `windows_uia` | Always false on Linux |
+
+Vision OCR accuracy is best-effort without tesseract. Wayland window control varies by compositor.
+
 ## Tests
 
 ```bash
@@ -166,6 +204,6 @@ git push -u origin main
 
 ## Note
 
-- **LinuxBackend**: real processes, sandbox FS, psutil network/users; wmctrl/xdotool windows; xclip clipboard; mss screenshots; pyatspi AT-SPI tree + accessible click/set-text; pactl/systemctl when present — graceful degrade when tools absent. Windows UIA is N/A on Linux by design.
+- **LinuxBackend**: real processes, sandbox FS, psutil network/users; X11 (wmctrl/xdotool) or Wayland (ydotool/wtype, wlrctl/swaymsg/hyprctl); clipboard; mss screenshots; pyatspi AT-SPI + **vision/OCR fallback** for canvas/games; pactl/wpctl audio; systemctl user/system services; gated privilege (`ADMIN` + `WINOS_ALLOW_PRIVILEGED`). Windows UIA is N/A on Linux by design.
 - **FakeBackend**: Contoso CRM UI tree for adapter unit/E2E — `WINOS_BACKEND=fake` only.
 - **WindowsBackend**: raises if instantiated off Win32; **real** UIA (`uiautomation` → `comtypes` → `pywinauto`), **SendInput** mouse/keyboard, **mss/Pillow/BitBlt** screenshots, EnumDisplayMonitors displays. Not a stub.

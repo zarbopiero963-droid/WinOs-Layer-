@@ -132,3 +132,22 @@ def displays(auth: AuthContext = Depends(require_permission(Permission.UI_READ))
 @router.get("/displays/screenshot")
 def screenshot(display_id: int | None = None, auth: AuthContext = Depends(require_permission(Permission.UI_READ))):
     return disp.screenshot(display_id)
+
+
+class VisionFind(BaseModel):
+    text: str
+
+
+class VisionClick(BaseModel):
+    text: str
+    dry_run: bool = True
+
+
+@router.post("/ui/vision/find")
+def vision_find(body: VisionFind, auth: AuthContext = Depends(require_permission(Permission.UI_READ))):
+    return ui.find_text_vision(body.text)
+
+
+@router.post("/ui/vision/click")
+def vision_click(body: VisionClick, auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return ui.click_text_vision(body.text, dry_run=body.dry_run)

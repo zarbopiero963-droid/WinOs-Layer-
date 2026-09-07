@@ -18,6 +18,16 @@ router = APIRouter(tags=["os-extended"])
 
 class ServiceAction(BaseModel):
     action: str
+    scope: str = "user"
+
+class VolumeBody(BaseModel):
+    volume: int
+
+class MuteBody(BaseModel):
+    muted: bool
+
+class ElevateBody(BaseModel):
+    argv: list[str]
 
 class RegistryWrite(BaseModel):
     path: str
@@ -34,7 +44,7 @@ def list_services(auth: AuthContext = Depends(require_permission(Permission.SYST
 
 @router.post("/services/{name}")
 def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(require_permission(Permission.SERVICE_CONTROL))):
-    result = svcs.control(name, body.action)
+    result = svcs.control(name, body.action, scope=body.scope)
     audit("service.control", auth, resource=name, detail=result)
     return result
 
@@ -45,6 +55,18 @@ def audio_devices(auth: AuthContext = Depends(require_permission(Permission.SYST
 @router.get("/audio/volume")
 def audio_volume(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
     return audio.volume()
+
+@router.put("/audio/volume")
+def audio_set_volume(body: VolumeBody, auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    result = audio.set_volume(body.volume)
+    audit("audio.volume", auth, resource="default", detail=result)
+    return result
+
+@router.put("/audio/mute")
+def audio_set_mute(body: MuteBody, auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    result = audio.set_mute(body.muted)
+    audit("audio.mute", auth, resource="default", detail=result)
+    return result
 
 @router.get("/devices")
 def list_devices(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
@@ -61,6 +83,31 @@ def list_users(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_
 @router.get("/sessions")
 def list_sessions(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
     return {"sessions": users.list_sessions()}
+
+@router.get("/session")
+def get_session(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
+    return users.session_info()
+
+@router.post("/privilege/elevate")
+def privilege_elevate(body: ElevateBody, auth: AuthContext = Depends(require_permission(Permission.ADMIN))):
+    """Gated elevation: requires ADMIN role + WINOS_ALLOW_PRIVILEGED=true."""
+    from windows_os_api.core.security.privilege import attempt_elevation
+    from windows_os_api.core.permissions.model import Permission as P
+
+    result = attempt_elevation(
+        list(body.argv),
+        auth_has_admin=auth.check(P.ADMIN),
+        subject=auth.subject,
+        action="api.elevate",
+    )
+    audit(
+        "privilege.elevate",
+        auth,
+        resource=(body.argv[0] if body.argv else ""),
+        detail={"ok": result.get("ok"), "code": result.get("code")},
+        outcome="success" if result.get("ok") else "denied",
+    )
+    return result
 
 @router.get("/registry")
 def registry_read(path: str, name: str | None = None, auth: AuthContext = Depends(require_permission(Permission.REGISTRY_READ))):
