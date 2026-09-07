@@ -11,6 +11,7 @@ on:
       - "installer/**"
       - "scripts/build_installer.py"
       - "scripts/artifact_smoke.py"
+      - "scripts/installer_smoke.py"
       - "windows_os_api/cli/**"
       - "pyproject.toml"
   workflow_dispatch:
