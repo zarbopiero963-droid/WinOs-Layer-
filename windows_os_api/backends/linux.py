@@ -1,0 +1,1106 @@
+"""LinuxBackend — real Linux OS operations (parity surface with WindowsBackend).
+
+NOT a Windows emulator. Process/FS/system/network use the live Linux host.
+Window listing / AT-SPI / clipboard / audio / screenshots degrade gracefully
+when optional tools/libraries are missing.
+"""
+from __future__ import annotations
+
+import json
+import os
+import platform
+import shutil
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+
+class LinuxBackendUnavailable(RuntimeError):
+    pass
+
+
+def _require_linux() -> None:
+    import sys
+
+    if sys.platform == "win32":
+        raise LinuxBackendUnavailable("LinuxBackend requires a non-Windows platform")
+
+
+class LinuxBackend:
+    """Real Linux backend using psutil, subprocess, pathlib, and optional tools."""
+
+    name = "linux"
+
+    def __init__(
+        self,
+        sandbox_root: str = "sandbox",
+        allow_paths: list[str] | None = None,
+        registry_path: str | None = None,
+    ) -> None:
+        _require_linux()
+        self.sandbox = Path(sandbox_root).resolve()
+        self.sandbox.mkdir(parents=True, exist_ok=True)
+        self.allow_paths = [Path(p).resolve() for p in (allow_paths or [])]
+        self._start = time.time()
+        self._children: dict[int, subprocess.Popen] = {}
+        self._psutil = None
+        try:
+            import psutil as _psutil
+
+            self._psutil = _psutil
+        except ImportError:
+            pass
+
+        if registry_path:
+            self._registry_file = Path(registry_path)
+        else:
+            self._registry_file = Path.home() / ".config" / "winos-api" / "registry.json"
+        self._registry_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self._registry_file.exists():
+            self._registry_file.write_text("{}", encoding="utf-8")
+
+        self._caps = self._probe_capabilities()
+
+    # ------------------------------------------------------------------
+    # Capabilities
+    # ------------------------------------------------------------------
+    def _probe_capabilities(self) -> dict[str, bool]:
+        has_atspi = False
+        try:
+            import pyatspi  # type: ignore  # noqa: F401
+
+            has_atspi = True
+        except Exception:  # noqa: BLE001
+            has_atspi = False
+        has_mss = False
+        try:
+            import mss  # type: ignore  # noqa: F401
+
+            has_mss = True
+        except Exception:  # noqa: BLE001
+            has_mss = False
+        has_wm = bool(shutil.which("wmctrl") or shutil.which("xdotool"))
+        has_clip = bool(
+            shutil.which("xclip")
+            or shutil.which("xsel")
+            or shutil.which("wl-copy")
+            or shutil.which("wl-paste")
+        )
+        has_pactl = bool(shutil.which("pactl"))
+        has_systemctl = bool(shutil.which("systemctl"))
+        return {
+            "processes": self._psutil is not None,
+            "filesystem": True,
+            "network": self._psutil is not None,
+            "system": True,
+            "windows_ui": has_wm,
+            "atspi": has_atspi,
+            "clipboard": has_clip,
+            "screenshot": has_mss,
+            "audio": has_pactl,
+            "services": has_systemctl,
+            "registry_compat": True,
+            "windows_uia": False,  # never claim Windows UIA on Linux
+        }
+
+    def capability_flags(self) -> dict[str, bool]:
+        return dict(self._caps)
+
+    # ------------------------------------------------------------------
+    # System
+    # ------------------------------------------------------------------
+    def get_system_info(self) -> dict[str, Any]:
+        uname = platform.uname()
+        return {
+            "hostname": platform.node(),
+            "os": "Linux",
+            "os_version": f"{uname.release} ({uname.version})".strip(),
+            "kernel": uname.release,
+            "architecture": platform.machine(),
+            "backend": self.name,
+            "python": platform.python_version(),
+            "user": os.environ.get("USER") or os.environ.get("LOGNAME") or "",
+            "platform_real": platform.system(),
+        }
+
+    def get_resources(self) -> dict[str, Any]:
+        if not self._psutil:
+            return {"cpu_percent": 0, "memory": {}, "disk": {}, "note": "psutil unavailable"}
+        vm = self._psutil.virtual_memory()
+        disk = self._psutil.disk_usage(str(self.sandbox))
+        return {
+            "cpu_percent": self._psutil.cpu_percent(interval=0.05),
+            "memory": {
+                "total_mb": round(vm.total / 1e6, 1),
+                "used_mb": round(vm.used / 1e6, 1),
+                "percent": vm.percent,
+            },
+            "disk": {
+                "total_gb": round(disk.total / 1e9, 1),
+                "used_gb": round(disk.used / 1e9, 1),
+                "percent": disk.percent,
+            },
+        }
+
+    def get_uptime(self) -> dict[str, Any]:
+        if self._psutil:
+            boot = self._psutil.boot_time()
+            return {"uptime_seconds": time.time() - boot, "boot_time": boot}
+        return {"uptime_seconds": time.time() - self._start, "boot_time": self._start}
+
+    def power_action(self, action: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": "power actions require interactive elevation / polkit",
+            "action": action,
+        }
+
+    # ------------------------------------------------------------------
+    # Processes (REAL)
+    # ------------------------------------------------------------------
+    def list_processes(self) -> list[dict[str, Any]]:
+        if not self._psutil:
+            return []
+        out: list[dict[str, Any]] = []
+        for p in self._psutil.process_iter(
+            ["pid", "name", "status", "cpu_percent", "memory_info"]
+        ):
+            try:
+                info = p.info
+                mem = info.get("memory_info")
+                out.append(
+                    {
+                        "pid": info["pid"],
+                        "name": info.get("name") or "",
+                        "status": info.get("status") or "",
+                        "cpu_percent": info.get("cpu_percent") or 0,
+                        "memory_mb": round((mem.rss / 1e6) if mem else 0, 2),
+                    }
+                )
+            except (self._psutil.NoSuchProcess, self._psutil.AccessDenied):
+                continue
+        return out
+
+    def get_process(self, pid: int) -> dict[str, Any] | None:
+        if not self._psutil:
+            return None
+        try:
+            p = self._psutil.Process(pid)
+            return {
+                "pid": pid,
+                "name": p.name(),
+                "status": p.status(),
+                "cpu_percent": p.cpu_percent(interval=0.0),
+                "memory_mb": round(p.memory_info().rss / 1e6, 2),
+                "running": p.is_running(),
+            }
+        except self._psutil.Error:
+            return None
+
+    def start_process(self, command: str, args: list[str] | None = None) -> dict[str, Any]:
+        """Actually spawn a real OS process via subprocess.Popen."""
+        cmd = [command, *(args or [])]
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError as e:
+            return {"ok": False, "error": f"executable not found: {command}", "detail": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": str(e), "command": command}
+        self._children[proc.pid] = proc
+        name = Path(command).name or command
+        running = True
+        if self._psutil:
+            try:
+                running = self._psutil.Process(proc.pid).is_running()
+            except self._psutil.Error:
+                running = proc.poll() is None
+        return {
+            "ok": True,
+            "pid": proc.pid,
+            "name": name,
+            "status": "running" if running else "exited",
+            "command": command,
+            "args": args or [],
+            "real": True,
+        }
+
+    def terminate_process(self, pid: int) -> dict[str, Any]:
+        child = self._children.pop(pid, None)
+        if self._psutil:
+            try:
+                p = self._psutil.Process(pid)
+                p.terminate()
+                try:
+                    p.wait(timeout=3)
+                except self._psutil.TimeoutExpired:
+                    p.kill()
+                return {"ok": True, "pid": pid, "status": "terminated", "real": True}
+            except self._psutil.NoSuchProcess:
+                if child is not None:
+                    child.terminate()
+                return {"ok": True, "pid": pid, "status": "already_gone"}
+            except self._psutil.Error as e:
+                return {"ok": False, "error": str(e), "pid": pid}
+        if child is not None:
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                child.kill()
+            return {"ok": True, "pid": pid, "status": "terminated", "real": True}
+        try:
+            os.kill(pid, 15)
+            return {"ok": True, "pid": pid, "status": "signal_term"}
+        except ProcessLookupError:
+            return {"ok": False, "error": "not found", "pid": pid}
+        except PermissionError as e:
+            return {"ok": False, "error": str(e), "pid": pid}
+
+    # ------------------------------------------------------------------
+    # Apps
+    # ------------------------------------------------------------------
+    def discover_apps(self) -> list[dict[str, Any]]:
+        apps: list[dict[str, Any]] = []
+        desktop_dirs = [
+            Path("/usr/share/applications"),
+            Path.home() / ".local/share/applications",
+            Path("/usr/local/share/applications"),
+        ]
+        seen: set[str] = set()
+        for d in desktop_dirs:
+            if not d.is_dir():
+                continue
+            for desk in sorted(d.glob("*.desktop")):
+                if len(apps) >= 200:
+                    break
+                try:
+                    text = desk.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                name = desk.stem
+                exec_line = ""
+                for line in text.splitlines():
+                    if line.startswith("Name=") and name == desk.stem:
+                        name = line.split("=", 1)[1].strip()
+                    if line.startswith("Exec=") and not exec_line:
+                        exec_line = line.split("=", 1)[1].strip().split()[0]
+                app_id = desk.stem.lower().replace(" ", "-")
+                if app_id in seen:
+                    continue
+                seen.add(app_id)
+                apps.append(
+                    {
+                        "id": app_id,
+                        "name": name,
+                        "path": exec_line or str(desk),
+                        "version": "",
+                        "publisher": "",
+                        "source": "desktop",
+                    }
+                )
+        # Common binaries as fallback discovery
+        for bin_name in ("bash", "python3", "jq", "curl", "git"):
+            p = shutil.which(bin_name)
+            if p and bin_name not in seen:
+                apps.append(
+                    {
+                        "id": bin_name,
+                        "name": bin_name,
+                        "path": p,
+                        "version": "",
+                        "publisher": "",
+                        "source": "path",
+                    }
+                )
+        return apps
+
+    # ------------------------------------------------------------------
+    # Windows (wmctrl / xdotool — optional)
+    # ------------------------------------------------------------------
+    def list_windows(self) -> list[dict[str, Any]]:
+        if shutil.which("wmctrl"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["wmctrl", "-l"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                out: list[dict[str, Any]] = []
+                for line in r.stdout.splitlines():
+                    parts = line.split(None, 3)
+                    if len(parts) < 4:
+                        continue
+                    hwnd_s, _desk, _host, title = parts
+                    try:
+                        hwnd = int(hwnd_s, 16)
+                    except ValueError:
+                        continue
+                    out.append({"hwnd": hwnd, "title": title, "visible": True})
+                return out
+            except Exception:  # noqa: BLE001
+                pass
+        if shutil.which("xdotool"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xdotool", "search", "--name", ".*"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                out = []
+                for line in r.stdout.splitlines():
+                    line = line.strip()
+                    if not line.isdigit():
+                        continue
+                    hwnd = int(line)
+                    title_r = subprocess.run(  # noqa: S603
+                        ["xdotool", "getwindowname", str(hwnd)],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                    title = title_r.stdout.strip()
+                    if title:
+                        out.append({"hwnd": hwnd, "title": title, "visible": True})
+                return out
+            except Exception:  # noqa: BLE001
+                return []
+        return []
+
+    def get_window(self, hwnd: int) -> dict[str, Any] | None:
+        wins = {w["hwnd"]: w for w in self.list_windows()}
+        return wins.get(hwnd)
+
+    def focus_window(self, hwnd: int) -> dict[str, Any]:
+        if shutil.which("wmctrl"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["wmctrl", "-i", "-a", hex(hwnd)],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                return {"ok": True, "hwnd": hwnd}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if shutil.which("xdotool"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "windowactivate", str(hwnd)],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                return {"ok": True, "hwnd": hwnd}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "wmctrl/xdotool not installed", "windows_ui": False}
+
+    def close_window(self, hwnd: int) -> dict[str, Any]:
+        if shutil.which("wmctrl"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["wmctrl", "-i", "-c", hex(hwnd)],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                return {"ok": True, "hwnd": hwnd}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        if shutil.which("xdotool"):
+            try:
+                subprocess.run(  # noqa: S603
+                    ["xdotool", "windowclose", str(hwnd)],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                return {"ok": True, "hwnd": hwnd}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "wmctrl/xdotool not installed", "windows_ui": False}
+
+    # ------------------------------------------------------------------
+    # UI tree (AT-SPI optional — never Fake Contoso on linux)
+    # ------------------------------------------------------------------
+    def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
+        try:
+            import pyatspi  # type: ignore
+
+            desktop = pyatspi.Registry.getDesktop(0)
+            children: list[dict[str, Any]] = []
+
+            def node_info(acc: Any, depth: int = 0) -> dict[str, Any]:
+                try:
+                    name = acc.name or ""
+                    role = acc.getRoleName() if hasattr(acc, "getRoleName") else ""
+                except Exception:  # noqa: BLE001
+                    name, role = "", ""
+                kids: list[dict[str, Any]] = []
+                if depth < 4:
+                    try:
+                        n = acc.childCount
+                    except Exception:  # noqa: BLE001
+                        n = 0
+                    for i in range(min(n, 40)):
+                        try:
+                            kids.append(node_info(acc.getChildAtIndex(i), depth + 1))
+                        except Exception:  # noqa: BLE001
+                            continue
+                return {
+                    "name": name,
+                    "control_type": role,
+                    "automation_id": "",
+                    "children": kids,
+                }
+
+            try:
+                count = desktop.childCount
+            except Exception:  # noqa: BLE001
+                count = 0
+            for i in range(min(count, 30)):
+                try:
+                    children.append(node_info(desktop.getChildAtIndex(i)))
+                except Exception:  # noqa: BLE001
+                    continue
+            return {
+                "hwnd": hwnd,
+                "name": "AT-SPI desktop",
+                "control_type": "Desktop",
+                "children": children,
+                "backend": "atspi",
+            }
+        except Exception as e:  # noqa: BLE001
+            return {
+                "hwnd": hwnd,
+                "name": "",
+                "control_type": "Unsupported",
+                "children": [],
+                "supported": False,
+                "error": "AT-SPI / pyatspi unavailable",
+                "detail": str(e),
+                "hint": "Set WINOS_BACKEND=fake for Contoso CRM adapter demos",
+            }
+
+    # ------------------------------------------------------------------
+    # Input (xdotool optional)
+    # ------------------------------------------------------------------
+    def mouse_move(self, x: int, y: int) -> dict[str, Any]:
+        if not shutil.which("xdotool"):
+            return {"ok": False, "error": "xdotool not installed"}
+        try:
+            subprocess.run(  # noqa: S603
+                ["xdotool", "mousemove", str(x), str(y)],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            return {"ok": True, "x": x, "y": y}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def mouse_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        self.mouse_move(x, y)
+        if not shutil.which("xdotool"):
+            return {"ok": False, "error": "xdotool not installed", "x": x, "y": y, "button": button}
+        btn = {"left": "1", "middle": "2", "right": "3"}.get(button, "1")
+        try:
+            subprocess.run(  # noqa: S603
+                ["xdotool", "click", btn],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            return {"ok": True, "x": x, "y": y, "button": button}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def key_press(self, key: str, modifiers: list[str] | None = None) -> dict[str, Any]:
+        if not shutil.which("xdotool"):
+            return {"ok": False, "error": "xdotool not installed", "key": key}
+        seq = "+".join([*(modifiers or []), key])
+        try:
+            subprocess.run(  # noqa: S603
+                ["xdotool", "key", seq],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            return {"ok": True, "key": key, "modifiers": modifiers or []}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def type_text(self, text: str) -> dict[str, Any]:
+        if not shutil.which("xdotool"):
+            return {"ok": False, "error": "xdotool not installed"}
+        try:
+            subprocess.run(  # noqa: S603
+                ["xdotool", "type", "--", text],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+            return {"ok": True, "length": len(text)}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Clipboard
+    # ------------------------------------------------------------------
+    def clipboard_get(self) -> dict[str, Any]:
+        if shutil.which("wl-paste"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["wl-paste", "-n"], capture_output=True, text=True, timeout=5
+                )
+                if r.returncode == 0:
+                    return {"text": r.stdout, "format": "text"}
+            except Exception:  # noqa: BLE001
+                pass
+        if shutil.which("xclip"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if r.returncode == 0:
+                    return {"text": r.stdout, "format": "text"}
+            except Exception:  # noqa: BLE001
+                pass
+        if shutil.which("xsel"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xsel", "--clipboard", "--output"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if r.returncode == 0:
+                    return {"text": r.stdout, "format": "text"}
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "text": "",
+            "format": "text",
+            "ok": False,
+            "error": "clipboard tool missing (install xclip, xsel, or wl-clipboard)",
+        }
+
+    def clipboard_set(self, text: str) -> dict[str, Any]:
+        if shutil.which("wl-copy"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["wl-copy"], input=text, text=True, capture_output=True, timeout=5
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "length": len(text)}
+            except Exception:  # noqa: BLE001
+                pass
+        if shutil.which("xclip"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xclip", "-selection", "clipboard"],
+                    input=text,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "length": len(text)}
+            except Exception:  # noqa: BLE001
+                pass
+        if shutil.which("xsel"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xsel", "--clipboard", "--input"],
+                    input=text,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "length": len(text)}
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "ok": False,
+            "error": "clipboard tool missing (install xclip, xsel, or wl-clipboard)",
+        }
+
+    # ------------------------------------------------------------------
+    # Display / screenshot
+    # ------------------------------------------------------------------
+    def list_displays(self) -> list[dict[str, Any]]:
+        try:
+            import mss  # type: ignore
+
+            with mss.mss() as sct:
+                out = []
+                for i, mon in enumerate(sct.monitors[1:], start=0):
+                    out.append(
+                        {
+                            "id": i,
+                            "name": f"Display {i}",
+                            "width": mon["width"],
+                            "height": mon["height"],
+                            "primary": i == 0,
+                            "scale": 1.0,
+                        }
+                    )
+                return out or [
+                    {
+                        "id": 0,
+                        "name": "Primary",
+                        "width": 1920,
+                        "height": 1080,
+                        "primary": True,
+                        "scale": 1.0,
+                    }
+                ]
+        except Exception:  # noqa: BLE001
+            return [
+                {
+                    "id": 0,
+                    "name": "Primary",
+                    "width": 0,
+                    "height": 0,
+                    "primary": True,
+                    "scale": 1.0,
+                    "note": "mss unavailable — dimensions unknown",
+                }
+            ]
+
+    def screenshot(self, display_id: int | None = None) -> dict[str, Any]:
+        try:
+            import base64
+            import mss  # type: ignore
+            from mss.tools import to_png  # type: ignore
+
+            with mss.mss() as sct:
+                monitors = sct.monitors[1:]
+                idx = display_id or 0
+                if idx < 0 or idx >= len(monitors):
+                    mon = sct.monitors[0]
+                else:
+                    mon = monitors[idx]
+                shot = sct.grab(mon)
+                png = to_png(shot.rgb, shot.size)
+                return {
+                    "ok": True,
+                    "display_id": idx,
+                    "format": "png",
+                    "width": shot.width,
+                    "height": shot.height,
+                    "data_base64": base64.b64encode(png).decode("ascii"),
+                }
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "supported": False,
+                "error": "screenshot unsupported (install mss / Pillow+X11)",
+                "detail": str(e),
+                "display_id": display_id,
+            }
+
+    # ------------------------------------------------------------------
+    # Filesystem (sandbox + optional allow paths; block ..)
+    # ------------------------------------------------------------------
+    def _safe_path(self, path: str) -> Path:
+        norm = path.replace("\\", "/")
+        parts = [x for x in norm.split("/") if x not in ("", ".")]
+        if ".." in parts:
+            raise PermissionError(f"Path traversal blocked: {path}")
+        p = Path(norm)
+        if not p.is_absolute():
+            p = self.sandbox / p
+        resolved = p.resolve()
+        allowed_roots = [self.sandbox, *self.allow_paths]
+        for root in allowed_roots:
+            try:
+                resolved.relative_to(root)
+                return resolved
+            except ValueError:
+                continue
+        raise PermissionError(f"Path outside sandbox/allowlist: {path}")
+
+    def fs_list(self, path: str) -> list[dict[str, Any]]:
+        target = self._safe_path(path) if path not in (".", "") else self.sandbox
+        if not target.exists():
+            return []
+        if not target.is_dir():
+            raise NotADirectoryError(str(target))
+        out = []
+        for child in sorted(target.iterdir()):
+            try:
+                rel = str(child.relative_to(self.sandbox))
+            except ValueError:
+                rel = str(child)
+            out.append(
+                {
+                    "name": child.name,
+                    "path": rel,
+                    "is_dir": child.is_dir(),
+                    "size": child.stat().st_size if child.is_file() else 0,
+                }
+            )
+        return out
+
+    def fs_read(self, path: str, max_bytes: int = 65536) -> dict[str, Any]:
+        import base64
+
+        target = self._safe_path(path)
+        data = target.read_bytes()[:max_bytes]
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        return {
+            "path": path,
+            "size": len(data),
+            "text": text,
+            "base64": base64.b64encode(data).decode(),
+        }
+
+    def fs_write(self, path: str, content: str) -> dict[str, Any]:
+        target = self._safe_path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {"ok": True, "path": path, "bytes": len(content.encode())}
+
+    def fs_delete(self, path: str) -> dict[str, Any]:
+        target = self._safe_path(path)
+        if target.is_dir():
+            target.rmdir()
+        else:
+            target.unlink(missing_ok=True)
+        return {"ok": True, "path": path}
+
+    # ------------------------------------------------------------------
+    # Storage / network
+    # ------------------------------------------------------------------
+    def list_drives(self) -> list[dict[str, Any]]:
+        if not self._psutil:
+            return [{"mount": "/", "fs": "unknown", "total_gb": 0, "free_gb": 0}]
+        out = []
+        for p in self._psutil.disk_partitions(all=False):
+            try:
+                usage = self._psutil.disk_usage(p.mountpoint)
+                out.append(
+                    {
+                        "mount": p.mountpoint,
+                        "device": p.device,
+                        "fs": p.fstype,
+                        "total_gb": round(usage.total / 1e9, 1),
+                        "free_gb": round(usage.free / 1e9, 1),
+                    }
+                )
+            except (PermissionError, OSError):
+                continue
+        return out
+
+    def network_interfaces(self) -> list[dict[str, Any]]:
+        if not self._psutil:
+            return []
+        stats = {}
+        try:
+            stats = self._psutil.net_if_stats()
+        except Exception:  # noqa: BLE001
+            pass
+        out = []
+        for name, addrs in self._psutil.net_if_addrs().items():
+            st = stats.get(name)
+            out.append(
+                {
+                    "name": name,
+                    "addresses": [a.address for a in addrs],
+                    "up": bool(st.isup) if st else True,
+                }
+            )
+        return out
+
+    def network_connections(self) -> list[dict[str, Any]]:
+        if not self._psutil:
+            return []
+        out = []
+        try:
+            conns = self._psutil.net_connections(kind="inet")
+        except (PermissionError, self._psutil.AccessDenied):
+            return []
+        for c in conns[:200]:
+            out.append(
+                {
+                    "local": f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else "",
+                    "remote": f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else "",
+                    "status": c.status,
+                    "pid": c.pid,
+                }
+            )
+        return out
+
+    # ------------------------------------------------------------------
+    # Services (systemctl)
+    # ------------------------------------------------------------------
+    def list_services(self) -> list[dict[str, Any]]:
+        if not shutil.which("systemctl"):
+            return [
+                {
+                    "name": "systemctl",
+                    "status": "unavailable",
+                    "note": "systemctl not found",
+                }
+            ]
+        out: list[dict[str, Any]] = []
+        for args in (
+            ["systemctl", "--user", "list-units", "--type=service", "--no-pager", "--plain"],
+            ["systemctl", "list-units", "--type=service", "--no-pager", "--plain"],
+        ):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    args, capture_output=True, text=True, timeout=10
+                )
+                if r.returncode != 0:
+                    continue
+                for line in r.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) < 4 or not parts[0].endswith(".service"):
+                        continue
+                    out.append(
+                        {
+                            "name": parts[0].removesuffix(".service"),
+                            "status": parts[2] if len(parts) > 2 else "unknown",
+                            "load": parts[1] if len(parts) > 1 else "",
+                        }
+                    )
+                if out:
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        return out[:100] if out else [{"name": "none", "status": "empty", "note": "no units listed"}]
+
+    def control_service(self, name: str, action: str) -> dict[str, Any]:
+        if action not in ("start", "stop", "restart", "status"):
+            return {"ok": False, "error": f"unknown action: {action}", "name": name}
+        if not shutil.which("systemctl"):
+            return {"ok": False, "error": "systemctl not installed", "name": name, "action": action}
+        unit = name if name.endswith(".service") else f"{name}.service"
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["systemctl", "--user", action, unit],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            return {
+                "ok": r.returncode == 0,
+                "name": name,
+                "action": action,
+                "stdout": r.stdout[:2000],
+                "stderr": r.stderr[:1000],
+                "exit_code": r.returncode,
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "name": name, "action": action}
+
+    # ------------------------------------------------------------------
+    # Audio (pactl)
+    # ------------------------------------------------------------------
+    def audio_devices(self) -> list[dict[str, Any]]:
+        if not shutil.which("pactl"):
+            return []
+        out: list[dict[str, Any]] = []
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["pactl", "list", "short", "sinks"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    out.append(
+                        {
+                            "id": parts[0],
+                            "name": parts[1],
+                            "type": "output",
+                            "default": False,
+                        }
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    def audio_volume(self) -> dict[str, Any]:
+        if not shutil.which("pactl"):
+            return {"volume": None, "muted": None, "error": "pactl not installed"}
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            mute = subprocess.run(  # noqa: S603
+                ["pactl", "get-sink-mute", "@DEFAULT_SINK@"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            vol = None
+            for tok in r.stdout.replace("%", " % ").split():
+                if tok.isdigit():
+                    vol = int(tok)
+                    break
+            muted = "yes" in mute.stdout.lower()
+            return {"volume": vol, "muted": muted}
+        except Exception as e:  # noqa: BLE001
+            return {"volume": None, "muted": None, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Devices / printers / users
+    # ------------------------------------------------------------------
+    def list_devices(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        sys_block = Path("/sys/block")
+        if sys_block.is_dir():
+            for d in sorted(sys_block.iterdir())[:50]:
+                out.append(
+                    {"id": d.name, "name": d.name, "type": "block", "status": "ok"}
+                )
+        return out
+
+    def list_printers(self) -> list[dict[str, Any]]:
+        if shutil.which("lpstat"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["lpstat", "-a"], capture_output=True, text=True, timeout=5
+                )
+                printers = []
+                for line in r.stdout.splitlines():
+                    name = line.split()[0] if line.split() else ""
+                    if name:
+                        printers.append({"name": name, "status": "idle", "default": False})
+                return printers
+            except Exception:  # noqa: BLE001
+                pass
+        return []
+
+    def list_users(self) -> list[dict[str, Any]]:
+        if self._psutil:
+            try:
+                users = []
+                for u in self._psutil.users():
+                    users.append(
+                        {
+                            "username": u.name,
+                            "domain": platform.node(),
+                            "admin": u.name == "root",
+                            "terminal": getattr(u, "terminal", "") or "",
+                        }
+                    )
+                if users:
+                    return users
+            except Exception:  # noqa: BLE001
+                pass
+        return [
+            {
+                "username": os.environ.get("USER", ""),
+                "domain": platform.node(),
+                "admin": os.geteuid() == 0 if hasattr(os, "geteuid") else False,
+            }
+        ]
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        users = self.list_users()
+        return [
+            {
+                "id": i + 1,
+                "user": u.get("username", ""),
+                "state": "Active",
+                "client": u.get("terminal") or "local",
+            }
+            for i, u in enumerate(users)
+        ]
+
+    # ------------------------------------------------------------------
+    # Registry compat → JSON store
+    # ------------------------------------------------------------------
+    def _load_registry(self) -> dict[str, Any]:
+        try:
+            return json.loads(self._registry_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_registry(self, data: dict[str, Any]) -> None:
+        self._registry_file.parent.mkdir(parents=True, exist_ok=True)
+        self._registry_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def registry_read(self, path: str, name: str | None = None) -> dict[str, Any]:
+        data = self._load_registry()
+        key = data.get(path)
+        if key is None:
+            return {
+                "ok": False,
+                "error": "key not found",
+                "path": path,
+                "store": str(self._registry_file),
+                "note": "Linux registry compat JSON store (not Windows registry)",
+            }
+        if name is None:
+            return {"ok": True, "path": path, "values": dict(key), "store": str(self._registry_file)}
+        if name not in key:
+            return {"ok": False, "error": "value not found", "path": path, "name": name}
+        return {"ok": True, "path": path, "name": name, "value": key[name]}
+
+    def registry_write(self, path: str, name: str, value: Any) -> dict[str, Any]:
+        data = self._load_registry()
+        if path not in data or not isinstance(data[path], dict):
+            data[path] = {}
+        data[path][name] = value
+        self._save_registry(data)
+        return {
+            "ok": True,
+            "path": path,
+            "name": name,
+            "value": value,
+            "store": str(self._registry_file),
+        }
+
+    # ------------------------------------------------------------------
+    # Terminal
+    # ------------------------------------------------------------------
+    def terminal_execute(self, command: str, policy: str = "ALLOW") -> dict[str, Any]:
+        policy = policy.upper()
+        if policy == "DENY":
+            return {"ok": False, "policy": "DENY", "error": "denied", "command": command}
+        if policy not in ("ALLOW", "ADMIN"):
+            return {"ok": False, "error": f"unknown policy: {policy}"}
+        try:
+            r = subprocess.run(  # noqa: S602
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(self.sandbox),
+            )
+            return {
+                "ok": r.returncode == 0,
+                "policy": policy,
+                "stdout": r.stdout[:8000],
+                "stderr": r.stderr[:2000],
+                "exit_code": r.returncode,
+                "real": True,
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "policy": policy}

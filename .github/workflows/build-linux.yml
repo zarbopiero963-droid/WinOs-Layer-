@@ -1,6 +1,6 @@
 name: Build Linux
 
-# Dedicated Linux portable build (FastAPI server ELF + FakeBackend-capable).
+# Dedicated Linux portable build (FastAPI server ELF + LinuxBackend real OS).
 # This is NOT a Windows emulator — use Build / dist-windows for Win32 EXE/Setup.
 
 on:

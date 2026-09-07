@@ -31,9 +31,13 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 120
     audit_log_path: str = "logs/audit.jsonl"
     sandbox_root: str = "sandbox"
+    # Extra filesystem roots allowed by LinuxBackend (still blocks ..)
+    fs_allow_paths: list[str] = Field(default_factory=list)
 
-    # Backend selection
-    backend: Literal["auto", "windows", "fake"] = "auto"
+    # Backend selection: auto → windows on win32, linux on Linux, never fake unless forced
+    backend: Literal["auto", "windows", "linux", "fake"] = "auto"
+    # Only when true may factory fall back to FakeBackend if windows/linux unavailable
+    allow_fake_fallback: bool = False
 
     # Observability
     metrics_enabled: bool = True
@@ -57,7 +61,10 @@ class Settings(BaseSettings):
             return self.backend
         import sys
 
-        return "windows" if sys.platform == "win32" else "fake"
+        if sys.platform == "win32":
+            return "windows"
+        # Real Linux by default (FakeBackend only when WINOS_BACKEND=fake)
+        return "linux"
 
     def ensure_dirs(self) -> None:
         Path(self.audit_log_path).parent.mkdir(parents=True, exist_ok=True)

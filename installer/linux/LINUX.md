@@ -1,14 +1,29 @@
 # Linux portable package — WinOs-Layer
 
 This artifact is the **FastAPI OS API server** built for Linux (PyInstaller
-one-file ELF). On non-Windows hosts it uses **`FakeBackend`** (or `auto`),
-providing an OS-portable API for development, CI, and adapters that do not
-require real Win32 COM/UIA.
+one-file ELF). By default it uses **`LinuxBackend`** (`WINOS_BACKEND=auto` /
+`linux`): real processes, filesystem (sandbox), system info, and network via
+psutil/subprocess — **not** an in-memory FakeBackend simulation.
+
+Set `WINOS_BACKEND=fake` only when you need deterministic Contoso CRM adapter
+fixtures for demos/CI.
 
 **This is not a Windows emulator.** For real Windows automation
 (`WindowsBackend`, UI Automation, Setup.exe / Windows service), download the
 **Windows** artifacts (`dist-windows` / `winos-api-portable-windows.zip` /
 `WinOsApi-Setup-*.exe`) instead.
+
+## Real vs Fake
+
+| Mode | Env | Behavior |
+|------|-----|----------|
+| Default | `auto` / `linux` | **LinuxBackend** — `POST /v1/processes` spawns real PIDs |
+| Fixtures | `fake` | FakeBackend Contoso CRM UI tree for adapter E2E |
+
+Optional tools (graceful if missing): `wmctrl`/`xdotool`, `xclip`/`xsel`/
+`wl-clipboard`, `pactl`, `systemctl`, `mss`, `pyatspi`.
+
+Registry API maps to `~/.config/winos-api/registry.json` for compatibility.
 
 ## Contents
 
@@ -25,10 +40,16 @@ cd winos-api-portable-linux   # or extracted root
 chmod +x winos-api installer/linux/*.sh
 ./installer/linux/install.sh --user
 # or run without install:
-WINOS_BACKEND=fake ./winos-api serve --host 127.0.0.1 --port 8765
+WINOS_BACKEND=auto ./winos-api serve --host 127.0.0.1 --port 8765
 ```
 
 Default bind: **127.0.0.1:8765** (localhost only).
+
+Smoke real process spawn:
+
+```bash
+python scripts/live_linux_smoke.py
+```
 
 ## Choose your OS (GitHub Actions)
 

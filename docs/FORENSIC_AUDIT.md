@@ -1,7 +1,9 @@
 # Forensic Audit — WinOs-Layer-
 Generated for roadmap PRs #1–#50. Status: `DONE` | `PARTIAL` | `NOT_STARTED`.
 Run: `python scripts/forensic_audit.py` (fails if DONE claims lack files/tests).
-Tests: `pytest -q` with `WINOS_BACKEND=fake`.
+Tests: `pytest -q -m "not windows"` (fake fixtures via conftest + `tests/linux/` real LinuxBackend).
+Live smoke: `python scripts/live_linux_smoke.py`.
+**Linux parity:** `LinuxBackend` is default on Linux (`WINOS_BACKEND=auto`); FakeBackend only when forced.
 
 ## PR1: Project structure + pyproject + package layout
 - **Status:** DONE
@@ -55,12 +57,13 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
   - `tests/unit/test_fake_backend.py`
 - **How to run:** `pytest tests/integration/test_api_core.py -q`
 
-## PR6: App discovery (FakeBackend + Windows registry/paths)
+## PR6: App discovery (FakeBackend + Windows registry/paths + Linux .desktop)
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/apps/discovery/service.py`
   - `windows_os_api/backends/fake.py`
   - `windows_os_api/backends/windows.py`
+  - `windows_os_api/backends/linux.py`
 - **Tests:**
   - `tests/unit/test_fake_backend.py`
   - `tests/integration/test_api_adapter_automation.py`
@@ -414,6 +417,8 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
 - **Tests:**
   - `scripts/forensic_audit.py`
   - `tests/windows/`
+  - `tests/linux/`
+- **Note:** Linux job runs fake suite + `pytest -m linux` + live smoke; Windows job keeps fake + windows markers.
 - **How to run:** `python scripts/forensic_audit.py`
 
 ## PR44: Release workflow with checksums
@@ -482,3 +487,19 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
 - DONE: 50
 - PARTIAL: 0
 - NOT_STARTED: 0
+
+## LinuxBackend parity (post-PR50)
+- **Status:** DONE (core) / PARTIAL (AT-SPI / full desktop UI)
+- **Files:**
+  - `windows_os_api/backends/linux.py`
+  - `windows_os_api/backends/factory.py`
+  - `windows_os_api/backends/base.py`
+  - `windows_os_api/core/runtime/config.py`
+  - `windows_os_api/os/system/service.py` (honest capability flags)
+  - `tests/linux/test_linux_backend.py`
+  - `scripts/live_linux_smoke.py`
+- **Tests:**
+  - `pytest -m linux`
+  - `python scripts/live_linux_smoke.py`
+- **Remaining (PARTIAL):** full AT-SPI UI trees for arbitrary apps; screenshot without mss; Windows UIA is N/A on Linux by design.
+

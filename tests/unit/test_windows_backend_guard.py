@@ -1,4 +1,4 @@
-"""WindowsBackend must not import on Linux — guarded."""
+"""WindowsBackend must not import on Linux — guarded; factory selects linux."""
 import sys
 import pytest
 
@@ -9,7 +9,7 @@ def test_windows_backend_raises_off_win32():
     with pytest.raises(WindowsBackendUnavailable):
         WindowsBackend()
 
-def test_factory_uses_fake_on_linux(monkeypatch, tmp_path):
+def test_factory_uses_linux_on_linux(monkeypatch, tmp_path):
     if sys.platform == "win32":
         pytest.skip("on Windows")
     monkeypatch.setenv("WINOS_BACKEND", "auto")
@@ -19,7 +19,16 @@ def test_factory_uses_fake_on_linux(monkeypatch, tmp_path):
     get_settings.cache_clear()
     reset_backend()
     b = get_backend()
-    assert b.name == "fake"
+    assert b.name == "linux"
+
+def test_factory_fake_when_forced(monkeypatch, tmp_path):
+    monkeypatch.setenv("WINOS_BACKEND", "fake")
+    monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(tmp_path))
+    from windows_os_api.core.runtime.config import get_settings
+    from windows_os_api.backends.factory import reset_backend, get_backend
+    get_settings.cache_clear()
+    reset_backend()
+    assert get_backend().name == "fake"
 
 def test_installer_scripts(tmp_path):
     from windows_os_api.installer.service import generate_install_scripts, service_manifest

@@ -7,7 +7,7 @@ Produces a portable `winos-api` binary (PyInstaller) and optional Windows
 
 | What you need | Workflow | Artifact | What it is |
 |---------------|----------|----------|------------|
-| **Linux portable** | Actions → **Build Linux** (or **Build** → `build-linux`) | `dist-linux-portable` (`winos-api-portable-linux.zip`) | FastAPI server ELF; uses **FakeBackend** / OS-portable API on non-Windows hosts. **Not a Windows emulator.** |
+| **Linux portable** | Actions → **Build Linux** (or **Build** → `build-linux`) | `dist-linux-portable` (`winos-api-portable-linux.zip`) | FastAPI server ELF; **LinuxBackend** (real OS) by default; Fake optional. **Not a Windows emulator.** |
 | **Windows EXE/Setup** | Actions → **Build** → `build-windows` | `dist-windows` (`winos-api-portable-windows.zip` + `WinOsApi-Setup-*.exe`) | Real **WindowsBackend** when running on Win32; Windows service scripts. |
 | **Both on a tag** | Actions → **Release** | GitHub Release assets | Attaches Windows exe/zip **and** Linux zip + checksums. |
 
@@ -65,7 +65,7 @@ python scripts/build_installer.py package-linux
 python scripts/build_installer.py checksums
 ```
 
-## Linux portable (FakeBackend-capable)
+## Linux portable (LinuxBackend real OS)
 
 ```bash
 python scripts/build_installer.py build-portable
@@ -75,7 +75,7 @@ unzip dist/winos-api-portable-linux.zip
 ./winos-api-portable-linux/installer/linux/install.sh --user
 ```
 
-The Linux package runs **FakeBackend** / OS-portable API server for non-Windows
+The Linux package runs **LinuxBackend** (real processes/FS/system) by default; use `WINOS_BACKEND=fake` for Contoso fixtures. Non-Windows
 hosts. The Windows EXE uses **WindowsBackend** when on Win32.
 
 ## Windows Setup.exe (requires Inno Setup)

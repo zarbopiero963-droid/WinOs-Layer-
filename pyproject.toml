@@ -53,6 +53,7 @@ markers = [
   "security: security-focused tests",
   "e2e: end-to-end tests",
   "windows: Windows-only hard tests (skip on Linux)",
+  "linux: LinuxBackend hard tests (skip on win32)",
   "requires_display: needs interactive desktop / UI Automation",
 ]
 

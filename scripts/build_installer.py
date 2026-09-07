@@ -8,8 +8,8 @@ the ELF + installer/linux/* into winos-api-portable-linux.zip/.tar.gz.
 Setup.exe requires Windows + Inno Setup (ISCC) — use GHA windows-latest
 (see .github/workflows/build.yml / build-linux.yml).
 
-Linux package = FastAPI server portable binary (FakeBackend-capable), NOT a Windows emulator.
-Windows EXE uses WindowsBackend when on Win32.
+Linux package = FastAPI server portable binary (LinuxBackend real OS by default; Fake optional),
+NOT a Windows emulator. Windows EXE uses WindowsBackend when on Win32.
 """
 from __future__ import annotations
 

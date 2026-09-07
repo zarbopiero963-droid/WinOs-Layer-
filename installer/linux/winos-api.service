@@ -1,8 +1,8 @@
 # systemd unit for WinOs-Layer FastAPI server (Linux portable package).
 #
-# NOTE: This unit is for the Linux portable binary, which runs FakeBackend /
-# OS-portable API server on non-Windows hosts. On a real Windows target the
-# Windows EXE uses WindowsBackend when on Win32 — this unit is NOT used there.
+# NOTE: Default backend is LinuxBackend (real OS). Set WINOS_BACKEND=fake only
+# for Contoso CRM adapter fixtures. On Windows use the Windows EXE / WindowsBackend.
+# This unit is NOT used on Windows.
 #
 # Install (system-wide example):
 #   sudo cp winos-api.service /etc/systemd/system/
@@ -14,7 +14,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now winos-api
 
 [Unit]
-Description=WinOs-Layer FastAPI OS API server (Linux portable / FakeBackend)
+Description=WinOs-Layer FastAPI OS API server (LinuxBackend / real OS)
 Documentation=file:///opt/winos-api/LINUX.md
 After=network.target
 
@@ -26,8 +26,8 @@ WorkingDirectory=/opt/winos-api
 Restart=on-failure
 RestartSec=5
 
-# FakeBackend / auto on non-Windows; Windows EXE selects WindowsBackend on Win32
-Environment=WINOS_BACKEND=fake
+# auto → LinuxBackend on Linux; use fake only for CRM fixture demos
+Environment=WINOS_BACKEND=auto
 Environment=WINOS_REQUIRE_AUTH=true
 # Optional: EnvironmentFile=-/opt/winos-api/api_key.env
 

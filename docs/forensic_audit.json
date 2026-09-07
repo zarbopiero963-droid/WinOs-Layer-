@@ -74,11 +74,12 @@
   {
     "pr": 6,
     "status": "DONE",
-    "title": "App discovery (FakeBackend + Windows registry/paths)",
+    "title": "App discovery (FakeBackend + Windows registry/paths + Linux .desktop)",
     "files": [
       "windows_os_api/apps/discovery/service.py",
       "windows_os_api/backends/fake.py",
-      "windows_os_api/backends/windows.py"
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/linux.py"
     ],
     "tests": [
       "tests/unit/test_fake_backend.py",
@@ -562,7 +563,8 @@
       "tests/integration/",
       "tests/security/",
       "tests/e2e/",
-      "tests/windows/"
+      "tests/windows/",
+      "tests/linux/"
     ],
     "tests": [
       "tests/integration/test_api_core.py",
@@ -580,9 +582,10 @@
     ],
     "tests": [
       "scripts/forensic_audit.py",
-      "tests/windows/"
+      "tests/windows/",
+      "tests/linux/"
     ],
-    "remaining": null
+    "remaining": "Linux job: fake suite + linux marker + live smoke"
   },
   {
     "pr": 44,
