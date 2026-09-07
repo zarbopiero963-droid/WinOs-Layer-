@@ -93,6 +93,12 @@ sudo apt install python3-pyatspi at-spi2-core
 
 # X11 (still supported; auto-selected when XDG_SESSION_TYPE=x11):
 sudo apt install wmctrl xdotool xclip
+
+# Geometria/stato finestre (move/resize/minimize/maximize):
+#   xdotool   — muove e ridimensiona
+#   wmctrl    — massimizza (atomi EWMH)
+#   x11-utils — xprop, che RILEGGE lo stato per confermarlo
+sudo apt install xdotool wmctrl x11-utils
 ```
 
 ### Capability honesty (Linux)
@@ -182,6 +188,38 @@ python scripts/live_windows_smoke.py
 
 On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
 Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
+
+## Finestre — la richiesta non e' il risultato
+
+`POST /v1/windows/{hwnd}/move|resize|minimize|maximize|restore` restituiscono la
+geometria che l'OS riporta **dopo** l'operazione, riletta da `xdotool
+getwindowgeometry` su Linux e da `GetWindowRect` su Windows.
+
+```bash
+curl -X POST localhost:8000/v1/windows/12345/move \
+  -H "X-API-Key: $KEY" -d '{"x":300,"y":200}'
+# {"ok":true,"requested":{"x":300,"y":200},
+#  "geometry":{"x":302,"y":240,"width":700,"height":498}, ...}
+```
+
+`requested` e `geometry` sono due campi distinti di proposito. Un window manager
+puo' rifiutare, spostare o quantizzare cio' che gli si chiede: misurato sotto
+Xvfb+openbox, uno spostamento a (300,200) atterra a (302,240) per l'offset della
+cornice, e un resize a 700x500 torna 700x498 perche' xterm si aggancia alle
+celle di carattere. Un'API che rispondesse con la richiesta invece che col
+risultato direbbe una cosa falsa su ogni piattaforma reale.
+
+**`ok` significa «l'effetto e' stato osservato», non «il comando e' uscito 0».**
+La differenza e' misurabile: `wmctrl -i -r 99999999 -b add,maximized_vert` esce
+**0** per un id di finestra che non esiste. Perche' minimize e maximize possano
+essere confermati serve `xprop` (pacchetto `x11-utils`): senza, la risposta
+riporta `"verified": false` con una nota, invece di affermare un esito che non
+ha potuto verificare.
+
+Valori accettati: coordinate in `-32768..32767`, dimensioni in `1..32767` — il
+range a 16 bit della geometria X11. Fuori range si rifiuta, **non si clampa**:
+restituire una finestra di una dimensione che non e' stata chiesta, dichiarando
+successo, sarebbe reinterpretare la richiesta invece che rispondere.
 
 ## Terminal — allowlist, non denylist
 

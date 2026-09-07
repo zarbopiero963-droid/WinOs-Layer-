@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
+from windows_os_api.os.windows.geometry import (
+    GeometryRejected,
+    validate_position,
+    validate_size,
+)
 
 # Minimal 1x1 PNG
 _PNG_1X1 = base64.b64decode(
@@ -190,6 +195,71 @@ class FakeBackend:
             return {"ok": False, "error": "not found"}
         del self._windows[hwnd]
         return {"ok": True, "hwnd": hwnd}
+
+    # --- Window geometry / state ---
+    #
+    # The fake applies the SAME validation as the real backends, and — this part
+    # matters more — it does NOT hand back exactly what it was asked for. A
+    # window manager adds a frame offset: measured under Xvfb + openbox, a move
+    # to (300, 200) lands at (302, 240). If the fake returned the request
+    # verbatim, a test written against it could assert `geometry == requested`,
+    # pass here, and be wrong on both real platforms. A fake that is easier than
+    # production is a fake that certifies the wrong thing.
+    _FRAME_OFFSET = (2, 40)
+
+    def window_geometry(self, hwnd: int) -> dict[str, int] | None:
+        win = self._windows.get(hwnd)
+        if win is None:
+            return None
+        rect = win["rect"]
+        return {"x": rect["x"], "y": rect["y"], "width": rect["w"], "height": rect["h"]}
+
+    def move_window(self, hwnd: int, x: int, y: int) -> dict[str, Any]:
+        try:
+            x, y = validate_position(x, y)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        before = self.window_geometry(hwnd)
+        if before is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        dx, dy = self._FRAME_OFFSET
+        rect = self._windows[hwnd]["rect"]
+        rect["x"], rect["y"] = x + dx, y + dy
+        return {"ok": True, "hwnd": hwnd, "requested": {"x": x, "y": y},
+                "geometry": self.window_geometry(hwnd), "previous": before}
+
+    def resize_window(self, hwnd: int, width: int, height: int) -> dict[str, Any]:
+        try:
+            width, height = validate_size(width, height)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        before = self.window_geometry(hwnd)
+        if before is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        rect = self._windows[hwnd]["rect"]
+        # Quantised to even numbers, the way a terminal snaps to character
+        # cells: 700x500 came back as 700x498 on the real thing.
+        rect["w"], rect["h"] = width - (width % 2), height - (height % 2)
+        return {"ok": True, "hwnd": hwnd, "requested": {"width": width, "height": height},
+                "geometry": self.window_geometry(hwnd), "previous": before}
+
+    def _set_state(self, hwnd: int, state: str) -> dict[str, Any]:
+        if hwnd not in self._windows:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        win = self._windows[hwnd]
+        win["state"] = state
+        win["visible"] = state != "minimized"
+        return {"ok": True, "hwnd": hwnd, "state": state, "requested_state": state,
+                "verified": True, "geometry": self.window_geometry(hwnd)}
+
+    def minimize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._set_state(hwnd, "minimized")
+
+    def maximize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._set_state(hwnd, "maximized")
+
+    def restore_window(self, hwnd: int) -> dict[str, Any]:
+        return self._set_state(hwnd, "normal")
 
     # --- UI ---
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:

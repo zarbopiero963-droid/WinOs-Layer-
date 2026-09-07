@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
+from windows_os_api.os.windows.geometry import (
+    GeometryRejected,
+    validate_position,
+    validate_size,
+)
 
 from windows_os_api.backends import linux_audio as _laudio
 from windows_os_api.backends import linux_services as _lsvc
@@ -542,6 +547,194 @@ class LinuxBackend:
             except Exception as e:  # noqa: BLE001
                 return {"ok": False, "error": str(e)}
         return {"ok": False, "error": "wmctrl/xdotool not installed", "windows_ui": False}
+
+    # ------------------------------------------------------------------
+    # Window geometry / state
+    #
+    # Every operation here reads the result back from the X server instead of
+    # trusting the tool's exit code. That is not defensive habit, it is a
+    # measured necessity: `wmctrl -i -r 99999999 -b add,maximized_vert` exits
+    # **0** for a window id that does not exist. A method returning
+    # `{"ok": True}` on the strength of that exit code would report success for
+    # an operation that never touched anything.
+    # ------------------------------------------------------------------
+    def _x_tool(self, args: list[str], timeout: int = 5) -> Any:
+        """Run an X tool, or return None if the binary is absent / the call blew up."""
+        if not shutil.which(args[0]):
+            return None
+        try:
+            return subprocess.run(  # noqa: S603
+                args,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=_display_env(),
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+    def window_geometry(self, hwnd: int) -> dict[str, int] | None:
+        """Geometry as the X server reports it, or None when the window is gone."""
+        r = self._x_tool(["xdotool", "getwindowgeometry", "--shell", str(hwnd)])
+        if r is None or r.returncode != 0:
+            return None
+        vals: dict[str, int] = {}
+        for line in (r.stdout or "").splitlines():
+            key, _, raw = line.partition("=")
+            key = key.strip().lower()
+            if key not in ("x", "y", "width", "height"):
+                continue
+            try:
+                vals[key] = int(raw.strip())
+            except ValueError:
+                continue
+        return vals if len(vals) == 4 else None
+
+    def _wm_state(self, hwnd: int) -> list[str] | None:
+        """`_NET_WM_STATE` atoms, or None when they cannot be read.
+
+        None means "not verified" and is reported as such. It is not quietly
+        turned into "normal", which would be an invented answer.
+        """
+        r = self._x_tool(["xprop", "-id", str(hwnd), "_NET_WM_STATE"])
+        if r is None or r.returncode != 0:
+            return None
+        out = (r.stdout or "").strip()
+        if "_NET_WM_STATE" not in out:
+            return None
+        _, _, rhs = out.partition("=")
+        return [atom.strip() for atom in rhs.split(",") if atom.strip()]
+
+    @staticmethod
+    def _classify_state(atoms: list[str]) -> str:
+        joined = " ".join(atoms)
+        if "_NET_WM_STATE_HIDDEN" in joined:
+            return "minimized"
+        if "_NET_WM_STATE_MAXIMIZED_VERT" in joined and "_NET_WM_STATE_MAXIMIZED_HORZ" in joined:
+            return "maximized"
+        return "normal"
+
+    def _geometry_op(
+        self, hwnd: int, args: list[str], requested: dict[str, int]
+    ) -> dict[str, Any]:
+        """Shared body of move/resize: act, then report what actually happened."""
+        if not shutil.which("xdotool"):
+            return {"ok": False, "error": "xdotool not installed", "hwnd": hwnd,
+                    "windows_ui": False}
+        before = self.window_geometry(hwnd)
+        if before is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        r = self._x_tool(args)
+        if r is None or r.returncode != 0:
+            detail = (r.stderr or "").strip() if r is not None else "xdotool call failed"
+            return {"ok": False, "error": detail or "xdotool reported failure",
+                    "hwnd": hwnd, "geometry": before}
+        after = self.window_geometry(hwnd)
+        if after is None:
+            return {"ok": False, "error": "window disappeared during the operation",
+                    "hwnd": hwnd}
+        return {
+            "ok": True,
+            "hwnd": hwnd,
+            "requested": requested,
+            "geometry": after,
+            "previous": before,
+        }
+
+    def move_window(self, hwnd: int, x: int, y: int) -> dict[str, Any]:
+        try:
+            x, y = validate_position(x, y)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        return self._geometry_op(
+            hwnd, ["xdotool", "windowmove", str(hwnd), str(x), str(y)], {"x": x, "y": y}
+        )
+
+    def resize_window(self, hwnd: int, width: int, height: int) -> dict[str, Any]:
+        try:
+            width, height = validate_size(width, height)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        return self._geometry_op(
+            hwnd,
+            ["xdotool", "windowsize", str(hwnd), str(width), str(height)],
+            {"width": width, "height": height},
+        )
+
+    def _state_op(self, hwnd: int, args: list[str], expected: str) -> dict[str, Any]:
+        """Shared body of minimize/maximize.
+
+        `verified` is the honest part: `xprop` (x11-utils) is what confirms the
+        window manager honoured the request. Without it the tool call may well
+        have worked, but this layer did not see it happen, and says so rather
+        than asserting an outcome it cannot back.
+        """
+        if not shutil.which(args[0]):
+            return {"ok": False, "error": f"{args[0]} not installed", "hwnd": hwnd,
+                    "windows_ui": False}
+        if self.window_geometry(hwnd) is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        r = self._x_tool(args)
+        if r is None or r.returncode != 0:
+            detail = (r.stderr or "").strip() if r is not None else f"{args[0]} call failed"
+            return {"ok": False, "error": detail or f"{args[0]} reported failure", "hwnd": hwnd}
+        return self._report_state(hwnd, expected)
+
+    def _report_state(self, hwnd: int, expected: str) -> dict[str, Any]:
+        atoms = self._wm_state(hwnd)
+        if atoms is None:
+            return {
+                "ok": True,
+                "hwnd": hwnd,
+                "state": expected,
+                "verified": False,
+                "note": "install x11-utils (xprop) to confirm the window manager honoured this",
+                "geometry": self.window_geometry(hwnd),
+            }
+        observed = self._classify_state(atoms)
+        result: dict[str, Any] = {
+            "ok": observed == expected,
+            "hwnd": hwnd,
+            "state": observed,
+            "requested_state": expected,
+            "verified": True,
+            "wm_state": atoms,
+            "geometry": self.window_geometry(hwnd),
+        }
+        if observed != expected:
+            result["error"] = (
+                f"window manager left the window {observed!r}, not {expected!r}"
+            )
+        return result
+
+    def minimize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._state_op(hwnd, ["xdotool", "windowminimize", str(hwnd)], "minimized")
+
+    def maximize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._state_op(
+            hwnd,
+            ["wmctrl", "-i", "-r", str(hwnd), "-b", "add,maximized_vert,maximized_horz"],
+            "maximized",
+        )
+
+    def restore_window(self, hwnd: int) -> dict[str, Any]:
+        """Clear both maximize axes and map the window back.
+
+        Two tools, because neither does both: wmctrl drops the maximize atoms,
+        xdotool maps a minimized window back. Running only the first on a
+        minimized window would report "normal" while it stayed invisible.
+        """
+        if not shutil.which("xdotool") and not shutil.which("wmctrl"):
+            return {"ok": False, "error": "wmctrl/xdotool not installed", "hwnd": hwnd,
+                    "windows_ui": False}
+        if self.window_geometry(hwnd) is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        self._x_tool(
+            ["wmctrl", "-i", "-r", str(hwnd), "-b", "remove,maximized_vert,maximized_horz"]
+        )
+        self._x_tool(["xdotool", "windowactivate", str(hwnd)])
+        return self._report_state(hwnd, "normal")
 
     # ------------------------------------------------------------------
     # UI tree (AT-SPI optional — never Fake Contoso on linux)

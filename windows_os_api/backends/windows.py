@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
+from windows_os_api.os.windows.geometry import (
+    GeometryRejected,
+    validate_position,
+    validate_size,
+)
 
 
 class WindowsBackendUnavailable(RuntimeError):
@@ -441,6 +446,117 @@ class WindowsBackend:
 
         self._win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
         return {"ok": True, "hwnd": hwnd}
+
+    # ------------------------------------------------------------------
+    # Window geometry / state
+    #
+    # Same contract as LinuxBackend: the result is read back from the OS with
+    # GetWindowRect / IsIconic / IsZoomed, not inferred from the call returning
+    # without raising. A window manager — or Windows itself, via the window's
+    # min/max tracking size — is free to clamp what it was asked for, so the
+    # request and the result are reported as two different things.
+    # ------------------------------------------------------------------
+    def window_geometry(self, hwnd: int) -> dict[str, int] | None:
+        """Geometry from GetWindowRect, or None when the handle is not a window."""
+        if not self._win32gui:
+            return None
+        try:
+            if not self._win32gui.IsWindow(hwnd):
+                return None
+            left, top, right, bottom = self._win32gui.GetWindowRect(hwnd)
+        except Exception:  # noqa: BLE001
+            return None
+        return {"x": left, "y": top, "width": right - left, "height": bottom - top}
+
+    def _window_state(self, hwnd: int) -> str | None:
+        if not self._win32gui:
+            return None
+        try:
+            if not self._win32gui.IsWindow(hwnd):
+                return None
+            if self._win32gui.IsIconic(hwnd):
+                return "minimized"
+            if self._win32gui.IsZoomed(hwnd):
+                return "maximized"
+        except Exception:  # noqa: BLE001
+            return None
+        return "normal"
+
+    def _move_or_resize(
+        self, hwnd: int, x: int | None, y: int | None, w: int | None, h: int | None,
+        requested: dict[str, int],
+    ) -> dict[str, Any]:
+        if not self._win32gui:
+            return {"ok": False, "error": "win32gui unavailable", "hwnd": hwnd}
+        before = self.window_geometry(hwnd)
+        if before is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        try:
+            self._win32gui.MoveWindow(
+                hwnd,
+                before["x"] if x is None else x,
+                before["y"] if y is None else y,
+                before["width"] if w is None else w,
+                before["height"] if h is None else h,
+                True,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "hwnd": hwnd, "geometry": before}
+        after = self.window_geometry(hwnd)
+        if after is None:
+            return {"ok": False, "error": "window disappeared during the operation",
+                    "hwnd": hwnd}
+        return {"ok": True, "hwnd": hwnd, "requested": requested,
+                "geometry": after, "previous": before}
+
+    def move_window(self, hwnd: int, x: int, y: int) -> dict[str, Any]:
+        try:
+            x, y = validate_position(x, y)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        return self._move_or_resize(hwnd, x, y, None, None, {"x": x, "y": y})
+
+    def resize_window(self, hwnd: int, width: int, height: int) -> dict[str, Any]:
+        try:
+            width, height = validate_size(width, height)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "hwnd": hwnd}
+        return self._move_or_resize(
+            hwnd, None, None, width, height, {"width": width, "height": height}
+        )
+
+    def _show_window(self, hwnd: int, sw_const: str, expected: str) -> dict[str, Any]:
+        if not self._win32gui:
+            return {"ok": False, "error": "win32gui unavailable", "hwnd": hwnd}
+        if self.window_geometry(hwnd) is None:
+            return {"ok": False, "error": f"window {hwnd} not found", "hwnd": hwnd}
+        try:
+            import win32con  # type: ignore
+
+            self._win32gui.ShowWindow(hwnd, getattr(win32con, sw_const))
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "hwnd": hwnd}
+        observed = self._window_state(hwnd)
+        result: dict[str, Any] = {
+            "ok": observed == expected,
+            "hwnd": hwnd,
+            "state": observed,
+            "requested_state": expected,
+            "verified": True,
+            "geometry": self.window_geometry(hwnd),
+        }
+        if observed != expected:
+            result["error"] = f"window is {observed!r}, not {expected!r}"
+        return result
+
+    def minimize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._show_window(hwnd, "SW_MINIMIZE", "minimized")
+
+    def maximize_window(self, hwnd: int) -> dict[str, Any]:
+        return self._show_window(hwnd, "SW_MAXIMIZE", "maximized")
+
+    def restore_window(self, hwnd: int) -> dict[str, Any]:
+        return self._show_window(hwnd, "SW_RESTORE", "normal")
 
     # ------------------------------------------------------------------
     # UI Automation
