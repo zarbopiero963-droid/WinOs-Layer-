@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Superseded runs are cancelled: a push that replaces a head makes the previous
+# run's answer irrelevant, and Windows runners bill at 2x. A hung job also stops
+# burning minutes as soon as the next push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-linux:
     runs-on: ubuntu-latest

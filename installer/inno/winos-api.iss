@@ -39,6 +39,19 @@ Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Parameters: "serve --host 127.0.0.1 --port 8765"; Description: "Start WinOs API (localhost)"; Flags: nowait postinstall skipifsilent
 
+[UninstallDelete]
+; api_key.txt is created below in [Code] at ssPostInstall, not by [Files], so
+; Inno does not track it and the uninstaller would leave it behind: a credential
+; granting access to an OS-control API, surviving on disk after the user removed
+; the product. Caught by scripts/installer_smoke.py on the first real uninstall
+; ever performed ("uninstall left files: api_key.txt").
+Type: files; Name: "{app}\api_key.txt"
+; The server writes its audit log next to itself when started from {app}; that
+; log records API key prefixes and executed command lines.
+Type: filesandordirs; Name: "{app}\logs"
+; Then drop the directory itself, once nothing of ours remains in it.
+Type: dirifempty; Name: "{app}"
+
 [Code]
 function GenerateApiKey: String;
 var

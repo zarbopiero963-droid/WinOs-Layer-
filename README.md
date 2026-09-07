@@ -231,6 +231,21 @@ served backend and version match this source tree, checks that `/v1/system` is
 refused without an API key, then verifies the process exits and frees its port.
 Exit 0 means the artifact is usable; any other exit means do not ship it.
 
+On Windows the same guard runs a second time against the **installed** copy:
+
+```bash
+python scripts/installer_smoke.py     # Windows only
+```
+
+Silent install of `WinOsApi-Setup-<version>.exe` into a scratch directory, check
+of the layout the `.iss` promises (`winos-api.exe`, `service/`, a non-empty
+`api_key.txt`), `artifact_smoke` against the installed binary, then silent
+uninstall with a check that nothing is left behind — including `api_key.txt`,
+which `[Code]` generates outside `[Files]` and which the uninstaller therefore
+had to be told explicitly to remove. It does **not** assert a
+registered Windows service: the installer does not register one — that is a
+separate manual step (`service/install_nssm.bat`).
+
 Wired into both `Build` and `Build Linux` right after `build-portable`. The
 `Build` workflow also runs on pull requests that touch packaging (`build.yml`,
 `installer/`, `build_installer.py`, `artifact_smoke.py`, `windows_os_api/cli/`,
