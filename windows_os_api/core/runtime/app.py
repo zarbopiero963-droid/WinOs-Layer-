@@ -22,6 +22,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        try:
+            from windows_os_api.apps.ai.provider import sync_llm_bridge
+            sync_llm_bridge()
+        except Exception:  # noqa: BLE001
+            pass
         get_audit_logger().log(
             "server.startup",
             subject="system",

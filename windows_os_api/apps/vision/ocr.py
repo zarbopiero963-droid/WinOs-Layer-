@@ -233,13 +233,80 @@ def _ocr_template(img: Image.Image, needle_text: str) -> list[VisionBox]:
     return [best] if best else []
 
 
+def _try_ai_vision_boxes(
+    img: Image.Image,
+    text: str,
+) -> list[VisionBox]:
+    """When a remote AI provider is configured, ask it for a locate hint.
+
+    Always returns [] on failure so callers fall back to local OCR.
+    Parsing is best-effort — invalid JSON / missing coords → [].
+    """
+    try:
+        from windows_os_api.apps.ai.provider import get_ai_client
+        from windows_os_api.apps.ai.settings_store import get_ai_settings
+    except Exception:  # noqa: BLE001
+        return []
+    settings = get_ai_settings()
+    if not settings.remote_ready():
+        return []
+    import base64
+    import json
+    import re
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    client = get_ai_client()
+    hint = client.vision_locate_hint(text, image_b64=b64)
+    if not hint or not hint.get("ok"):
+        return []
+    raw = hint.get("raw") or ""
+    # Extract first JSON object from response
+    m = re.search(r"\{[^\}]+\}", raw, re.DOTALL)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return []
+    if not data.get("found"):
+        return []
+    try:
+        left = int(data.get("left", 0))
+        top = int(data.get("top", 0))
+        width = int(data.get("width", 0))
+        height = int(data.get("height", 0))
+        conf = float(data.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        return []
+    if width <= 0 or height <= 0:
+        return []
+    return [
+        VisionBox(
+            text=text,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+            confidence=max(0.0, min(1.0, conf)),
+            engine=f"ai:{settings.provider}",
+        )
+    ]
+
+
 def find_text_on_image(
     source: Image.Image | bytes | str | Path,
     text: str,
     *,
     prefer_tesseract: bool = True,
+    prefer_ai: bool = True,
 ) -> list[dict[str, Any]]:
-    """Find ``text`` on an image. Returns list of box dicts with confidence."""
+    """Find ``text`` on an image. Returns list of box dicts with confidence.
+
+    Order: tesseract → Pillow template (unchanged local path). If still empty
+    and a remote AI provider+key is configured, optionally ask the AI.
+    """
     if not text:
         return []
     img = _image_from_any(source)
@@ -251,6 +318,11 @@ def find_text_on_image(
             boxes = []
     if not boxes:
         boxes = _ocr_template(img, text)
+    if not boxes and prefer_ai:
+        try:
+            boxes = _try_ai_vision_boxes(img, text)
+        except Exception:  # noqa: BLE001
+            boxes = []
     return [b.to_dict() for b in boxes]
 
 

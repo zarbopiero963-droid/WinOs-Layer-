@@ -21,6 +21,9 @@ from windows_os_api.apps.workflows.recorder import reset_workflows
 from windows_os_api.apps.sandbox.permissions import reset_policies
 from windows_os_api.core.security.audit import reset_audit_logger, AuditLogger
 from windows_os_api.core.runtime.app import create_app
+from windows_os_api.apps.ai.settings_store import reset_ai_settings, set_config_path_override
+from windows_os_api.apps.ai.provider import reset_ai_client
+from windows_os_api.apps.reasoning.offline import set_llm, NullLLM
 
 
 @pytest.fixture()
@@ -28,10 +31,19 @@ def tmp_sandbox(tmp_path, monkeypatch):
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     audit = tmp_path / "audit.jsonl"
+    ai_cfg = tmp_path / "ai_settings.json"
     monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(sandbox))
     monkeypatch.setenv("WINOS_AUDIT_LOG_PATH", str(audit))
     monkeypatch.setenv("WINOS_BACKEND", "fake")
+    monkeypatch.setenv("WINOS_AI_PROVIDER", "local")
+    monkeypatch.setenv("WINOS_AI_API_KEY", "")
+    monkeypatch.delenv("WINOS_AI_MODEL", raising=False)
+    monkeypatch.delenv("WINOS_AI_BASE_URL", raising=False)
     get_settings.cache_clear()
+    set_config_path_override(ai_cfg)
+    reset_ai_settings()
+    reset_ai_client()
+    set_llm(NullLLM())
     reset_backend()
     reset_adapters()
     reset_workflows()
@@ -39,6 +51,10 @@ def tmp_sandbox(tmp_path, monkeypatch):
     reset_audit_logger()
     yield sandbox
     get_settings.cache_clear()
+    set_config_path_override(None)
+    reset_ai_settings()
+    reset_ai_client()
+    set_llm(NullLLM())
     reset_backend()
     reset_adapters()
     reset_workflows()

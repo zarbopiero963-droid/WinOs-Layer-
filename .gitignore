@@ -32,3 +32,7 @@ config/secrets*
 installer/output/
 *.exe
 !installer/**
+
+# AI provider secrets (never commit)
+ai_settings.json
+**/ai_settings.json

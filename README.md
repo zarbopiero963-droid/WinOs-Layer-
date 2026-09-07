@@ -109,6 +109,37 @@ sudo apt install wmctrl xdotool xclip
 
 Vision OCR accuracy is best-effort without tesseract. Wayland window control varies by compositor.
 
+
+## Optional AI providers (Windows + Linux)
+
+Same config surface on both platforms. Default is **local** (Pillow / tesseract OCR) — no API key required.
+
+| Env / setting | Values | Notes |
+|---------------|--------|-------|
+| `WINOS_AI_PROVIDER` | `local` \| `openai` \| `anthropic` \| `openrouter` | default `local` |
+| `WINOS_AI_API_KEY` | secret | never logged in full; masked as `sk-…xxxx` in API |
+| `WINOS_AI_MODEL` | optional | defaults per provider |
+| `WINOS_AI_BASE_URL` | optional | OpenRouter / custom OpenAI-compatible |
+
+Persist via Control Center **AI Provider** section or:
+
+```bash
+# Admin API key required
+curl -s -X PUT http://127.0.0.1:8765/v1/ai/settings \
+  -H "X-API-Key: admin-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"openai","api_key":"sk-YOUR_KEY_HERE","model":"gpt-4o-mini"}'
+
+curl -s http://127.0.0.1:8765/v1/ai/settings -H "X-API-Key: admin-key-change-me"
+curl -s -X POST http://127.0.0.1:8765/v1/ai/test \
+  -H "X-API-Key: admin-key-change-me" -H "Content-Type: application/json" \
+  -d '{"spend":false}'
+```
+
+Settings file: `~/.config/winos-api/ai_settings.json` (Linux) or `%APPDATA%\\winos-api\\ai_settings.json` (Windows), mode `0600`. Empty `api_key` on PUT clears the secret. Never commit real keys — use placeholders like `sk-YOUR_KEY_HERE`.
+
+When `provider != local` and a key is set, vision/find and UI reasoner/planner may call the remote chat API; otherwise the existing local path is unchanged.
+
 ## Tests
 
 ```bash

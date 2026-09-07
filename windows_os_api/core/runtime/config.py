@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # Opt-in for pkexec/sudo elevation (still requires ADMIN permission)
     allow_privileged: bool = False
 
+    # Optional remote AI (OpenAI / Anthropic / OpenRouter). Default local = Pillow/tesseract.
+    # Secrets: never log full WINOS_AI_API_KEY; persist under user config dir chmod 600.
+    ai_provider: Literal["local", "openai", "anthropic", "openrouter"] = "local"
+    ai_api_key: str = ""
+    ai_model: str | None = None
+    ai_base_url: str | None = None
+
     # Observability
     metrics_enabled: bool = True
 

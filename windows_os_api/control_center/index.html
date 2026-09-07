@@ -7,18 +7,26 @@
     :root { font-family: system-ui, sans-serif; color: #e8eef7; background: #0f172a; }
     body { margin: 0; padding: 1.5rem; }
     h1 { margin: 0 0 .25rem; }
+    h2 { margin: 0 0 .75rem; font-size: 1.1rem; }
     .muted { color: #94a3b8; }
     .card { background: #1e293b; border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; }
     button { background: #38bdf8; color: #0f172a; border: 0; border-radius: 8px; padding: .5rem 1rem; font-weight: 600; cursor: pointer; }
     button:hover { background: #7dd3fc; }
+    button.secondary { background: #64748b; color: #f8fafc; }
+    button.secondary:hover { background: #94a3b8; color: #0f172a; }
     pre { background: #020617; padding: 1rem; border-radius: 8px; overflow: auto; max-height: 320px; }
-    input { background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px; padding: .4rem .6rem; width: 280px; }
-    .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+    input, select { background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px; padding: .4rem .6rem; min-width: 220px; }
+    label { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; color: #cbd5e1; }
+    .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; }
+    .note { font-size: .85rem; color: #94a3b8; margin-top: .5rem; }
+    .status { font-size: .9rem; margin-top: .5rem; }
+    .ok { color: #4ade80; }
+    .err { color: #f87171; }
   </style>
 </head>
 <body>
   <h1>WinOs Layer Control Center</h1>
-  <p class="muted">Dashboard locale FastAPI — bind 127.0.0.1 di default</p>
+  <p class="muted">Dashboard locale FastAPI — bind 127.0.0.1 di default (Windows + Linux)</p>
   <div class="card row">
     <label>API Key <input id="key" value="dev-key-change-me"/></label>
     <button onclick="loadHealth()">Health</button>
@@ -26,19 +34,120 @@
     <button onclick="loadApps()">Discover Apps</button>
     <button onclick="loadMetrics()">Metrics</button>
   </div>
+
+  <div class="card">
+    <h2>AI Provider</h2>
+    <p class="note">Optional. Local OCR (Pillow / tesseract) works without a key. Same settings on Windows and Linux. Saving/testing requires an <b>admin</b> API key in the field above.</p>
+    <div class="row">
+      <label>Provider
+        <select id="ai_provider">
+          <option value="local">local</option>
+          <option value="openai">openai</option>
+          <option value="anthropic">anthropic</option>
+          <option value="openrouter">openrouter</option>
+        </select>
+      </label>
+      <label>Model <input id="ai_model" placeholder="default per provider"/></label>
+      <label>Base URL <input id="ai_base_url" placeholder="optional / OpenRouter custom"/></label>
+      <label>API Key <input id="ai_api_key" type="password" placeholder="sk-… (leave blank to keep)"/></label>
+    </div>
+    <div class="row" style="margin-top:.75rem">
+      <button onclick="saveAi()">Save</button>
+      <button class="secondary" onclick="testAi()">Test</button>
+      <button class="secondary" onclick="loadAi()">Reload</button>
+      <span id="ai_preview" class="muted"></span>
+    </div>
+    <div id="ai_status" class="status muted"></div>
+  </div>
+
   <div class="card"><pre id="out">Pronto.</pre></div>
   <script>
     const out = document.getElementById('out');
-    async function api(path, opts={}) {
+    const aiStatus = document.getElementById('ai_status');
+    function headers(extra={}) {
       const key = document.getElementById('key').value;
-      const r = await fetch(path, { ...opts, headers: { 'X-API-Key': key, ...(opts.headers||{}) } });
-      const t = await r.text();
-      try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; }
+      return { 'X-API-Key': key, ...extra };
     }
-    async function loadHealth(){ out.textContent = await api('/v1/health'); }
-    async function loadCaps(){ out.textContent = await api('/v1/capabilities'); }
-    async function loadApps(){ out.textContent = await api('/v1/apps/discover', {method:'POST'}); }
-    async function loadMetrics(){ out.textContent = await api('/v1/metrics'); }
+    async function api(path, opts={}) {
+      const r = await fetch(path, { ...opts, headers: { ...headers(opts.headers||{}) } });
+      const t = await r.text();
+      try { return { status: r.status, body: JSON.parse(t) }; }
+      catch { return { status: r.status, body: t }; }
+    }
+    async function loadHealth(){ const r = await api('/v1/health'); out.textContent = JSON.stringify(r.body, null, 2); }
+    async function loadCaps(){ const r = await api('/v1/capabilities'); out.textContent = JSON.stringify(r.body, null, 2); }
+    async function loadApps(){ const r = await api('/v1/apps/discover', {method:'POST'}); out.textContent = JSON.stringify(r.body, null, 2); }
+    async function loadMetrics(){ const r = await api('/v1/metrics'); out.textContent = JSON.stringify(r.body, null, 2); }
+
+    function fillAi(s) {
+      if (!s || typeof s !== 'object') return;
+      document.getElementById('ai_provider').value = s.provider || 'local';
+      document.getElementById('ai_model').value = s.model || '';
+      document.getElementById('ai_base_url').value = s.base_url || '';
+      document.getElementById('ai_api_key').value = '';
+      const prev = document.getElementById('ai_preview');
+      prev.textContent = s.api_key_set
+        ? `key set: ${s.api_key_preview || 'sk-…xxxx'}`
+        : 'no API key set';
+    }
+    async function loadAi() {
+      const r = await api('/v1/ai/settings');
+      out.textContent = JSON.stringify(r.body, null, 2);
+      if (r.status === 200) {
+        fillAi(r.body);
+        aiStatus.className = 'status ok';
+        aiStatus.textContent = 'Settings loaded.';
+      } else {
+        aiStatus.className = 'status err';
+        aiStatus.textContent = 'Load failed (need admin API key).';
+      }
+    }
+    async function saveAi() {
+      const body = {
+        provider: document.getElementById('ai_provider').value,
+        model: document.getElementById('ai_model').value || null,
+        base_url: document.getElementById('ai_base_url').value || null,
+      };
+      const keyVal = document.getElementById('ai_api_key').value;
+      // Only send api_key when user typed something (empty clears)
+      if (document.getElementById('ai_api_key').dataset.touch === '1' || keyVal !== '') {
+        body.api_key = keyVal;
+      }
+      const r = await api('/v1/ai/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      out.textContent = JSON.stringify(r.body, null, 2);
+      if (r.status === 200) {
+        fillAi(r.body);
+        aiStatus.className = 'status ok';
+        aiStatus.textContent = 'Saved (persisted under user config dir, chmod 600).';
+      } else {
+        aiStatus.className = 'status err';
+        aiStatus.textContent = 'Save failed.';
+      }
+    }
+    async function testAi() {
+      const r = await api('/v1/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spend: false }),
+      });
+      out.textContent = JSON.stringify(r.body, null, 2);
+      if (r.status === 200 && r.body && r.body.ok) {
+        aiStatus.className = 'status ok';
+        aiStatus.textContent = r.body.detail || 'Test OK';
+      } else {
+        aiStatus.className = 'status err';
+        aiStatus.textContent = (r.body && r.body.detail) || 'Test failed';
+      }
+    }
+    document.getElementById('ai_api_key').addEventListener('input', () => {
+      document.getElementById('ai_api_key').dataset.touch = '1';
+    });
+    // Best-effort preload (admin key may differ)
+    loadAi().catch(() => {});
   </script>
 </body>
 </html>
