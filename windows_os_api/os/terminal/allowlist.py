@@ -79,14 +79,16 @@ def registered_commands(include_admin: bool = False) -> list[str]:
 
 
 def _split(command: str) -> list[str]:
-    """Tokenise without a shell.
+    """Tokenise without a shell, using the host's quoting rules.
 
-    POSIX rules everywhere: the registered commands take flags, never paths, so
-    the backslash handling that would matter on Windows paths does not arise —
-    and posix mode is the predictable one.
+    Windows uses non-POSIX mode because `\\` is a path separator there, not an
+    escape. Parsing `del /f /q C:\\` under POSIX rules raises "No escaped
+    character" — the command is still refused, but the caller is told their
+    quoting is broken instead of the truth, which is that `del` is not
+    registered. Observed on the windows-latest runner.
     """
     try:
-        return shlex.split(command)
+        return shlex.split(command, posix=(os.name != "nt"))
     except ValueError as exc:  # unbalanced quotes
         raise CommandRejected(f"could not parse command: {exc}") from exc
 

@@ -48,10 +48,15 @@ def test_shell_chaining_is_refused(backend):
 
 
 def test_admin_policy_does_not_disable_the_registry(backend):
-    """ADMIN widens the registry; it must not turn it off."""
+    """ADMIN widens the registry; it must not turn it off.
+
+    The backslash path also pins the tokenizer: on Windows shlex must run in
+    non-POSIX mode, or `C:\\` is read as a broken escape and the caller is told
+    their quoting is wrong instead of the truth — that `del` is not registered.
+    """
     result = backend.terminal_execute("del /f /q C:\\", "ADMIN")
     assert result["ok"] is False
-    assert "allowlist" in result["error"]
+    assert "allowlist" in result["error"], result["error"]
 
 
 def test_deny_policy_still_short_circuits(backend):

@@ -200,6 +200,13 @@ riporta l'allowlist a essere un allow-anything.
 
 `ADMIN` amplia il registro, non lo disattiva.
 
+Il comando viene tokenizzato con le regole di quoting dell'host: `posix=False`
+su Windows, dove `\` e' un separatore di path, non un escape. Sotto le regole
+POSIX `C:\` viene letto come escape rotto e il chiamante si sente dire che il
+suo quoting e' sbagliato, invece della verita': il comando non e' registrato.
+Cambia il messaggio d'errore, non l'insieme dei comandi permessi — cio' che non
+sta nel registro non viene eseguito su nessuna piattaforma.
+
 **Breaking change rispetto alla versione precedente**: prima il comando veniva
 filtrato con una denylist di metacaratteri (`; && | ` `` ` `` ` $( \n`) e poi
 eseguito con `shell=True`. Un comando senza quei caratteri passava e veniva

@@ -113,6 +113,20 @@ def test_admin_only_commands_need_the_admin_policy():
     assert "ADMIN" in str(exc.value)
 
 
+def test_a_backslash_path_is_still_refused():
+    """A Windows-style path must be refused on every platform.
+
+    The *message* differs by host and is asserted where it is meaningful: on
+    Windows `shlex` runs in non-POSIX mode, so this reports "not in allowlist"
+    (see tests/windows/test_terminal_allowlist_windows.py). On POSIX a trailing
+    single backslash genuinely is a broken escape, so "could not parse" is the
+    honest answer there. Either way the command does not run — that is the part
+    that holds everywhere, so that is what this asserts.
+    """
+    with pytest.raises(CommandRejected):
+        resolve("del /f /q C:\\")
+
+
 def test_empty_and_unparsable_commands_are_refused():
     with pytest.raises(CommandRejected):
         resolve("   ")
