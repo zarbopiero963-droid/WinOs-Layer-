@@ -1,0 +1,46 @@
+# systemd unit for WinOs-Layer FastAPI server (Linux portable package).
+#
+# NOTE: This unit is for the Linux portable binary, which runs FakeBackend /
+# OS-portable API server on non-Windows hosts. On a real Windows target the
+# Windows EXE uses WindowsBackend when on Win32 — this unit is NOT used there.
+#
+# Install (system-wide example):
+#   sudo cp winos-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now winos-api
+#
+# Or user unit:
+#   mkdir -p ~/.config/systemd/user
+#   cp winos-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now winos-api
+
+[Unit]
+Description=WinOs-Layer FastAPI OS API server (Linux portable / FakeBackend)
+Documentation=file:///opt/winos-api/LINUX.md
+After=network.target
+
+[Service]
+Type=simple
+# Prefer /opt/winos-api/winos-api (system install) or override ExecStart for ~/.local
+ExecStart=/opt/winos-api/winos-api serve --host 127.0.0.1 --port 8765
+WorkingDirectory=/opt/winos-api
+Restart=on-failure
+RestartSec=5
+
+# FakeBackend / auto on non-Windows; Windows EXE selects WindowsBackend on Win32
+Environment=WINOS_BACKEND=fake
+Environment=WINOS_REQUIRE_AUTH=true
+# Optional: EnvironmentFile=-/opt/winos-api/api_key.env
+
+# Bind localhost only (default security posture)
+# Remote access remains DISABLED unless deliberately enabled
+
+# Hardening (adjust if you need broader FS access for adapters)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/winos-api
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+# For user units, use: WantedBy=default.target

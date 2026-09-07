@@ -1,0 +1,55 @@
+name: Build Linux
+
+# Dedicated Linux portable build (FastAPI server ELF + FakeBackend-capable).
+# This is NOT a Windows emulator — use Build / dist-windows for Win32 EXE/Setup.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]" pyinstaller build
+
+      - name: Validate packaging
+        run: python scripts/build_installer.py validate
+
+      - name: Build portable (Linux ELF)
+        run: python scripts/build_installer.py build-portable
+
+      - name: Package Linux portable zip/tar.gz
+        run: python scripts/build_installer.py package-linux
+
+      - name: Python wheel/sdist
+        run: python -m build --outdir dist-python
+
+      - name: Upload Linux portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-portable
+          path: |
+            dist/winos-api-portable-linux.zip
+            dist/winos-api-portable-linux.tar.gz
+            dist/winos-api
+            dist/checksums-linux.txt
+          if-no-files-found: error
+
+      - name: Upload Python packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-python
+          path: |
+            dist-python/
+          if-no-files-found: warn

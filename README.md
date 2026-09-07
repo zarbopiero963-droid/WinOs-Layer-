@@ -74,17 +74,32 @@ winos-mcp   # stdio JSON-RPC
 # or: python -m windows_os_api.api.mcp.server
 ```
 
+## Two builds — choose your OS
+
+| Platform | GitHub Actions | Artifact | Notes |
+|----------|----------------|----------|-------|
+| **Linux portable** | **Build Linux** → `dist-linux-portable` | `winos-api-portable-linux.zip` | FastAPI server ELF with **FakeBackend** (OS-portable). **Not a Windows emulator.** |
+| **Windows EXE/Setup** | **Build** → `dist-windows` | Setup.exe + `winos-api-portable-windows.zip` | **WindowsBackend** on Win32 |
+| **Release** | tag `v*` | both attached | exe, windows zip, linux zip, checksums |
+
+```bash
+# Actions → Build Linux  → download artifact dist-linux-portable
+# Actions → Build        → dist-windows (Setup.exe + portable zip)
+# Release                → attaches both OS variants
+```
 
 ## Installer / packaging
 
 ```bash
 python scripts/build_installer.py validate
-python scripts/build_installer.py build-portable   # current OS smoke (Linux ELF or Windows exeefile)
+python scripts/build_installer.py build-portable   # current OS smoke (Linux ELF or Windows onefile)
+python scripts/build_installer.py package-linux    # → dist/winos-api-portable-linux.zip
 # Setup.exe: Windows only — see installer/README.md and GHA build.yml
 python scripts/build_installer.py checksums
 ```
 
 Service name: `WindowsOSLayerService`. Default bind: `127.0.0.1:8765`.
+Linux systemd: `installer/linux/winos-api.service` (FakeBackend / localhost).
 
 ## Windows hard tests
 
