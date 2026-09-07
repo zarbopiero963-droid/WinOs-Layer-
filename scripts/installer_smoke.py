@@ -25,7 +25,6 @@ import argparse
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,19 +92,43 @@ def verify_removed(install_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # Windows lifecycle
 # ---------------------------------------------------------------------------
-def _run(cmd: list[str], what: str, timeout: int = 600, log: Path | None = None) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603
+def _log_tail(log: Path | None) -> str:
+    """Inno's log, or an explicit statement that there isn't one.
+
+    Inno writes almost nothing to stdout, so this log is the only account of what
+    happened — and this code runs where nobody can reproduce the problem by hand.
+    An ABSENT log is itself a diagnosis: the installer never got far enough to
+    open it, which points at the process never really starting (elevation).
+    """
+    if log is None:
+        return ""
+    if not log.is_file():
+        return f"\n--- {log.name}: not created — the installer never started writing it ---"
+    body = log.read_text(errors="replace").strip()
+    return f"\n--- {log.name} ---\n{body}\n--- end ---"
+
+
+def _run(cmd: list[str], what: str, timeout: int = 180, log: Path | None = None) -> None:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603
+    except subprocess.TimeoutExpired as exc:
+        # A hang here is not an infrastructure hiccup: it means the installer is
+        # waiting for input nobody can give. Fail fast and say so, instead of
+        # burning runner minutes on a silent stall — and never let the raw
+        # TimeoutExpired escape, which would lose the log below.
+        raise InstallerSmokeError(
+            f"{what} did not finish within {timeout}s — it is waiting for something.\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"Most likely an elevation prompt: the .iss sets PrivilegesRequired=admin, "
+            f"and /SUPPRESSMSGBOXES suppresses Inno's own message boxes but NOT a "
+            f"Windows UAC consent dialog." + _log_tail(log)
+        ) from exc
     if proc.returncode != 0:
-        detail = (
+        raise InstallerSmokeError(
             f"{what} exited {proc.returncode}\n"
             f"cmd: {' '.join(cmd)}\n"
-            f"stdout: {proc.stdout.strip()}\nstderr: {proc.stderr.strip()}"
+            f"stdout: {proc.stdout.strip()}\nstderr: {proc.stderr.strip()}" + _log_tail(log)
         )
-        # Inno writes almost nothing to stdout; its log is the only account of
-        # what went wrong, and this runs where nobody can reproduce it by hand.
-        if log is not None and log.is_file():
-            detail += f"\n--- {log.name} ---\n{log.read_text(errors='replace').strip()}\n--- end ---"
-        raise InstallerSmokeError(detail)
 
 
 def silent_install(setup: Path, install_dir: Path, log: Path) -> None:
@@ -173,7 +196,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     install_dir = Path(args.install_dir)
-    log = Path(tempfile.gettempdir()) / "winos-installer-smoke.log"
+    # Beside the install dir, not in tempfile.gettempdir(): on Windows the temp
+    # path can contain spaces, and Inno's /LOG= has the same quoting fragility
+    # as /DIR=. Same reason the install target avoids Program Files.
+    log = install_dir.parent / "winos-installer-smoke.log"
     try:
         setup = find_setup(Path(args.output_dir))
         print(f"installer: {setup} ({setup.stat().st_size / 1_048_576:.1f} MiB)")
