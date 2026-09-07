@@ -240,7 +240,9 @@ python scripts/installer_smoke.py     # Windows only
 Silent install of `WinOsApi-Setup-<version>.exe` into a scratch directory, check
 of the layout the `.iss` promises (`winos-api.exe`, `service/`, a non-empty
 `api_key.txt`), `artifact_smoke` against the installed binary, then silent
-uninstall with a check that nothing is left behind. It does **not** assert a
+uninstall with a check that nothing is left behind — including `api_key.txt`,
+which `[Code]` generates outside `[Files]` and which the uninstaller therefore
+had to be told explicitly to remove. It does **not** assert a
 registered Windows service: the installer does not register one — that is a
 separate manual step (`service/install_nssm.bat`).
 

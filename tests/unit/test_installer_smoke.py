@@ -161,3 +161,73 @@ def test_wait_or_kill_tree_kills_and_reports_a_process_that_will_not_exit(ism):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+# ---------------------------------------------------------------------------
+# The .iss contract: whatever [Code] creates, [UninstallDelete] must remove.
+# Runnable anywhere — no Windows needed to catch the regression.
+# ---------------------------------------------------------------------------
+ISS = Path(__file__).resolve().parents[2] / "installer" / "inno" / "winos-api.iss"
+
+
+def _iss_section(name: str) -> str:
+    """Return the body of one .iss section.
+
+    Anchored to the start of a line: a bare text search would happily match a
+    section name mentioned inside a comment elsewhere in the file, and silently
+    return the wrong body.
+    """
+    import re
+
+    text = ISS.read_text(encoding="utf-8")
+    header = re.search(rf"^\[{name}\]\s*$", text, re.MULTILINE)
+    assert header, f"section [{name}] not found in {ISS.name}"
+    rest = text[header.end() :]
+    nxt = re.search(r"^\[[A-Za-z]+\]\s*$", rest, re.MULTILINE)
+    return rest if nxt is None else rest[: nxt.start()]
+
+
+def _uninstall_directives() -> str:
+    """The [UninstallDelete] DIRECTIVES, with comments stripped.
+
+    Comments must not count: the explanation above each entry mentions the very
+    filename the entry removes, so a guard that searched the raw section would
+    still pass after someone deleted the directive and left the comment — a test
+    that reports success for a broken uninstall.
+    """
+    body = _iss_section("UninstallDelete")
+    return "\n".join(
+        line for line in body.splitlines() if line.strip() and not line.lstrip().startswith(";")
+    )
+
+
+def test_uninstall_removes_the_generated_api_key():
+    """The API key must not survive uninstallation.
+
+    api_key.txt is written by [Code] at ssPostInstall, so it is NOT in [Files]
+    and Inno does not track it: without an explicit [UninstallDelete] entry the
+    uninstaller leaves a credential for an OS-control API sitting on disk.
+    Observed for real by installer_smoke: "uninstall left files: api_key.txt".
+    """
+    assert "api_key.txt" in _uninstall_directives()
+
+
+def test_uninstall_removes_the_runtime_audit_log():
+    """logs/ holds API key prefixes and executed command lines — clean it up too."""
+    assert "logs" in _uninstall_directives()
+
+
+def test_every_code_generated_file_is_covered_by_uninstalldelete():
+    """Generalised guard: a new file written from [Code] must also be removed.
+
+    Catches the whole class of bug, not just today's instance — adding another
+    SaveStringToFile in [Code] without an UninstallDelete entry fails here.
+    """
+    import re
+
+    code = _iss_section("Code")
+    generated = set(re.findall(r"ExpandConstant\('\{app\}\\([A-Za-z0-9_.-]+)'\)", code))
+    assert generated, "expected [Code] to generate at least api_key.txt"
+    cleanup = _uninstall_directives()
+    uncovered = sorted(name for name in generated if name not in cleanup)
+    assert not uncovered, f"files created by [Code] but never uninstalled: {uncovered}"
