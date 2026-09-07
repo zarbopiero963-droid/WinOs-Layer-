@@ -29,6 +29,12 @@ jobs:
       - name: Build portable (Linux ELF)
         run: python scripts/build_installer.py build-portable
 
+      - name: Artifact smoke (run the frozen ELF for real)
+        # This workflow ships an artifact, so it must prove the artifact starts:
+        # launch dist/winos-api, poll /v1/health, check backend and auth, verify
+        # teardown. Same guard as the Build workflow.
+        run: python scripts/artifact_smoke.py --expect-backend linux
+
       - name: Package Linux portable zip/tar.gz
         run: python scripts/build_installer.py package-linux
 

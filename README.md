@@ -215,6 +215,28 @@ python scripts/build_installer.py package-linux
 python scripts/build_installer.py checksums
 ```
 
+### Artifact smoke — always run the binary you built
+
+A PyInstaller onefile build failing is a **runtime** event, not a build one: a
+dropped hidden import produces a binary that builds green and dies on launch.
+So the frozen artifact is never shipped without being executed:
+
+```bash
+python scripts/build_installer.py build-portable
+python scripts/artifact_smoke.py --expect-backend linux    # or: windows
+```
+
+It starts `dist/winos-api(.exe)`, polls `/v1/health` over real HTTP, asserts the
+served backend and version match this source tree, checks that `/v1/system` is
+refused without an API key, then verifies the process exits and frees its port.
+Exit 0 means the artifact is usable; any other exit means do not ship it.
+
+Wired into both `Build` and `Build Linux` right after `build-portable`. The
+`Build` workflow also runs on pull requests that touch packaging (`build.yml`,
+`installer/`, `build_installer.py`, `artifact_smoke.py`, `windows_os_api/cli/`,
+`pyproject.toml`), so a packaging change proves the artifact still runs before
+it merges — without making every unrelated PR pay for a Windows runner.
+
 Service name: `WindowsOSLayerService`. Default bind: `127.0.0.1:8765`.
 Linux systemd: `installer/linux/winos-api.service` (LinuxBackend / auto).
 
