@@ -36,3 +36,7 @@ installer/output/
 # AI provider secrets (never commit)
 ai_settings.json
 **/ai_settings.json
+
+# Runtime audit log (config.audit_log_path default is relative: logs/audit.jsonl).
+# Holds API key prefixes and executed command lines — never commit it.
+logs/
