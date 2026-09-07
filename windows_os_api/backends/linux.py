@@ -27,6 +27,33 @@ def _require_linux() -> None:
         raise LinuxBackendUnavailable("LinuxBackend requires a non-Windows platform")
 
 
+def _ensure_pyatspi():
+    """Import pyatspi, adding Debian dist-packages if the venv is isolated."""
+    try:
+        import pyatspi  # type: ignore
+
+        return pyatspi
+    except Exception:
+        pass
+    import sys
+
+    dist = "/usr/lib/python3/dist-packages"
+    if dist not in sys.path:
+        sys.path.insert(0, dist)
+    import pyatspi  # type: ignore
+
+    return pyatspi
+
+
+def _display_env() -> dict[str, str]:
+    """Subprocess env that preserves DISPLAY / XAUTHORITY for X11 tools."""
+    env = dict(os.environ)
+    if not env.get("DISPLAY"):
+        # Common agent/desktop default used by this project
+        env["DISPLAY"] = ":2"
+    return env
+
+
 class LinuxBackend:
     """Real Linux backend using psutil, subprocess, pathlib, and optional tools."""
 
@@ -68,8 +95,7 @@ class LinuxBackend:
     def _probe_capabilities(self) -> dict[str, bool]:
         has_atspi = False
         try:
-            import pyatspi  # type: ignore  # noqa: F401
-
+            _ensure_pyatspi()
             has_atspi = True
         except Exception:  # noqa: BLE001
             has_atspi = False
@@ -331,6 +357,7 @@ class LinuxBackend:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=_display_env(),
                 )
                 out: list[dict[str, Any]] = []
                 for line in r.stdout.splitlines():
@@ -353,6 +380,7 @@ class LinuxBackend:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=_display_env(),
                 )
                 out = []
                 for line in r.stdout.splitlines():
@@ -365,6 +393,7 @@ class LinuxBackend:
                         capture_output=True,
                         text=True,
                         timeout=2,
+                        env=_display_env(),
                     )
                     title = title_r.stdout.strip()
                     if title:
@@ -386,6 +415,7 @@ class LinuxBackend:
                     capture_output=True,
                     timeout=5,
                     check=False,
+                    env=_display_env(),
                 )
                 return {"ok": True, "hwnd": hwnd}
             except Exception as e:  # noqa: BLE001
@@ -397,6 +427,7 @@ class LinuxBackend:
                     capture_output=True,
                     timeout=5,
                     check=False,
+                    env=_display_env(),
                 )
                 return {"ok": True, "hwnd": hwnd}
             except Exception as e:  # noqa: BLE001
@@ -411,6 +442,7 @@ class LinuxBackend:
                     capture_output=True,
                     timeout=5,
                     check=False,
+                    env=_display_env(),
                 )
                 return {"ok": True, "hwnd": hwnd}
             except Exception as e:  # noqa: BLE001
@@ -422,6 +454,7 @@ class LinuxBackend:
                     capture_output=True,
                     timeout=5,
                     check=False,
+                    env=_display_env(),
                 )
                 return {"ok": True, "hwnd": hwnd}
             except Exception as e:  # noqa: BLE001
@@ -431,52 +464,119 @@ class LinuxBackend:
     # ------------------------------------------------------------------
     # UI tree (AT-SPI optional — never Fake Contoso on linux)
     # ------------------------------------------------------------------
+    def _atspi_states(self, acc: Any, pyatspi: Any) -> list[str]:
+        out: list[str] = []
+        try:
+            st = acc.getState()
+        except Exception:  # noqa: BLE001
+            return out
+        for attr in dir(pyatspi):
+            if not attr.startswith("STATE_"):
+                continue
+            try:
+                val = getattr(pyatspi, attr)
+                if st.contains(val):
+                    out.append(attr.replace("STATE_", "").lower())
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    def _atspi_bounds(self, acc: Any) -> dict[str, int] | None:
+        try:
+            comp = acc.queryComponent()
+            ext = comp.getExtents(0)
+            return {"x": int(ext.x), "y": int(ext.y), "width": int(ext.width), "height": int(ext.height)}
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _atspi_path(self, path_parts: list[str]) -> str:
+        return "/" + "/".join(path_parts) if path_parts else "/"
+
+    def _atspi_node(
+        self,
+        acc: Any,
+        pyatspi: Any,
+        depth: int = 0,
+        max_depth: int = 6,
+        path_parts: list[str] | None = None,
+    ) -> dict[str, Any]:
+        path_parts = list(path_parts or [])
+        try:
+            name = acc.name or ""
+        except Exception:  # noqa: BLE001
+            name = ""
+        try:
+            role = acc.getRoleName() if hasattr(acc, "getRoleName") else ""
+        except Exception:  # noqa: BLE001
+            role = ""
+        part = f"{role}:{name}" if name else role or f"node{len(path_parts)}"
+        cur_path = path_parts + [part]
+        automation_id = self._atspi_path(cur_path)
+        states = self._atspi_states(acc, pyatspi)
+        bounds = self._atspi_bounds(acc)
+        value = None
+        try:
+            text_iface = acc.queryText()
+            value = text_iface.getText(0, min(text_iface.characterCount, 500))
+        except Exception:  # noqa: BLE001
+            pass
+        kids: list[dict[str, Any]] = []
+        if depth < max_depth:
+            try:
+                n = acc.childCount
+            except Exception:  # noqa: BLE001
+                n = 0
+            for i in range(min(n, 60)):
+                try:
+                    kids.append(
+                        self._atspi_node(
+                            acc.getChildAtIndex(i),
+                            pyatspi,
+                            depth + 1,
+                            max_depth,
+                            cur_path,
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+        return {
+            "name": name,
+            "role": role,
+            "control_type": role,
+            "states": states,
+            "bounds": bounds,
+            "automation_id": automation_id,
+            "path": automation_id,
+            "value": value,
+            "children": kids,
+        }
+
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
         try:
-            import pyatspi  # type: ignore
-
+            pyatspi = _ensure_pyatspi()
             desktop = pyatspi.Registry.getDesktop(0)
             children: list[dict[str, Any]] = []
-
-            def node_info(acc: Any, depth: int = 0) -> dict[str, Any]:
-                try:
-                    name = acc.name or ""
-                    role = acc.getRoleName() if hasattr(acc, "getRoleName") else ""
-                except Exception:  # noqa: BLE001
-                    name, role = "", ""
-                kids: list[dict[str, Any]] = []
-                if depth < 4:
-                    try:
-                        n = acc.childCount
-                    except Exception:  # noqa: BLE001
-                        n = 0
-                    for i in range(min(n, 40)):
-                        try:
-                            kids.append(node_info(acc.getChildAtIndex(i), depth + 1))
-                        except Exception:  # noqa: BLE001
-                            continue
-                return {
-                    "name": name,
-                    "control_type": role,
-                    "automation_id": "",
-                    "children": kids,
-                }
-
             try:
                 count = desktop.childCount
             except Exception:  # noqa: BLE001
                 count = 0
-            for i in range(min(count, 30)):
+            for i in range(min(count, 40)):
                 try:
-                    children.append(node_info(desktop.getChildAtIndex(i)))
+                    children.append(self._atspi_node(desktop.getChildAtIndex(i), pyatspi))
                 except Exception:  # noqa: BLE001
                     continue
             return {
                 "hwnd": hwnd,
                 "name": "AT-SPI desktop",
                 "control_type": "Desktop",
+                "role": "desktop frame",
+                "states": [],
+                "bounds": None,
+                "automation_id": "/desktop",
+                "path": "/desktop",
                 "children": children,
                 "backend": "atspi",
+                "supported": True,
             }
         except Exception as e:  # noqa: BLE001
             return {
@@ -487,8 +587,212 @@ class LinuxBackend:
                 "supported": False,
                 "error": "AT-SPI / pyatspi unavailable",
                 "detail": str(e),
-                "hint": "Set WINOS_BACKEND=fake for Contoso CRM adapter demos",
+                "hint": "Install python3-pyatspi; ensure at-spi2-core is running. "
+                "Set WINOS_BACKEND=fake for Contoso CRM adapter demos",
             }
+
+    def find_accessible(
+        self,
+        name: str | None = None,
+        role: str | None = None,
+        *,
+        exact: bool = False,
+    ) -> dict[str, Any] | None:
+        """Find first AT-SPI node matching name and/or role."""
+        tree = self.get_ui_tree()
+        if not tree.get("supported", True) and tree.get("error"):
+            return None
+
+        def match(node: dict[str, Any]) -> bool:
+            n = node.get("name") or ""
+            r = (node.get("role") or node.get("control_type") or "").lower()
+            ok_name = True
+            ok_role = True
+            if name is not None:
+                if exact:
+                    ok_name = n == name
+                else:
+                    ok_name = name.lower() in n.lower()
+            if role is not None:
+                ok_role = role.lower() in r
+            return ok_name and ok_role
+
+        stack = list(tree.get("children") or [])
+        while stack:
+            node = stack.pop(0)
+            if match(node):
+                return node
+            stack[0:0] = list(node.get("children") or [])
+        return None
+
+    def _find_atspi_acc(
+        self,
+        pyatspi: Any,
+        name: str | None = None,
+        role: str | None = None,
+        *,
+        exact: bool = False,
+    ) -> Any | None:
+        desktop = pyatspi.Registry.getDesktop(0)
+
+        def walk(acc: Any) -> Any | None:
+            try:
+                n = acc.name or ""
+            except Exception:  # noqa: BLE001
+                n = ""
+            try:
+                r = acc.getRoleName() if hasattr(acc, "getRoleName") else ""
+            except Exception:  # noqa: BLE001
+                r = ""
+            ok_name = True
+            ok_role = True
+            if name is not None:
+                ok_name = (n == name) if exact else (name.lower() in n.lower())
+            if role is not None:
+                ok_role = role.lower() in (r or "").lower()
+            if ok_name and ok_role and (name is not None or role is not None):
+                return acc
+            try:
+                count = acc.childCount
+            except Exception:  # noqa: BLE001
+                count = 0
+            for i in range(min(count, 80)):
+                try:
+                    found = walk(acc.getChildAtIndex(i))
+                except Exception:  # noqa: BLE001
+                    continue
+                if found is not None:
+                    return found
+            return None
+
+        try:
+            for i in range(min(desktop.childCount, 40)):
+                found = walk(desktop.getChildAtIndex(i))
+                if found is not None:
+                    return found
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    def accessible_click(self, name: str, role: str | None = None) -> dict[str, Any]:
+        """Click an accessible via AT-SPI Action, else Component.grabFocus + click bounds."""
+        try:
+            pyatspi = _ensure_pyatspi()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"pyatspi unavailable: {e}", "name": name}
+
+        acc = self._find_atspi_acc(pyatspi, name=name, role=role)
+        if acc is None:
+            return {"ok": False, "error": "accessible not found", "name": name, "role": role}
+
+        # Prefer Action interface
+        try:
+            action = acc.queryAction()
+            n_act = action.nActions
+            click_idx = None
+            for i in range(n_act):
+                an = (action.getName(i) or "").lower()
+                if an in ("click", "press", "activate", "jump"):
+                    click_idx = i
+                    break
+            if click_idx is None and n_act > 0:
+                click_idx = 0
+            if click_idx is not None:
+                action.doAction(click_idx)
+                return {
+                    "ok": True,
+                    "name": name,
+                    "role": role,
+                    "method": "atspi_action",
+                    "action_index": click_idx,
+                }
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Fallback: focus + mouse click at center of bounds
+        bounds = self._atspi_bounds(acc)
+        try:
+            acc.queryComponent().grabFocus()
+        except Exception:  # noqa: BLE001
+            pass
+        if bounds and bounds.get("width", 0) > 0 and bounds.get("height", 0) > 0:
+            x = bounds["x"] + bounds["width"] // 2
+            y = bounds["y"] + bounds["height"] // 2
+            clicked = self.mouse_click(x, y, "left")
+            return {
+                "ok": bool(clicked.get("ok")),
+                "name": name,
+                "role": role,
+                "method": "bounds_click",
+                "bounds": bounds,
+                "click": clicked,
+            }
+        return {"ok": False, "error": "no Action interface and no usable bounds", "name": name}
+
+    def accessible_set_text(self, name: str, text: str, role: str | None = None) -> dict[str, Any]:
+        """Set text via AT-SPI EditableText / Text when available."""
+        try:
+            pyatspi = _ensure_pyatspi()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"pyatspi unavailable: {e}", "name": name}
+
+        # Prefer matching the named node; if name looks like window title, find text child under it
+        acc = self._find_atspi_acc(pyatspi, name=name, role=role)
+        if acc is None:
+            return {"ok": False, "error": "accessible not found", "name": name, "role": role}
+
+        def try_set(target: Any) -> dict[str, Any] | None:
+            try:
+                editable = target.queryEditableText()
+                try:
+                    # clear existing
+                    t = target.queryText()
+                    n = t.characterCount
+                    if n > 0:
+                        editable.deleteText(0, n)
+                except Exception:  # noqa: BLE001
+                    pass
+                editable.insertText(0, text, len(text))
+                return {"ok": True, "name": name, "method": "editable_text", "length": len(text)}
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                t = target.queryText()
+                # Some widgets only expose Text; still report current value path
+                _ = t.characterCount
+            except Exception:  # noqa: BLE001
+                return None
+            return None
+
+        direct = try_set(acc)
+        if direct:
+            return direct
+
+        # Search descendants for editable text
+        stack = [acc]
+        while stack:
+            cur = stack.pop(0)
+            got = try_set(cur)
+            if got:
+                return got
+            try:
+                for i in range(min(cur.childCount, 80)):
+                    stack.append(cur.getChildAtIndex(i))
+            except Exception:  # noqa: BLE001
+                continue
+
+        # Last resort: focus + xdotool type
+        try:
+            acc.queryComponent().grabFocus()
+        except Exception:  # noqa: BLE001
+            pass
+        typed = self.type_text(text)
+        return {
+            "ok": bool(typed.get("ok")),
+            "name": name,
+            "method": "xdotool_fallback",
+            "type_result": typed,
+        }
 
     # ------------------------------------------------------------------
     # Input (xdotool optional)
@@ -502,6 +806,7 @@ class LinuxBackend:
                 capture_output=True,
                 timeout=5,
                 check=False,
+                env=_display_env(),
             )
             return {"ok": True, "x": x, "y": y}
         except Exception as e:  # noqa: BLE001
@@ -518,6 +823,7 @@ class LinuxBackend:
                 capture_output=True,
                 timeout=5,
                 check=False,
+                env=_display_env(),
             )
             return {"ok": True, "x": x, "y": y, "button": button}
         except Exception as e:  # noqa: BLE001
@@ -533,6 +839,7 @@ class LinuxBackend:
                 capture_output=True,
                 timeout=5,
                 check=False,
+                env=_display_env(),
             )
             return {"ok": True, "key": key, "modifiers": modifiers or []}
         except Exception as e:  # noqa: BLE001
@@ -543,10 +850,11 @@ class LinuxBackend:
             return {"ok": False, "error": "xdotool not installed"}
         try:
             subprocess.run(  # noqa: S603
-                ["xdotool", "type", "--", text],
+                ["xdotool", "type", "--clearmodifiers", "--", text],
                 capture_output=True,
                 timeout=30,
                 check=False,
+                env=_display_env(),
             )
             return {"ok": True, "length": len(text)}
         except Exception as e:  # noqa: BLE001
@@ -556,13 +864,40 @@ class LinuxBackend:
     # Clipboard
     # ------------------------------------------------------------------
     def clipboard_get(self) -> dict[str, Any]:
+        display = _display_env().get("DISPLAY")
+        if display and shutil.which("xclip"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=_display_env(),
+                )
+                if r.returncode == 0:
+                    return {"text": r.stdout, "format": "text", "tool": "xclip"}
+            except Exception:  # noqa: BLE001
+                pass
+        if display and shutil.which("xsel"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xsel", "--clipboard", "--output"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=_display_env(),
+                )
+                if r.returncode == 0:
+                    return {"text": r.stdout, "format": "text", "tool": "xsel"}
+            except Exception:  # noqa: BLE001
+                pass
         if shutil.which("wl-paste"):
             try:
                 r = subprocess.run(  # noqa: S603
                     ["wl-paste", "-n"], capture_output=True, text=True, timeout=5
                 )
                 if r.returncode == 0:
-                    return {"text": r.stdout, "format": "text"}
+                    return {"text": r.stdout, "format": "text", "tool": "wl-paste"}
             except Exception:  # noqa: BLE001
                 pass
         if shutil.which("xclip"):
@@ -572,9 +907,10 @@ class LinuxBackend:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=_display_env(),
                 )
                 if r.returncode == 0:
-                    return {"text": r.stdout, "format": "text"}
+                    return {"text": r.stdout, "format": "text", "tool": "xclip"}
             except Exception:  # noqa: BLE001
                 pass
         if shutil.which("xsel"):
@@ -584,9 +920,10 @@ class LinuxBackend:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    env=_display_env(),
                 )
                 if r.returncode == 0:
-                    return {"text": r.stdout, "format": "text"}
+                    return {"text": r.stdout, "format": "text", "tool": "xsel"}
             except Exception:  # noqa: BLE001
                 pass
         return {
@@ -597,39 +934,77 @@ class LinuxBackend:
         }
 
     def clipboard_set(self, text: str) -> dict[str, Any]:
+        # Prefer X11 tools when DISPLAY is set — xclip must not use capture_output
+        # (it daemonizes and hangs if stdout/stderr pipes stay open).
+        display = _display_env().get("DISPLAY")
+        if display and shutil.which("xclip"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xclip", "-selection", "clipboard", "-i"],
+                    input=text.encode("utf-8"),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    env=_display_env(),
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "length": len(text), "tool": "xclip"}
+            except Exception:  # noqa: BLE001
+                pass
+        if display and shutil.which("xsel"):
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["xsel", "--clipboard", "--input"],
+                    input=text.encode("utf-8"),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    env=_display_env(),
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "length": len(text), "tool": "xsel"}
+            except Exception:  # noqa: BLE001
+                pass
         if shutil.which("wl-copy"):
             try:
                 r = subprocess.run(  # noqa: S603
-                    ["wl-copy"], input=text, text=True, capture_output=True, timeout=5
+                    ["wl-copy"],
+                    input=text,
+                    text=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
                 )
                 if r.returncode == 0:
-                    return {"ok": True, "length": len(text)}
+                    return {"ok": True, "length": len(text), "tool": "wl-copy"}
             except Exception:  # noqa: BLE001
                 pass
         if shutil.which("xclip"):
             try:
                 r = subprocess.run(  # noqa: S603
-                    ["xclip", "-selection", "clipboard"],
-                    input=text,
-                    text=True,
-                    capture_output=True,
+                    ["xclip", "-selection", "clipboard", "-i"],
+                    input=text.encode("utf-8"),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     timeout=5,
+                    env=_display_env(),
                 )
                 if r.returncode == 0:
-                    return {"ok": True, "length": len(text)}
+                    return {"ok": True, "length": len(text), "tool": "xclip"}
             except Exception:  # noqa: BLE001
                 pass
         if shutil.which("xsel"):
             try:
                 r = subprocess.run(  # noqa: S603
                     ["xsel", "--clipboard", "--input"],
-                    input=text,
-                    text=True,
-                    capture_output=True,
+                    input=text.encode("utf-8"),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     timeout=5,
+                    env=_display_env(),
                 )
                 if r.returncode == 0:
-                    return {"ok": True, "length": len(text)}
+                    return {"ok": True, "length": len(text), "tool": "xsel"}
             except Exception:  # noqa: BLE001
                 pass
         return {
@@ -686,6 +1061,8 @@ class LinuxBackend:
             import mss  # type: ignore
             from mss.tools import to_png  # type: ignore
 
+            # mss uses X11 when DISPLAY is set
+            os.environ.setdefault("DISPLAY", _display_env().get("DISPLAY", ":0"))
             with mss.mss() as sct:
                 monitors = sct.monitors[1:]
                 idx = display_id or 0

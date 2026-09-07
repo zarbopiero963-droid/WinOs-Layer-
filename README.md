@@ -20,7 +20,7 @@ Requesting `windows` on Linux raises unless `WINOS_ALLOW_FAKE_FALLBACK=true`.
 - FastAPI + OpenAPI (`/docs`), bind default **127.0.0.1**, remote access **DISABLED**
 - Security: API keys, RBAC, permissions, audit log, rate limiting
 - Real OS ops on each platform; FakeBackend for CRM adapter demos
-- Universal Adapter (UI tree on Fake / Windows UIA / optional Linux AT-SPI)
+- Universal Adapter (UI tree on Fake / Windows UIA / Linux AT-SPI with find/click/set-text)
 - MCP JSON-RPC server, WebSocket event bus, Control Center HTML
 - Roadmap PR #1–#50 with `docs/FORENSIC_AUDIT.md`
 
@@ -143,6 +143,6 @@ git push -u origin main
 
 ## Note
 
-- **LinuxBackend**: real processes, sandbox FS, psutil network/users; optional wmctrl/xdotool, xclip, pactl, systemctl, pyatspi — graceful degrade.
+- **LinuxBackend**: real processes, sandbox FS, psutil network/users; wmctrl/xdotool windows; xclip clipboard; mss screenshots; pyatspi AT-SPI tree + accessible click/set-text; pactl/systemctl when present — graceful degrade when tools absent. Windows UIA is N/A on Linux by design.
 - **FakeBackend**: Contoso CRM UI tree for adapter unit/E2E — `WINOS_BACKEND=fake` only.
 - **WindowsBackend**: raises if instantiated off Win32; COM/UIA when `pywin32`/`comtypes` present.

@@ -2,7 +2,7 @@
 Generated for roadmap PRs #1–#50. Status: `DONE` | `PARTIAL` | `NOT_STARTED`.
 Run: `python scripts/forensic_audit.py` (fails if DONE claims lack files/tests).
 Tests: `pytest -q -m "not windows"` (fake fixtures via conftest + `tests/linux/` real LinuxBackend).
-Live smoke: `python scripts/live_linux_smoke.py`.
+Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/live_linux_ui_control_smoke.py`.
 **Linux parity:** `LinuxBackend` is default on Linux (`WINOS_BACKEND=auto`); FakeBackend only when forced.
 
 ## PR1: Project structure + pyproject + package layout
@@ -489,17 +489,23 @@ Live smoke: `python scripts/live_linux_smoke.py`.
 - NOT_STARTED: 0
 
 ## LinuxBackend parity (post-PR50)
-- **Status:** DONE (core) / PARTIAL (AT-SPI / full desktop UI)
+- **Status:** DONE
 - **Files:**
-  - `windows_os_api/backends/linux.py`
+  - `windows_os_api/backends/linux.py` (AT-SPI rich tree + find/click/set_text; wmctrl/xclip/mss/xdotool)
   - `windows_os_api/backends/factory.py`
   - `windows_os_api/backends/base.py`
   - `windows_os_api/core/runtime/config.py`
   - `windows_os_api/os/system/service.py` (honest capability flags)
+  - `windows_os_api/api/rest/ui.py` (`/ui/tree`, `/ui/find`, `/ui/click`, `/ui/set-text`)
+  - `windows_os_api/apps/ui_inspector/service.py`
   - `tests/linux/test_linux_backend.py`
+  - `tests/linux/test_linux_ui_control.py`
   - `scripts/live_linux_smoke.py`
+  - `scripts/live_linux_ui_control_smoke.py`
 - **Tests:**
   - `pytest -m linux`
-  - `python scripts/live_linux_smoke.py`
-- **Remaining (PARTIAL):** full AT-SPI UI trees for arbitrary apps; screenshot without mss; Windows UIA is N/A on Linux by design.
+  - `pytest -m "not windows"`
+  - `DISPLAY=:2 python scripts/live_linux_ui_control_smoke.py`
+- **N/A (by design, not PARTIAL):** Windows UIA on Linux — use AT-SPI / wmctrl / xdotool instead (`windows_uia=false`).
+- **Notes:** Screenshot requires `mss` + `DISPLAY`; audio/services hard-assert when `pactl`/`systemctl` present, skip only when binary absent.
 
