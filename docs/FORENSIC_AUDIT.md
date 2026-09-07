@@ -78,16 +78,19 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `tests/integration/test_api_os_layers.py`
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
-## PR8: UI Automation tree + FakeBackend CRM + Windows UIA stub
+## PR8: UI Automation tree + FakeBackend CRM + real Windows UIA
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/apps/ui_inspector/service.py`
+  - `windows_os_api/apps/ui_inspector/uia_windows.py`
   - `windows_os_api/backends/fake.py`
   - `windows_os_api/backends/windows.py`
 - **Tests:**
   - `tests/unit/test_fake_backend.py`
   - `tests/unit/test_adapter_engine.py`
-- **How to run:** `pytest tests/unit/test_fake_backend.py -q`
+  - `tests/windows/test_uia_hard.py`
+- **How to run:** `pytest tests/unit/test_fake_backend.py tests/windows/test_uia_hard.py -q`
+- **Notes:** Windows UIA is **implemented** (uiautomation → comtypes → pywinauto). GHA `windows-latest` may lack a full interactive desktop; mark UI tests `requires_display` and skip when session 0.
 
 ## PR9: Mouse/keyboard input
 - **Status:** DONE
@@ -508,4 +511,20 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `DISPLAY=:2 python scripts/live_linux_ui_control_smoke.py`
 - **N/A (by design, not PARTIAL):** Windows UIA on Linux — use AT-SPI / wmctrl / xdotool instead (`windows_uia=false`).
 - **Notes:** Screenshot requires `mss` + `DISPLAY`; audio/services hard-assert when `pactl`/`systemctl` present, skip only when binary absent.
+
+## WindowsBackend real UIA / SendInput / screenshot (post-PR50)
+- **Status:** DONE
+- **Files:**
+  - `windows_os_api/backends/windows.py` (SendInput mouse/key/type, EnumDisplayMonitors, mss/Pillow/BitBlt screenshot, `_uia_tree` → uia_windows)
+  - `windows_os_api/apps/ui_inspector/uia_windows.py` (rich tree, find, invoke_click, set_value)
+  - `tests/windows/test_windows_backend_hard.py`
+  - `tests/windows/test_uia_hard.py`
+  - `scripts/live_windows_smoke.py`
+  - `.github/workflows/ci.yml` (`pip install -e ".[dev,windows]"`, `pytest -m windows`, live smoke)
+- **Tests:**
+  - `pytest -m windows` on win32
+  - `pytest -m "not windows"` on Linux (must stay green)
+  - `python scripts/live_windows_smoke.py`
+- **GHA display limits:** Process / FS / registry / clipboard / SendInput structure tests **must pass** headless. UIA Notepad tree, mouse click, and screenshot are marked `requires_display` and skip when no interactive desktop / session 0.
+- **Still needs a real Windows desktop:** Full Notepad UIA children + type-into-Edit + non-empty screenshot PNG. Headless GHA may skip those while still validating non-UI APIs.
 

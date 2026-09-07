@@ -102,10 +102,49 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     if action.control_type == "Edit":
         value = params.get("value", "")
         node["value"] = value
+        # Prefer real UIA ValuePattern / SendInput set_value on Windows
+        if hasattr(backend, "name") and backend.name == "windows":
+            try:
+                from windows_os_api.apps.ui_inspector import uia_windows
+                set_r = uia_windows.set_value(node, str(value))
+                return {
+                    "ok": bool(set_r.get("ok")),
+                    "action": action_name,
+                    "set_value": value,
+                    "element": action.automation_id,
+                    "uia": set_r,
+                }
+            except Exception as e:  # noqa: BLE001
+                typed = backend.type_text(str(value))
+                return {
+                    "ok": bool(typed.get("ok")),
+                    "action": action_name,
+                    "set_value": value,
+                    "element": action.automation_id,
+                    "fallback": str(e),
+                }
         backend.type_text(str(value))
         return {"ok": True, "action": action_name, "set_value": value, "element": action.automation_id}
     if action.control_type in ("Button", "MenuItem"):
-        backend.mouse_click(10, 10)
+        if hasattr(backend, "name") and backend.name == "windows":
+            try:
+                from windows_os_api.apps.ui_inspector import uia_windows
+                click_r = uia_windows.invoke_click(node)
+                return {
+                    "ok": bool(click_r.get("ok")),
+                    "action": action_name,
+                    "clicked": action.automation_id,
+                    "uia": click_r,
+                }
+            except Exception:  # noqa: BLE001
+                pass
+        bounds = node.get("bounds") or {}
+        if bounds.get("width"):
+            x = int(bounds["left"] + bounds["width"] // 2)
+            y = int(bounds["top"] + bounds.get("height", 1) // 2)
+            backend.mouse_click(x, y)
+        else:
+            backend.mouse_click(10, 10)
         return {"ok": True, "action": action_name, "clicked": action.automation_id}
     return {"ok": True, "action": action_name, "element": action.automation_id}
 

@@ -52,11 +52,11 @@ def capabilities() -> dict[str, Any]:
             "windows_ui": True,
             "atspi": False,
             "clipboard": True,
-            "screenshot": False,
+            "screenshot": True,  # mss / Pillow / BitBlt
             "audio": False,
             "services": False,
             "registry_compat": False,
-            "windows_uia": True,  # UIA path exists on Windows (may still be stubbed)
+            "windows_uia": True,  # real UIA via uiautomation/comtypes/pywinauto
             "fake_crm": False,
         }
     else:

@@ -20,7 +20,7 @@ Requesting `windows` on Linux raises unless `WINOS_ALLOW_FAKE_FALLBACK=true`.
 - FastAPI + OpenAPI (`/docs`), bind default **127.0.0.1**, remote access **DISABLED**
 - Security: API keys, RBAC, permissions, audit log, rate limiting
 - Real OS ops on each platform; FakeBackend for CRM adapter demos
-- Universal Adapter (UI tree on Fake / Windows UIA / Linux AT-SPI with find/click/set-text)
+- Universal Adapter (UI tree on Fake / **real Windows UIA** / Linux AT-SPI with find/click/set-text)
 - MCP JSON-RPC server, WebSocket event bus, Control Center HTML
 - Roadmap PR #1–#50 with `docs/FORENSIC_AUDIT.md`
 
@@ -38,6 +38,7 @@ tests/              # unit, integration, e2e, linux/, windows/
 docs/FORENSIC_AUDIT.md
 scripts/forensic_audit.py
 scripts/live_linux_smoke.py
+scripts/live_windows_smoke.py
 .github/workflows/
 ```
 
@@ -48,6 +49,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 source .venv/bin/activate
 pip install -e ".[dev]"
+# On Windows also: pip install -e ".[dev,windows]"
 ```
 
 ## Run server
@@ -80,12 +82,33 @@ pytest -q -m "not windows and not linux"
 export WINOS_BACKEND=linux
 pytest -q -m linux
 
-# Everything except Windows-only
+# Everything except Windows-only (must stay green on Linux CI)
 pytest -q -m "not windows"
 
-# Live smoke (real sleep/jq PID via API)
+# Live Linux smoke (real sleep/jq PID via API)
 python scripts/live_linux_smoke.py
 ```
+
+### Windows hard tests (win32 only)
+
+```bash
+# On a real Windows machine / GHA windows-latest:
+pip install -e ".[dev,windows]"   # pywin32, comtypes, uiautomation, mss, Pillow
+# Optional UIA fallback: pip install pywinauto
+export WINOS_BACKEND=windows      # PowerShell: $env:WINOS_BACKEND="windows"
+
+# Headless-capable hard tests (process/FS/registry/SendInput structures)
+pytest -q -m windows
+
+# UI Automation / screenshot tests need an interactive desktop
+pytest -q -m "windows and requires_display"
+
+# Live smoke (Notepad + tree + type + screenshot; skips UI if session 0)
+python scripts/live_windows_smoke.py
+```
+
+On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
+Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
 
 ## Forensic audit
 
@@ -145,4 +168,4 @@ git push -u origin main
 
 - **LinuxBackend**: real processes, sandbox FS, psutil network/users; wmctrl/xdotool windows; xclip clipboard; mss screenshots; pyatspi AT-SPI tree + accessible click/set-text; pactl/systemctl when present — graceful degrade when tools absent. Windows UIA is N/A on Linux by design.
 - **FakeBackend**: Contoso CRM UI tree for adapter unit/E2E — `WINOS_BACKEND=fake` only.
-- **WindowsBackend**: raises if instantiated off Win32; COM/UIA when `pywin32`/`comtypes` present.
+- **WindowsBackend**: raises if instantiated off Win32; **real** UIA (`uiautomation` → `comtypes` → `pywinauto`), **SendInput** mouse/keyboard, **mss/Pillow/BitBlt** screenshots, EnumDisplayMonitors displays. Not a stub.

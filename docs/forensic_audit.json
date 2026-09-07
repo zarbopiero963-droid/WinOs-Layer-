@@ -103,17 +103,19 @@
   {
     "pr": 8,
     "status": "DONE",
-    "title": "UI Automation tree + FakeBackend CRM + Windows UIA stub",
+    "title": "UI Automation tree + FakeBackend CRM + real Windows UIA",
     "files": [
       "windows_os_api/apps/ui_inspector/service.py",
       "windows_os_api/backends/fake.py",
-      "windows_os_api/backends/windows.py"
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/apps/ui_inspector/uia_windows.py"
     ],
     "tests": [
       "tests/unit/test_fake_backend.py",
-      "tests/unit/test_adapter_engine.py"
+      "tests/unit/test_adapter_engine.py",
+      "tests/windows/test_uia_hard.py"
     ],
-    "remaining": null
+    "remaining": "GHA may skip requires_display UIA/screenshot without interactive desktop"
   },
   {
     "pr": 9,
