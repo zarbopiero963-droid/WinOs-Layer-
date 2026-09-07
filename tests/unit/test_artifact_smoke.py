@@ -100,6 +100,31 @@ def test_port_is_open_detects_listener_and_silence(smoke):
     assert smoke.port_is_open(port) is False
 
 
+def test_wait_for_port_release_reports_a_live_listener(smoke):
+    """A socket still accepting connections must NOT be reported as released.
+
+    This is the orphan check. On Windows a PyInstaller onefile binary is two
+    processes and killing only the bootloader leaves the child serving; if this
+    returned True with a listener up, that orphan would ship unnoticed.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        # Backlog must exceed the number of probes: this listener never accepts,
+        # and a full accept queue would start refusing connections, making a live
+        # port look released.
+        listener.listen(128)
+        port = listener.getsockname()[1]
+        assert smoke.wait_for_port_release(port, timeout=1.5) is False
+
+
+def test_wait_for_port_release_returns_true_when_socket_is_down(smoke):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+    assert smoke.wait_for_port_release(port, timeout=5.0) is True
+
+
 def test_wait_for_health_reports_child_output_on_early_exit(smoke):
     """When the frozen binary dies on launch, the error must carry its output.
 

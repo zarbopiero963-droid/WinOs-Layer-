@@ -86,6 +86,21 @@ def port_is_open(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def wait_for_port_release(port: int, timeout: float = 20.0) -> bool:
+    """True once nothing listens on the port any more.
+
+    Polled rather than sampled once: a socket needs a moment to come down after
+    the process is killed, and a single instantaneous check would report a
+    phantom orphan.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not port_is_open(port):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
@@ -183,15 +198,31 @@ def run_serve_check(binary: Path, expected_backend: str, expected_version: str) 
     finally:
         _terminate(proc)
 
-    if port_is_open(port):
+    if not wait_for_port_release(port):
         raise SmokeError(f"port {port} still accepting connections — orphan process left behind")
-    print("  teardown -> process exited, port released")
+    print("  teardown -> process tree exited, port released")
 
 
 def _terminate(proc: subprocess.Popen) -> None:
+    """Stop the served binary and everything it spawned.
+
+    On Windows a PyInstaller ONEFILE binary is two processes: the bootloader
+    unpacks to a temp dir and launches a second copy of itself, which is the one
+    actually holding the socket. TerminateProcess on the bootloader alone leaves
+    that child serving — observed on GHA, where the runner had to reap
+    `Terminate orphan process: pid (5500) (winos-api)` after this script exited.
+    A supervisor stops the tree, so that is what we do here.
+    """
     if proc.poll() is not None:
         return
-    proc.terminate()
+    if sys.platform.startswith("win"):
+        subprocess.run(  # noqa: S603,S607 - fixed system tool, pid is ours
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            timeout=30,
+        )
+    else:
+        proc.terminate()
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
