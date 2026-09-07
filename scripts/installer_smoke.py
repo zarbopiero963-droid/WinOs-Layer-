@@ -25,6 +25,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,27 +109,62 @@ def _log_tail(log: Path | None) -> str:
     return f"\n--- {log.name} ---\n{body}\n--- end ---"
 
 
-def _run(cmd: list[str], what: str, timeout: int = 180, log: Path | None = None) -> None:
+def _run(
+    cmd: list[str], what: str, timeout: int = 180, log: Path | None = None, capture: bool = True
+) -> None:
+    """Run a command, optionally capturing its output.
+
+    `capture` is not a convenience knob: capture_output=True makes
+    subprocess.run wait for EOF on the pipes, not for the child to exit. Inno
+    Setup extracts itself into a second process (WinOsApi-Setup-<v>.tmp) which
+    inherits those pipe handles, so if it outlives its parent the read never
+    ends and the call hangs forever — observed on GHA, where the install had
+    already logged "Installation process succeeded" while this script sat
+    waiting, and the runner later reaped the .tmp as an orphan. For Inno
+    commands we therefore do not capture: the /LOG file is the authoritative
+    record anyway, and the child's output goes straight to the CI log.
+    """
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603
+        proc = subprocess.run(  # noqa: S603
+            cmd, capture_output=capture, text=True, timeout=timeout
+        )
     except subprocess.TimeoutExpired as exc:
-        # A hang here is not an infrastructure hiccup: it means the installer is
-        # waiting for input nobody can give. Fail fast and say so, instead of
-        # burning runner minutes on a silent stall — and never let the raw
-        # TimeoutExpired escape, which would lose the log below.
         raise InstallerSmokeError(
-            f"{what} did not finish within {timeout}s — it is waiting for something.\n"
+            f"{what} did not finish within {timeout}s.\n"
             f"cmd: {' '.join(cmd)}\n"
-            f"Most likely an elevation prompt: the .iss sets PrivilegesRequired=admin, "
-            f"and /SUPPRESSMSGBOXES suppresses Inno's own message boxes but NOT a "
-            f"Windows UAC consent dialog." + _log_tail(log)
+            f"If the log below says the installation succeeded, the command itself "
+            f"completed and it is the wait that hung — check for a surviving helper "
+            f"process holding the pipes open." + _log_tail(log)
         ) from exc
     if proc.returncode != 0:
+        streams = ""
+        if capture:
+            streams = f"\nstdout: {proc.stdout.strip()}\nstderr: {proc.stderr.strip()}"
         raise InstallerSmokeError(
-            f"{what} exited {proc.returncode}\n"
-            f"cmd: {' '.join(cmd)}\n"
-            f"stdout: {proc.stdout.strip()}\nstderr: {proc.stderr.strip()}" + _log_tail(log)
+            f"{what} exited {proc.returncode}\ncmd: {' '.join(cmd)}{streams}" + _log_tail(log)
         )
+
+
+def wait_for(check, timeout: float, what: str) -> None:
+    """Poll a verification until it passes, or re-raise its last failure.
+
+    Inno's launcher may return before its .tmp worker has finished touching the
+    filesystem, so an instantaneous assertion right after the command can lose a
+    race it has no reason to lose. Polling keeps the assertion strict — the
+    condition must still become true — while tolerating that the work is
+    finishing in another process.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            check()
+            return
+        except InstallerSmokeError as exc:
+            if time.monotonic() >= deadline:
+                raise InstallerSmokeError(
+                    f"{what} not satisfied within {timeout:.0f}s: {exc}"
+                ) from exc
+            time.sleep(1.0)
 
 
 def silent_install(setup: Path, install_dir: Path, log: Path) -> None:
@@ -147,6 +183,7 @@ def silent_install(setup: Path, install_dir: Path, log: Path) -> None:
         ],
         "silent install",
         log=log,
+        capture=False,
     )
 
 
@@ -154,7 +191,11 @@ def silent_uninstall(install_dir: Path) -> None:
     uninstaller = uninstaller_path(install_dir)
     if not uninstaller.is_file():
         raise InstallerSmokeError(f"uninstaller missing: {uninstaller}")
-    _run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], "silent uninstall")
+    _run(
+        [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+        "silent uninstall",
+        capture=False,
+    )
 
 
 def run_installed_binary(install_dir: Path) -> None:
@@ -207,14 +248,14 @@ def main(argv: list[str] | None = None) -> int:
         silent_install(setup, install_dir, log)
         print(f"  install -> {install_dir}")
 
-        verify_installed_layout(install_dir)
+        wait_for(lambda: verify_installed_layout(install_dir), 120, "installed layout")
         print(f"  layout  -> {', '.join(EXPECTED_AFTER_INSTALL)} present, api_key.txt non-empty")
 
         run_installed_binary(install_dir)
         print("  installed binary -> serves and shuts down")
 
         silent_uninstall(install_dir)
-        verify_removed(install_dir)
+        wait_for(lambda: verify_removed(install_dir), 120, "removal after uninstall")
         print("  uninstall -> binary and install dir removed")
     except InstallerSmokeError as exc:
         print(f"\nINSTALLER SMOKE FAILED: {exc}", file=sys.stderr)

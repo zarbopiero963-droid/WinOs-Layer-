@@ -111,3 +111,31 @@ def test_removal_rejects_leftover_files(ism, tmp_path):
 
 def test_uninstaller_path_is_inno_convention(ism, tmp_path):
     assert ism.uninstaller_path(tmp_path).name == "unins000.exe"
+
+
+def test_wait_for_returns_once_the_check_passes(ism):
+    """Polling must accept a condition that becomes true a moment later."""
+    calls = {"n": 0}
+
+    def check():
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise ism.InstallerSmokeError("not yet")
+
+    ism.wait_for(check, timeout=10, what="eventual success")
+    assert calls["n"] == 2
+
+
+def test_wait_for_still_fails_on_a_condition_that_never_holds(ism):
+    """Polling must not soften the assertion: never true is still a failure.
+
+    If this regressed into a silent pass, an install that produced nothing would
+    be reported as successful — the exact outcome the smoke exists to prevent.
+    """
+    def check():
+        raise ism.InstallerSmokeError("install dir was not created")
+
+    with pytest.raises(ism.InstallerSmokeError) as exc:
+        ism.wait_for(check, timeout=1.0, what="installed layout")
+    assert "not satisfied within" in str(exc.value)
+    assert "install dir was not created" in str(exc.value)
