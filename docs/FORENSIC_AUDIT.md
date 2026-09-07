@@ -214,6 +214,7 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/api/rest/services.py` — `POST /v1/terminal/execute`
 - **Tests:**
   - `tests/security/test_terminal_allowlist.py`
+  - `tests/windows/test_terminal_allowlist_windows.py` — WindowsBackend reale su win32
   - `tests/unit/test_fake_backend.py`
   - `tests/integration/test_api_os_layers.py`
   - `tests/security/test_security_hard.py`
