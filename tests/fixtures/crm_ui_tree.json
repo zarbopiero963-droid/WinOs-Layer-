@@ -1,0 +1,6 @@
+{
+  "hwnd": 1001,
+  "name": "Contoso CRM",
+  "control_type": "Window",
+  "automation_id": "ContosoCRM.Main"
+}
