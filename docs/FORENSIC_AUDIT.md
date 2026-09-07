@@ -452,12 +452,16 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 ## PR47: Adapter sandbox permissions
 - **Status:** DONE
 - **Files:**
-  - `windows_os_api/apps/sandbox/permissions.py`
-  - `windows_os_api/api/rest/security_routes.py`
+  - `windows_os_api/apps/sandbox/permissions.py` — policy model and `check_action`
+  - `windows_os_api/api/rest/security_routes.py` — `PUT/GET /v1/sandbox/policy`
+  - `windows_os_api/apps/adapters/engine.py` — **enforcement point**: `invoke_action`
+    calls `check_action` before reaching the backend, so the policy applies to every
+    caller (REST, MCP, workflow playback, agent) instead of only the REST route
 - **Tests:**
   - `tests/unit/test_trust_and_sandbox.py`
+  - `tests/unit/test_sandbox_enforcement.py` — one test per surface that used to bypass the gate
   - `tests/integration/test_api_adapter_automation.py`
-- **How to run:** `pytest tests/unit/test_trust_and_sandbox.py -q`
+- **How to run:** `pytest tests/unit/test_trust_and_sandbox.py tests/unit/test_sandbox_enforcement.py -q`
 
 ## PR48: Signed adapter trust levels
 - **Status:** DONE

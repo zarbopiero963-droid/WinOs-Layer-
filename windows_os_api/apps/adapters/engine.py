@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from windows_os_api.apps.ui_inspector.service import find_by_automation_id, get_tree
+from windows_os_api.apps.sandbox.permissions import check_action
 from windows_os_api.backends.factory import get_backend
 
 @dataclass
@@ -104,7 +105,26 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     if not action:
         return {"ok": False, "error": f"action not found: {action_name}"}
     params = params or {}
-    # Permission / sandbox check delegated to caller; perform UI action via backend
+    # Sandbox enforcement lives HERE, not in the callers.
+    #
+    # It used to read "delegated to caller", and of the four call sites only one
+    # honoured it: api/rest/apps.py. The other three reached the backend with the
+    # policy unchecked — api/rest/workflows.py via recorder.play, api/mcp/server.py
+    # (the tool an AI agent drives) and apps/agent/computer.py. A policy set with
+    # PUT /v1/sandbox/policy was therefore enforced on one surface out of four.
+    #
+    # Centralising it here makes the gate unbypassable by construction: any future
+    # caller is covered without having to remember. The REST route keeps its own
+    # check so it can answer 403 — check_action is pure, so checking twice is free.
+    gate = check_action(app_id, action_name, action.risk)
+    if not gate["allowed"]:
+        return {
+            "ok": False,
+            "denied": True,
+            "error": gate["reason"],
+            "app_id": app_id,
+            "action": action_name,
+        }
     backend = get_backend()
     tree = backend.get_ui_tree(adapter.hwnd)
     node = find_by_automation_id(tree, action.automation_id)
