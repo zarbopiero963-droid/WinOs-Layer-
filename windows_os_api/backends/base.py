@@ -76,6 +76,36 @@ class OSBackend(Protocol):
     def close_window(self, hwnd: int) -> dict[str, Any]:
         ...
 
+    # Window geometry / state.
+    #
+    # These four return the geometry the OS reports *after* the operation, not
+    # only `ok: True`. A window manager is free to refuse, clamp or quantise a
+    # request — openbox adds a frame offset, a terminal snaps to character
+    # cells — so the request is not the result, and the caller is told which is
+    # which. `ok` means the effect was observed, not that a command exited 0.
+    def window_geometry(self, hwnd: int) -> dict[str, int] | None:
+        """`{x, y, width, height}` as the OS reports it, or None if the window is gone.
+
+        The read primitive the other five verify themselves against.
+        """
+        ...
+
+    def move_window(self, hwnd: int, x: int, y: int) -> dict[str, Any]:
+        ...
+
+    def resize_window(self, hwnd: int, width: int, height: int) -> dict[str, Any]:
+        ...
+
+    def minimize_window(self, hwnd: int) -> dict[str, Any]:
+        ...
+
+    def maximize_window(self, hwnd: int) -> dict[str, Any]:
+        ...
+
+    def restore_window(self, hwnd: int) -> dict[str, Any]:
+        """Undo minimize/maximize. Without it the other two are a one-way door."""
+        ...
+
     # UI tree
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
         """UI Automation (Windows) / AT-SPI (Linux) / Fake Contoso tree."""

@@ -73,10 +73,27 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/os/windows/service.py`
-  - `windows_os_api/api/rest/windows.py`
+  - `windows_os_api/os/windows/geometry.py` — validation, one home, applied by
+    every backend at the point that acts
+  - `windows_os_api/api/rest/windows.py` — list/get/focus/close plus
+    `move`, `resize`, `minimize`, `maximize`, `restore`
+  - `windows_os_api/backends/{linux,windows,fake}.py` — geometry/state ops,
+    each verifying the effect by reading it back
 - **Tests:**
+  - `tests/linux/test_window_manager_linux.py` — real X window under Xvfb + openbox
+  - `tests/windows/test_window_manager_windows.py` — real HWND on windows-latest
+  - `tests/unit/test_window_geometry_contract.py`
   - `tests/integration/test_api_os_layers.py`
-- **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
+- **How to run:** `pytest tests/unit/test_window_geometry_contract.py -q`
+  (real windows: `xvfb-run -a pytest -m linux -q`)
+- **Note:** `move`/`resize`/`minimize`/`maximize` did not exist — zero
+  occurrences in either backend — although this entry already read DONE. They
+  return the geometry the OS reports **after** the operation, in a field
+  separate from the request, because a window manager may offset or quantise
+  what it was asked for (measured: a move to (300,200) landed at (302,240); a
+  resize to 700x500 came back 700x498). `ok` means the effect was observed, not
+  that a command exited 0 — `wmctrl -i -r 99999999 -b add,maximized_vert` exits
+  0 for a window id that does not exist.
 
 ## PR8: UI Automation tree + FakeBackend CRM + real Windows UIA
 - **Status:** DONE

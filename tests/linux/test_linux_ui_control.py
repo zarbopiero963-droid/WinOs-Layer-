@@ -44,33 +44,27 @@ def test_clipboard_xclip_roundtrip(linux_backend):
     assert got.get("text") == token, got
 
 
-def test_wmctrl_list_windows(linux_backend):
-    if not _have("wmctrl"):
-        pytest.skip("wmctrl binary absent")
-    proc = None
-    try:
-        if Path(MOUSEPAD).is_file():
-            proc = subprocess.Popen(  # noqa: S603
-                [MOUSEPAD],
-                env=_env(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            time.sleep(1.2)
-        wins = linux_backend.list_windows()
-        assert isinstance(wins, list)
-        assert len(wins) >= 1, f"expected windows with DISPLAY={DISPLAY}, got {wins}"
-        assert any(w.get("title") for w in wins)
-        if proc is not None:
-            assert any("Mousepad" in (w.get("title") or "") for w in wins)
-    finally:
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+def test_wmctrl_list_windows(linux_backend, probe_window):
+    """The window this test opened is the one it finds.
+
+    It used to depend on `mousepad` being installed and, when it was not,
+    asserted "at least one window" against a bare display that has none. That
+    assertion could never have held here — it simply never ran, because
+    `wmctrl` was not installed on the runner either. Installing the X tooling
+    for the window manager tests is what surfaced it. Now the fixture opens a
+    real window and the assertion names it, so a broken `list_windows` fails.
+
+    The fixture waits for `wmctrl -l` to list the window, which is also what
+    `list_windows` reads — so, to be explicit about what is left to verify:
+    `wmctrl` prints the id in hex (`0x0040000c`) and `xdotool`, where
+    `probe_window.hwnd` comes from, prints decimal (`4194316`). The hwnd
+    assertion is that conversion, checked against an independently obtained id.
+    """
+    wins = linux_backend.list_windows()
+    assert isinstance(wins, list)
+    titles = [w.get("title") or "" for w in wins]
+    assert any(probe_window.title in t for t in titles), (probe_window.title, titles)
+    assert any(w.get("hwnd") == probe_window.hwnd for w in wins), (probe_window.hwnd, wins)
 
 
 def test_screenshot_mss_nonzero(linux_backend):
