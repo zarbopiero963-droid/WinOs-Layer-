@@ -31,7 +31,10 @@ def test_registered_command_resolves_to_an_absolute_argv():
     argv = resolve("whoami")
     assert isinstance(argv, list)
     assert Path(argv[0]).is_absolute(), argv
-    assert argv[0].endswith("whoami")
+    # Compare the stem, case-insensitively: on Windows shutil.which returns
+    # "C:\\Windows\\system32\\whoami.EXE", so an endswith("whoami") check is a
+    # POSIX assumption — and it failed on the windows-latest runner.
+    assert Path(argv[0]).stem.lower() == "whoami", argv
 
 
 def test_the_denylists_blind_spot_is_closed():
