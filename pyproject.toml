@@ -52,7 +52,8 @@ pythonpath = ["."]
 markers = [
   "security: security-focused tests",
   "e2e: end-to-end tests",
-  "windows: Windows-only tests",
+  "windows: Windows-only hard tests (skip on Linux)",
+  "requires_display: needs interactive desktop / UI Automation",
 ]
 
 [tool.ruff]

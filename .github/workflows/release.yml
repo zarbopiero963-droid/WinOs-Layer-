@@ -11,7 +11,38 @@ on:
         default: "1.0.0"
 
 jobs:
+  build-windows-artifacts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev,windows]" pyinstaller
+          choco install innosetup -y
+      - run: python scripts/build_installer.py validate
+      - run: python scripts/build_installer.py build-portable
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item dist\winos-api.exe portable\
+          Copy-Item installer\service_scripts\* portable\ -Recurse
+          Compress-Archive -Path portable\* -DestinationPath dist\winos-api-portable-windows.zip -Force
+      - run: python scripts/build_installer.py build-installer
+      - run: python scripts/build_installer.py checksums
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: |
+            dist/
+            installer/output/
+
   release:
+    needs: [build-windows-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,21 +53,29 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]" build
       - run: python -m build
-      - name: Checksums
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: artifacts-windows
+      - name: Stage release files
         run: |
-          cd dist
-          sha256sum * > SHA256SUMS.txt
+          mkdir -p release-dist
+          cp -a dist/. release-dist/ || true
+          find artifacts-windows -type f \( -name '*.exe' -o -name '*.zip' -o -name 'checksums.txt' -o -name 'SHA256SUMS.txt' \) -exec cp -t release-dist {} +
+          cd release-dist
+          sha256sum * > SHA256SUMS.txt || true
           cat SHA256SUMS.txt
       - name: Upload checksums artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-checksums
-          path: dist/SHA256SUMS.txt
+          path: release-dist/SHA256SUMS.txt
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*
+            release-dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

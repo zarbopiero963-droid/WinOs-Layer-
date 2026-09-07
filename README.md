@@ -74,6 +74,27 @@ winos-mcp   # stdio JSON-RPC
 # or: python -m windows_os_api.api.mcp.server
 ```
 
+
+## Installer / packaging
+
+```bash
+python scripts/build_installer.py validate
+python scripts/build_installer.py build-portable   # current OS smoke (Linux ELF or Windows exeefile)
+# Setup.exe: Windows only — see installer/README.md and GHA build.yml
+python scripts/build_installer.py checksums
+```
+
+Service name: `WindowsOSLayerService`. Default bind: `127.0.0.1:8765`.
+
+## Windows hard tests
+
+```bash
+# Linux CI
+pytest -q -m "not windows"
+# Windows GHA
+pytest -q -m windows
+```
+
 ## Push to GitHub
 
 Repo target: https://github.com/zarbopiero963-droid/WinOs-Layer-

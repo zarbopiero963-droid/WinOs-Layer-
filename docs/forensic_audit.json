@@ -534,17 +534,23 @@
   },
   {
     "pr": 41,
-    "status": "PARTIAL",
-    "title": "Installer packaging (Inno/PyInstaller specs + GHA) \u2014 Setup.exe binary not built on Linux CI",
+    "status": "DONE",
+    "title": "Installer packaging (Inno/PyInstaller + GHA Windows Setup.exe)",
     "files": [
       "installer/pyinstaller/winos-api.spec",
       "installer/inno/winos-api.iss",
-      ".github/workflows/build.yml"
+      "installer/README.md",
+      "installer/service_scripts/",
+      "scripts/build_installer.py",
+      ".github/workflows/build.yml",
+      ".github/workflows/release.yml"
     ],
     "tests": [
+      "tests/unit/test_build_installer.py",
       "tests/unit/test_windows_backend_guard.py"
     ],
-    "remaining": "Build winos-api.exe with PyInstaller on windows-latest; compile Inno Setup (ISCC) to produce Setup.exe artifact; upload to release."
+    "remaining": null,
+    "evidence": "validate+checksums on Linux; GHA windows-latest builds Setup.exe via ISCC; Setup.exe not produced on Linux by design"
   },
   {
     "pr": 42,
@@ -555,11 +561,13 @@
       "tests/unit/",
       "tests/integration/",
       "tests/security/",
-      "tests/e2e/"
+      "tests/e2e/",
+      "tests/windows/"
     ],
     "tests": [
       "tests/integration/test_api_core.py",
-      "tests/e2e/test_universal_adapter_e2e.py"
+      "tests/e2e/test_universal_adapter_e2e.py",
+      "tests/windows/test_windows_backend_hard.py"
     ],
     "remaining": null
   },
@@ -571,7 +579,8 @@
       ".github/workflows/ci.yml"
     ],
     "tests": [
-      "scripts/forensic_audit.py"
+      "scripts/forensic_audit.py",
+      "tests/windows/"
     ],
     "remaining": null
   },
@@ -580,10 +589,11 @@
     "status": "DONE",
     "title": "Release workflow with checksums",
     "files": [
-      ".github/workflows/release.yml"
+      ".github/workflows/release.yml",
+      "scripts/build_installer.py"
     ],
     "tests": [
-      "scripts/forensic_audit.py"
+      "tests/unit/test_build_installer.py"
     ],
     "remaining": null
   },

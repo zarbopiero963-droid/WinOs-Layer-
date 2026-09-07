@@ -376,16 +376,21 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
   - `tests/e2e/test_universal_adapter_e2e.py`
 - **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
 
-## PR41: Installer packaging (Inno/PyInstaller specs + GHA) — Setup.exe binary not built on Linux CI
-- **Status:** PARTIAL
+## PR41: Installer packaging (Inno/PyInstaller + GHA Windows Setup.exe)
+- **Status:** DONE
 - **Files:**
   - `installer/pyinstaller/winos-api.spec`
   - `installer/inno/winos-api.iss`
+  - `installer/README.md`
+  - `installer/service_scripts/`
+  - `scripts/build_installer.py`
   - `.github/workflows/build.yml`
+  - `.github/workflows/release.yml`
 - **Tests:**
+  - `tests/unit/test_build_installer.py`
   - `tests/unit/test_windows_backend_guard.py`
-- **How to run:** `pytest tests/unit/test_windows_backend_guard.py -q`
-- **Remaining:** Build winos-api.exe with PyInstaller on windows-latest; compile Inno Setup (ISCC) to produce Setup.exe artifact; upload to release.
+- **How to run:** `python scripts/build_installer.py validate && pytest tests/unit/test_build_installer.py -q`
+- **Evidence:** `validate` + checksum unit tests pass on Linux; Linux PyInstaller portable smoke via `build-portable`; GHA `windows-latest` builds `winos-api.exe`, portable zip, and Inno `Setup.exe` (ISCC via chocolatey). Setup.exe is **not** produced on Linux by design — Windows GHA is the release path.
 
 ## PR42: Comprehensive automated tests
 - **Status:** DONE
@@ -395,10 +400,12 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
   - `tests/integration/`
   - `tests/security/`
   - `tests/e2e/`
+  - `tests/windows/`
 - **Tests:**
   - `tests/integration/test_api_core.py`
   - `tests/e2e/test_universal_adapter_e2e.py`
-- **How to run:** `pytest tests/integration/test_api_core.py -q`
+  - `tests/windows/test_windows_backend_hard.py`
+- **How to run:** `pytest -m "not windows" -q` (Linux); `pytest -m windows -q` (Windows GHA)
 
 ## PR43: GHA CI workflow Linux + windows-latest
 - **Status:** DONE
@@ -406,15 +413,17 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
   - `.github/workflows/ci.yml`
 - **Tests:**
   - `scripts/forensic_audit.py`
-- **How to run:** `pytest scripts/forensic_audit.py -q`
+  - `tests/windows/`
+- **How to run:** `python scripts/forensic_audit.py`
 
 ## PR44: Release workflow with checksums
 - **Status:** DONE
 - **Files:**
   - `.github/workflows/release.yml`
+  - `scripts/build_installer.py`
 - **Tests:**
-  - `scripts/forensic_audit.py`
-- **How to run:** `pytest scripts/forensic_audit.py -q`
+  - `tests/unit/test_build_installer.py`
+- **How to run:** `pytest tests/unit/test_build_installer.py -q`
 
 ## PR45: Auto-update verify/backup/rollback
 - **Status:** DONE
@@ -470,6 +479,6 @@ Tests: `pytest -q` with `WINOS_BACKEND=fake`.
 - **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
 
 ## Summary
-- DONE: 49
-- PARTIAL: 1
+- DONE: 50
+- PARTIAL: 0
 - NOT_STARTED: 0

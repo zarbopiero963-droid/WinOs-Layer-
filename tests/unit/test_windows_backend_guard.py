@@ -25,5 +25,5 @@ def test_installer_scripts(tmp_path):
     from windows_os_api.installer.service import generate_install_scripts, service_manifest
     written = generate_install_scripts(tmp_path)
     assert (tmp_path / "install_nssm.bat").exists()
-    assert "WinOsApi" in (tmp_path / "install_nssm.bat").read_text()
+    assert "WindowsOSLayerService" in (tmp_path / "install_nssm.bat").read_text()
     assert service_manifest()["bind"].startswith("127.0.0.1")

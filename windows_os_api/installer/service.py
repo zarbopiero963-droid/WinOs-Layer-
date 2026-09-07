@@ -4,10 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-SERVICE_NAME = "WinOsApi"
+SERVICE_NAME = "WindowsOSLayerService"
 SERVICE_DISPLAY = "Windows OS API Layer"
 NSSM_TEMPLATE = '''@echo off
-REM Install WinOsApi as a Windows service via NSSM (run as Administrator)
+REM Install WindowsOSLayerService as a Windows service via NSSM (run as Administrator)
 set NSSM=%~dp0nssm.exe
 set APP=%~dp0winos-api.exe
 "%NSSM%" install {name} "%APP%" serve --host 127.0.0.1 --port 8765

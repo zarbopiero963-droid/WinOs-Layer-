@@ -375,9 +375,49 @@ class WindowsBackend:
         return [{"id": 1, "user": self.list_users()[0]["username"], "state": "Active"}]
 
     def registry_read(self, path: str, name: str | None = None) -> dict[str, Any]:
+        r"""Read a registry value. path like HKLM\SOFTWARE\... or HKCU\Environment."""
         if not self._winreg:
-            return {"ok": False, "error": "winreg unavailable"}
-        return {"ok": False, "error": "implement hive parse", "path": path, "name": name}
+            return {"ok": False, "error": "winreg unavailable", "path": path, "name": name}
+        import winreg  # type: ignore
+
+        hive_map = {
+            "HKLM": winreg.HKEY_LOCAL_MACHINE,
+            "HKEY_LOCAL_MACHINE": winreg.HKEY_LOCAL_MACHINE,
+            "HKCU": winreg.HKEY_CURRENT_USER,
+            "HKEY_CURRENT_USER": winreg.HKEY_CURRENT_USER,
+            "HKCR": winreg.HKEY_CLASSES_ROOT,
+            "HKU": winreg.HKEY_USERS,
+        }
+        raw = path.replace("/", '\\')
+        parts = raw.split('\\', 1)
+        if len(parts) != 2:
+            return {"ok": False, "error": "path must be HIVE\\subkey", "path": path}
+        hive = hive_map.get(parts[0]) or hive_map.get(parts[0].upper())
+        if hive is None:
+            return {"ok": False, "error": f"unknown hive: {parts[0]}", "path": path}
+        subkey = parts[1]
+        try:
+            key = winreg.OpenKey(hive, subkey)
+        except OSError as e:
+            return {"ok": False, "error": str(e), "path": path, "name": name}
+        try:
+            if name is None:
+                values = {}
+                i = 0
+                while True:
+                    try:
+                        vn, vv, _vt = winreg.EnumValue(key, i)
+                        values[vn] = vv
+                        i += 1
+                    except OSError:
+                        break
+                return {"ok": True, "path": path, "values": values}
+            value, vtype = winreg.QueryValueEx(key, name)
+            return {"ok": True, "path": path, "name": name, "value": value, "type": int(vtype)}
+        except OSError as e:
+            return {"ok": False, "error": str(e), "path": path, "name": name}
+        finally:
+            winreg.CloseKey(key)
 
     def registry_write(self, path: str, name: str, value: Any) -> dict[str, Any]:
         return {"ok": False, "error": "registry write requires elevation", "path": path}

@@ -13,12 +13,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]" build
-      - run: python -m build
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]" build pyinstaller
+      - name: Validate packaging
+        run: python scripts/build_installer.py validate
+      - name: Python wheel/sdist
+        run: python -m build
+      - name: Portable smoke (Linux ELF via PyInstaller)
+        run: python scripts/build_installer.py build-portable
+      - name: Checksums
+        run: python scripts/build_installer.py checksums
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux
-          path: dist/
+          path: |
+            dist/
+          if-no-files-found: error
 
   build-windows:
     runs-on: windows-latest
@@ -27,12 +39,37 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]" pyinstaller
-      - name: PyInstaller
-        run: pyinstaller installer/pyinstaller/winos-api.spec
-        continue-on-error: true
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev,windows]" pyinstaller
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+      - name: Validate packaging
+        run: python scripts/build_installer.py validate
+      - name: Build portable onefile
+        run: python scripts/build_installer.py build-portable
+      - name: Zip portable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item dist\winos-api.exe portable\ -ErrorAction Stop
+          Copy-Item installer\service_scripts\* portable\ -Recurse
+          if (Test-Path installer\README.md) { Copy-Item installer\README.md portable\ }
+          Compress-Archive -Path portable\* -DestinationPath dist\winos-api-portable-windows.zip -Force
+      - name: Build Setup.exe (Inno)
+        run: python scripts/build_installer.py build-installer
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $files = @()
+          if (Test-Path dist) { $files += Get-ChildItem dist -File | ForEach-Object { $_.FullName } }
+          if (Test-Path installer\output) { $files += Get-ChildItem installer\output -File | ForEach-Object { $_.FullName } }
+          python scripts/build_installer.py checksums @files -o dist\checksums.txt
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
-          path: dist/
-          if-no-files-found: warn
+          path: |
+            dist/
+            installer/output/
+          if-no-files-found: error
