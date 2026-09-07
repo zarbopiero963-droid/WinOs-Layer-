@@ -125,7 +125,30 @@ def probe_window(window_manager):
     if found is None:
         proc.kill()
         pytest.fail(f"xterm window {title!r} never appeared on the display")
-    time.sleep(0.5)  # let the WM finish reparenting before anything is measured
+
+    # Existing in X is not the same as being MANAGED. `xdotool search` walks the
+    # X tree directly and sees the window as soon as it is created; `wmctrl -l`
+    # reads `_NET_CLIENT_LIST`, which the window manager publishes a moment
+    # later — measured at ~65ms here, and evidently longer on a CI runner, where
+    # a fixed `sleep(0.5)` was not enough and `list_windows()` came back empty.
+    #
+    # So wait for the condition, not for a duration. Anything that reads the WM's
+    # view of the world — list_windows, and the maximize atoms — needs the window
+    # to be in it.
+    managed = False
+    for _ in range(100):
+        r = subprocess.run(  # noqa: S603
+            ["wmctrl", "-l"], capture_output=True, text=True, timeout=5,
+            check=False, env=x_env(),
+        )
+        if title in (r.stdout or ""):
+            managed = True
+            break
+        time.sleep(0.1)
+    if not managed:
+        proc.kill()
+        pytest.fail(f"window manager never took {title!r} into _NET_CLIENT_LIST")
+
     yield ProbeWindow(hwnd=found, title=title)
     proc.terminate()
     try:

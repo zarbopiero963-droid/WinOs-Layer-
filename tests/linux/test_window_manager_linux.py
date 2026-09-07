@@ -37,6 +37,22 @@ def _settle(seconds: float = 0.6) -> None:
     time.sleep(seconds)
 
 
+def test_the_probe_window_is_managed_before_a_test_touches_it(linux_backend, probe_window):
+    """The fixture's contract, pinned — because breaking it broke a real run.
+
+    Existing in X and being managed by the window manager are different states,
+    ~65ms apart when measured here and evidently further apart on a CI runner:
+    `xdotool search` walks the X tree and sees the window immediately, while
+    `_NET_CLIENT_LIST` — what `list_windows` and the maximize atoms read — is
+    published later. A fixed sleep covered that locally and did not in CI.
+
+    If the fixture ever goes back to yielding an unmanaged window, this fails
+    here rather than at random somewhere else in the suite.
+    """
+    titles = [w.get("title") or "" for w in linux_backend.list_windows()]
+    assert any(probe_window.title in t for t in titles), (probe_window.title, titles)
+
+
 # ---------------------------------------------------------------------------
 # move
 # ---------------------------------------------------------------------------

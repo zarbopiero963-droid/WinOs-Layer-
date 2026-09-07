@@ -53,6 +53,12 @@ def test_wmctrl_list_windows(linux_backend, probe_window):
     `wmctrl` was not installed on the runner either. Installing the X tooling
     for the window manager tests is what surfaced it. Now the fixture opens a
     real window and the assertion names it, so a broken `list_windows` fails.
+
+    The fixture waits for `wmctrl -l` to list the window, which is also what
+    `list_windows` reads — so, to be explicit about what is left to verify:
+    `wmctrl` prints the id in hex (`0x0040000c`) and `xdotool`, where
+    `probe_window.hwnd` comes from, prints decimal (`4194316`). The hwnd
+    assertion is that conversion, checked against an independently obtained id.
     """
     wins = linux_backend.list_windows()
     assert isinstance(wins, list)
