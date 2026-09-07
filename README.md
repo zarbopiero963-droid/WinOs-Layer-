@@ -211,10 +211,14 @@ risultato direbbe una cosa falsa su ogni piattaforma reale.
 
 **`ok` significa «l'effetto e' stato osservato», non «il comando e' uscito 0».**
 La differenza e' misurabile: `wmctrl -i -r 99999999 -b add,maximized_vert` esce
-**0** per un id di finestra che non esiste. Perche' minimize e maximize possano
-essere confermati serve `xprop` (pacchetto `x11-utils`): senza, la risposta
-riporta `"verified": false` con una nota, invece di affermare un esito che non
-ha potuto verificare.
+**0** per un id di finestra che non esiste.
+
+`verified` dice se la conferma e' davvero avvenuta. Su Linux minimize e maximize
+si confermano con `xprop` (pacchetto `x11-utils`); su Windows con
+`GetWindowPlacement`. Se quella lettura non riesce, la risposta riporta
+`"verified": false` **e il motivo nell'errore**, invece di affermare un esito che
+non ha potuto verificare — uno `state: null` accanto a `verified: true` sarebbe
+la peggiore delle due cose: nessuna informazione, presentata come conferma.
 
 Valori accettati: coordinate in `-32768..32767`, dimensioni in `1..32767` — il
 range a 16 bit della geometria X11. Fuori range si rifiuta, **non si clampa**:

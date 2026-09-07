@@ -176,6 +176,139 @@ def test_a_refused_resize_leaves_the_window_untouched(fake):
 
 
 # ---------------------------------------------------------------------------
+# An unreadable state is never a verified one
+#
+# This is the shape of a real failure, caught by the first CI run of this
+# feature: `maximize` and `restore` came back `{"ok": false, "state": null}` —
+# and, before the fix, `"verified": true` beside it, with nothing saying why.
+# The cause was Windows-only (pywin32 does not reliably expose `IsZoomed`), but
+# the reporting rule it broke is platform-independent, so it is pinned here
+# where it runs everywhere rather than only on the runner that found it.
+# ---------------------------------------------------------------------------
+SW_SHOWNORMAL, SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED = 1, 2, 3
+SW_MINIMIZE, SW_SHOWMINNOACTIVE, SW_RESTORE = 6, 7, 9
+
+
+class _StubWin32Gui:
+    """Just enough win32gui to drive `_show_window`'s reporting branches."""
+
+    def __init__(self, *, placement_fails: bool = False, iconic: bool = False,
+                 show_cmd: int = SW_SHOWNORMAL, is_window: bool = True):
+        self.placement_fails = placement_fails
+        self.iconic = iconic
+        self.show_cmd = show_cmd
+        self.is_window = is_window
+        self.shown: list[int] = []
+
+    def IsWindow(self, hwnd):  # noqa: N802
+        return self.is_window
+
+    def GetWindowRect(self, hwnd):  # noqa: N802
+        return (0, 0, 800, 600)
+
+    def IsIconic(self, hwnd):  # noqa: N802
+        return self.iconic
+
+    def ShowWindow(self, hwnd, cmd):  # noqa: N802
+        self.shown.append(cmd)
+
+    def GetWindowPlacement(self, hwnd):  # noqa: N802
+        if self.placement_fails:
+            # The shape of what the runner actually did: the attribute the old
+            # code reached for was not there, and the exception became a silent
+            # `None` with `verified: true` sitting next to it.
+            raise AttributeError("module 'win32gui' has no attribute 'IsZoomed'")
+        return (0, self.show_cmd, (0, 0), (0, 0), (0, 0, 800, 600))
+
+
+@pytest.fixture
+def win32con_stub(monkeypatch):
+    """`win32con` does not exist off win32; the constants it carries do."""
+    import sys
+    import types
+
+    module = types.ModuleType("win32con")
+    for name, value in (
+        ("SW_SHOWNORMAL", SW_SHOWNORMAL), ("SW_SHOWMINIMIZED", SW_SHOWMINIMIZED),
+        ("SW_SHOWMAXIMIZED", SW_SHOWMAXIMIZED), ("SW_MAXIMIZE", SW_SHOWMAXIMIZED),
+        ("SW_MINIMIZE", SW_MINIMIZE), ("SW_SHOWMINNOACTIVE", SW_SHOWMINNOACTIVE),
+        ("SW_RESTORE", SW_RESTORE),
+    ):
+        setattr(module, name, value)
+    monkeypatch.setitem(sys.modules, "win32con", module)
+    return module
+
+
+def _windows_backend_with(stub):
+    """A WindowsBackend without its win32 constructor — Linux can still run this."""
+    from windows_os_api.backends.windows import WindowsBackend
+
+    backend = object.__new__(WindowsBackend)
+    backend._win32gui = stub
+    return backend
+
+
+def test_an_unreadable_state_is_never_reported_as_verified(win32con_stub):
+    """The exact regression the first Windows CI run produced.
+
+    `{"ok": false, "state": null, "verified": true}` claims a confirmation that
+    never happened, and says nothing about why it could not be made.
+    """
+    stub = _StubWin32Gui(placement_fails=True)
+    result = _windows_backend_with(stub).maximize_window(1234)
+
+    assert result["ok"] is False
+    assert result["state"] is None
+    assert result["verified"] is False, result
+    assert "could not determine window state" in result["error"], result
+    assert "IsZoomed" in result["error"], result  # the reason travels with it
+    assert stub.shown == [SW_SHOWMAXIMIZED], "the operation itself still ran"
+
+
+def test_a_readable_state_is_reported_as_verified(win32con_stub):
+    result = _windows_backend_with(_StubWin32Gui(show_cmd=SW_SHOWMAXIMIZED)).maximize_window(1)
+    assert result["ok"] is True
+    assert result["state"] == "maximized"
+    assert result["verified"] is True
+
+
+def test_the_state_reader_no_longer_depends_on_iszoomed():
+    """`IsZoomed` is what the three failing tests had in common.
+
+    pywin32 does not reliably expose it — the stub above has no such attribute
+    either, and neither does the runner's build.
+    """
+    import inspect
+
+    from windows_os_api.backends import windows as win_backend
+
+    body = inspect.getsource(win_backend.WindowsBackend._window_state)
+    code = body.split('"""')[-1]  # the docstring names it; the code must not use it
+    assert "IsZoomed" not in code, code
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        ({"show_cmd": SW_SHOWMAXIMIZED}, "maximized"),
+        ({"iconic": True}, "minimized"),
+        ({"show_cmd": SW_SHOWMINIMIZED}, "minimized"),
+        ({"show_cmd": SW_MINIMIZE}, "minimized"),
+        ({"show_cmd": SW_SHOWMINNOACTIVE}, "minimized"),
+        ({"show_cmd": SW_SHOWNORMAL}, "normal"),
+    ],
+)
+def test_the_state_reader_classifies_every_placement(win32con_stub, kwargs, expected):
+    assert _windows_backend_with(_StubWin32Gui(**kwargs))._window_state(1) == (expected, None)
+
+
+def test_the_state_reader_reports_a_missing_window(win32con_stub):
+    state, why = _windows_backend_with(_StubWin32Gui(is_window=False))._window_state(1)
+    assert state is None
+    assert "not found" in why
+
+
+# ---------------------------------------------------------------------------
 # Through the HTTP surface
 # ---------------------------------------------------------------------------
 def test_api_move_returns_requested_and_geometry(client, auth_headers):

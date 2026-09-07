@@ -468,19 +468,39 @@ class WindowsBackend:
             return None
         return {"x": left, "y": top, "width": right - left, "height": bottom - top}
 
-    def _window_state(self, hwnd: int) -> str | None:
+    def _window_state(self, hwnd: int) -> tuple[str | None, str | None]:
+        """`(state, why it could not be determined)` — exactly one is not None.
+
+        The reason travels with the answer because the first CI run of this code
+        reported `state: None` for maximize and restore with nothing to say why,
+        and a result that cannot explain itself costs a whole round to diagnose.
+
+        `IsIconic` is kept — it demonstrably works on the runner, since minimize
+        passed there. `IsZoomed` is not: it is the one call the failing three had
+        in common, and pywin32 does not reliably expose it. `GetWindowPlacement`
+        answers the same question from a binding that is always present.
+        """
         if not self._win32gui:
-            return None
+            return None, "win32gui unavailable"
         try:
             if not self._win32gui.IsWindow(hwnd):
-                return None
+                return None, f"window {hwnd} not found"
             if self._win32gui.IsIconic(hwnd):
-                return "minimized"
-            if self._win32gui.IsZoomed(hwnd):
-                return "maximized"
-        except Exception:  # noqa: BLE001
-            return None
-        return "normal"
+                return "minimized", None
+        except Exception as e:  # noqa: BLE001
+            return None, f"IsWindow/IsIconic failed: {e}"
+        try:
+            import win32con  # type: ignore
+
+            show_cmd = self._win32gui.GetWindowPlacement(hwnd)[1]
+        except Exception as e:  # noqa: BLE001
+            return None, f"could not read window placement: {e}"
+        if show_cmd == win32con.SW_SHOWMAXIMIZED:
+            return "maximized", None
+        if show_cmd in (win32con.SW_SHOWMINIMIZED, win32con.SW_MINIMIZE,
+                        win32con.SW_SHOWMINNOACTIVE):
+            return "minimized", None
+        return "normal", None
 
     def _move_or_resize(
         self, hwnd: int, x: int | None, y: int | None, w: int | None, h: int | None,
@@ -536,16 +556,21 @@ class WindowsBackend:
             self._win32gui.ShowWindow(hwnd, getattr(win32con, sw_const))
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": str(e), "hwnd": hwnd}
-        observed = self._window_state(hwnd)
+        observed, why_unknown = self._window_state(hwnd)
         result: dict[str, Any] = {
             "ok": observed == expected,
             "hwnd": hwnd,
             "state": observed,
             "requested_state": expected,
-            "verified": True,
+            # An unreadable state is not a verified one. Reporting `verified:
+            # true` next to `state: null` would be claiming a confirmation that
+            # never happened.
+            "verified": observed is not None,
             "geometry": self.window_geometry(hwnd),
         }
-        if observed != expected:
+        if observed is None:
+            result["error"] = f"could not determine window state: {why_unknown}"
+        elif observed != expected:
             result["error"] = f"window is {observed!r}, not {expected!r}"
         return result
 
