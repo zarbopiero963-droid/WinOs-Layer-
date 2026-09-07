@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
+
 from windows_os_api.backends import linux_audio as _laudio
 from windows_os_api.backends import linux_services as _lsvc
 from windows_os_api.backends.linux_session import (
@@ -1569,10 +1571,18 @@ class LinuxBackend:
             return {"ok": False, "policy": "DENY", "error": "denied", "command": command}
         if policy not in ("ALLOW", "ADMIN"):
             return {"ok": False, "error": f"unknown policy: {policy}"}
+        # Enforced HERE, at the point that actually executes — not only in the
+        # os/terminal/service.py wrapper. Same lesson as the adapter sandbox:
+        # a check a caller can skip is not a check. There is no shell to inject
+        # into any more; an unregistered command simply does not run.
         try:
-            r = subprocess.run(  # noqa: S602
-                command,
-                shell=True,
+            argv = resolve_command(command, policy)
+        except CommandRejected as exc:
+            return {"ok": False, "policy": "DENY", "error": str(exc), "command": command}
+        try:
+            r = subprocess.run(  # noqa: S603
+                argv,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=30,

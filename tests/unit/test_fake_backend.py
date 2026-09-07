@@ -55,13 +55,20 @@ def test_fs_sandbox_blocks_escape(tmp_path):
 
 def test_terminal_policies(tmp_path):
     b = FakeBackend(str(tmp_path))
-    assert b.terminal_execute("dir", "ALLOW")["ok"] is True
+    # "dir" is a cmd builtin, unrunnable without a shell, so it is not in the
+    # command registry any more. The assertion is unchanged in intent: a
+    # permitted command under ALLOW still succeeds.
+    assert b.terminal_execute("whoami", "ALLOW")["ok"] is True
     deny = b.terminal_execute("rm -rf /", "DENY")
     assert deny["ok"] is False
     assert deny["policy"] == "DENY"
     admin = b.terminal_execute("whoami", "ADMIN")
     assert admin["ok"] is True
     assert "[admin]" in admin["stdout"]
+    # ADMIN widens the registry, it does not switch it off.
+    rejected = b.terminal_execute("rm -rf /", "ADMIN")
+    assert rejected["ok"] is False
+    assert "allowlist" in rejected["error"]
 
 def test_registry(tmp_path):
     b = FakeBackend(str(tmp_path))

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
+
 # Minimal 1x1 PNG
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -415,8 +417,18 @@ class FakeBackend:
         if policy == "DENY":
             return {"ok": False, "policy": "DENY", "error": "command denied by policy", "command": command}
         if policy == "ADMIN":
+            try:
+                resolve_command(command, policy)
+            except CommandRejected as exc:
+                return {"ok": False, "policy": "DENY", "error": str(exc), "command": command}
             return {"ok": True, "policy": "ADMIN", "stdout": f"[admin] executed: {command}", "stderr": "", "exit_code": 0}
         if policy != "ALLOW":
             return {"ok": False, "error": f"unknown policy: {policy}"}
-        # Safe fake execution — never shell out to real OS for arbitrary commands
+        # The fake backend never shells out, but it still honours the allowlist:
+        # if it accepted commands the real backends reject, every test written
+        # against it would give false confidence about production behaviour.
+        try:
+            resolve_command(command, policy)
+        except CommandRejected as exc:
+            return {"ok": False, "policy": "DENY", "error": str(exc), "command": command}
         return {"ok": True, "policy": "ALLOW", "stdout": f"fake output for: {command}", "stderr": "", "exit_code": 0}
