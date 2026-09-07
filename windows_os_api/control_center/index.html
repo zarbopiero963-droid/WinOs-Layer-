@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <title>WinOs Layer — Control Center</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #e8eef7; background: #0f172a; }
+    body { margin: 0; padding: 1.5rem; }
+    h1 { margin: 0 0 .25rem; }
+    .muted { color: #94a3b8; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; }
+    button { background: #38bdf8; color: #0f172a; border: 0; border-radius: 8px; padding: .5rem 1rem; font-weight: 600; cursor: pointer; }
+    button:hover { background: #7dd3fc; }
+    pre { background: #020617; padding: 1rem; border-radius: 8px; overflow: auto; max-height: 320px; }
+    input { background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px; padding: .4rem .6rem; width: 280px; }
+    .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+  </style>
+</head>
+<body>
+  <h1>WinOs Layer Control Center</h1>
+  <p class="muted">Dashboard locale FastAPI — bind 127.0.0.1 di default</p>
+  <div class="card row">
+    <label>API Key <input id="key" value="dev-key-change-me"/></label>
+    <button onclick="loadHealth()">Health</button>
+    <button onclick="loadCaps()">Capabilities</button>
+    <button onclick="loadApps()">Discover Apps</button>
+    <button onclick="loadMetrics()">Metrics</button>
+  </div>
+  <div class="card"><pre id="out">Pronto.</pre></div>
+  <script>
+    const out = document.getElementById('out');
+    async function api(path, opts={}) {
+      const key = document.getElementById('key').value;
+      const r = await fetch(path, { ...opts, headers: { 'X-API-Key': key, ...(opts.headers||{}) } });
+      const t = await r.text();
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; }
+    }
+    async function loadHealth(){ out.textContent = await api('/v1/health'); }
+    async function loadCaps(){ out.textContent = await api('/v1/capabilities'); }
+    async function loadApps(){ out.textContent = await api('/v1/apps/discover', {method:'POST'}); }
+    async function loadMetrics(){ out.textContent = await api('/v1/metrics'); }
+  </script>
+</body>
+</html>
