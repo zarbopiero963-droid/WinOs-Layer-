@@ -47,13 +47,18 @@ def test_audio_devices_printers_users(client, auth_headers):
 def test_registry_and_terminal(client, auth_headers, admin_headers):
     r = client.get("/v1/registry", headers=auth_headers, params={"path": r"HKCU\Software\ContosoCRM", "name": "Theme"})
     assert r.json()["ok"] is True
-    # ALLOW blocks metacharacters via OS terminal service
+    # Only registered commands run, and they run without a shell.
     blocked = client.post("/v1/terminal/execute", headers=auth_headers, json={"command": "echo hi; rm -rf /", "policy": "ALLOW"})
     assert blocked.json()["ok"] is False
-    allowed = client.post("/v1/terminal/execute", headers=auth_headers, json={"command": "dir", "policy": "ALLOW"})
+    allowed = client.post("/v1/terminal/execute", headers=auth_headers, json={"command": "whoami", "policy": "ALLOW"})
     assert allowed.json()["ok"] is True
     deny = client.post("/v1/terminal/execute", headers=auth_headers, json={"command": "x", "policy": "DENY"})
     assert deny.json()["policy"] == "DENY"
     # ADMIN policy requires admin role
     assert client.post("/v1/terminal/execute", headers=auth_headers, json={"command": "x", "policy": "ADMIN"}).status_code == 403
-    assert client.post("/v1/terminal/execute", headers=admin_headers, json={"command": "x", "policy": "ADMIN"}).json()["ok"] is True
+    assert client.post("/v1/terminal/execute", headers=admin_headers, json={"command": "whoami", "policy": "ADMIN"}).json()["ok"] is True
+    # This line used to assert that an admin could run the arbitrary command "x".
+    # That is the behaviour the allowlist removes, so the guarantee that replaced
+    # it gets asserted explicitly instead of quietly disappearing.
+    arbitrary = client.post("/v1/terminal/execute", headers=admin_headers, json={"command": "x", "policy": "ADMIN"})
+    assert arbitrary.json()["ok"] is False
