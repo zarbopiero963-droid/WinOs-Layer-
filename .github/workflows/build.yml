@@ -93,6 +93,13 @@ jobs:
           Compress-Archive -Path portable\* -DestinationPath dist\winos-api-portable-windows.zip -Force
       - name: Build Setup.exe (Inno)
         run: python scripts/build_installer.py build-installer
+      - name: Installer smoke (install, run the installed EXE, uninstall)
+        # WinOsApi-Setup has been shipped without anyone ever installing it.
+        # This drives the real lifecycle: silent install, check the layout the
+        # .iss promises, run the INSTALLED binary (what the user actually
+        # receives), silent uninstall, verify nothing is left behind.
+        # Installs to a scratch dir, never the default location.
+        run: python scripts/installer_smoke.py
       - name: Checksums
         shell: pwsh
         run: |
