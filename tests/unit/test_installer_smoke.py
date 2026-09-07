@@ -7,6 +7,8 @@ that must never silently accept a broken install.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -139,3 +141,23 @@ def test_wait_for_still_fails_on_a_condition_that_never_holds(ism):
         ism.wait_for(check, timeout=1.0, what="installed layout")
     assert "not satisfied within" in str(exc.value)
     assert "install dir was not created" in str(exc.value)
+
+
+def test_wait_or_kill_tree_reports_a_process_that_exits_on_its_own(ism):
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    assert ism.wait_or_kill_tree(proc, grace=30) is True
+
+
+def test_wait_or_kill_tree_kills_and_reports_a_process_that_will_not_exit(ism):
+    """A non-exiting installer must be killed AND reported, never silently accepted.
+
+    Returning True here would hide the very defect this smoke observed on CI:
+    Setup.exe finishing the install and then hanging forever.
+    """
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        assert ism.wait_or_kill_tree(proc, grace=1.0) is False
+        assert proc.poll() is not None, "the process tree must actually be dead"
+    finally:
+        if proc.poll() is None:
+            proc.kill()

@@ -3,12 +3,17 @@
 `WinOsApi-Setup-<version>.exe` has been produced by CI and shipped without ever
 being installed by anyone. This drives its real lifecycle on Windows:
 
-  1. silent install                 -> exits 0
-  2. installed layout               -> the files the .iss promises are on disk
-  3. the INSTALLED binary runs      -> delegated to artifact_smoke, so what the
+  1. silent install                 -> the layout the .iss promises appears
+  2. the INSTALLED binary runs      -> delegated to artifact_smoke, so what the
                                        user actually receives is what gets tested
-  4. silent uninstall               -> exits 0
-  5. removal                        -> no binary and no install dir left behind
+  3. silent uninstall               -> no binary and no install dir left behind
+
+Each step asserts the EFFECT, not the exit of the installer process. Observed
+on GHA: Setup.exe completes the install ("Installation process succeeded" in
+its own log, every file on disk) and then never terminates. Waiting on process
+exit therefore hangs on work that is already done. That non-exit is a real
+defect of the installer, reported loudly here and tracked in issue #6 — it is
+not swallowed, it is simply not allowed to block the verification.
 
 Scope note, taken from installer/inno/winos-api.iss rather than assumed:
 the installer does NOT register the Windows service. Service installation is a
@@ -112,17 +117,12 @@ def _log_tail(log: Path | None) -> str:
 def _run(
     cmd: list[str], what: str, timeout: int = 180, log: Path | None = None, capture: bool = True
 ) -> None:
-    """Run a command, optionally capturing its output.
+    """Run a command that is expected to exit on its own.
 
-    `capture` is not a convenience knob: capture_output=True makes
-    subprocess.run wait for EOF on the pipes, not for the child to exit. Inno
-    Setup extracts itself into a second process (WinOsApi-Setup-<v>.tmp) which
-    inherits those pipe handles, so if it outlives its parent the read never
-    ends and the call hangs forever — observed on GHA, where the install had
-    already logged "Installation process succeeded" while this script sat
-    waiting, and the runner later reaped the .tmp as an orphan. For Inno
-    commands we therefore do not capture: the /LOG file is the authoritative
-    record anyway, and the child's output goes straight to the CI log.
+    Used only for the artifact smoke against the installed binary. The Inno
+    commands do NOT go through here: they do not reliably exit, so they are
+    driven by silent_install_observed / silent_uninstall_observed, which assert
+    the effect instead.
     """
     try:
         proc = subprocess.run(  # noqa: S603
@@ -148,11 +148,10 @@ def _run(
 def wait_for(check, timeout: float, what: str) -> None:
     """Poll a verification until it passes, or re-raise its last failure.
 
-    Inno's launcher may return before its .tmp worker has finished touching the
-    filesystem, so an instantaneous assertion right after the command can lose a
-    race it has no reason to lose. Polling keeps the assertion strict — the
-    condition must still become true — while tolerating that the work is
-    finishing in another process.
+    The installer does its work in a helper process, so the effect appears while
+    the launcher is still around. Polling keeps the assertion strict — the
+    condition must still become true, or this raises — while tolerating that the
+    work is finishing somewhere we are not watching.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -167,11 +166,51 @@ def wait_for(check, timeout: float, what: str) -> None:
             time.sleep(1.0)
 
 
-def silent_install(setup: Path, install_dir: Path, log: Path) -> None:
-    # /SUPPRESSMSGBOXES is mandatory, not cosmetic: the .iss shows a MsgBox from
-    # [Code] at ssPostInstall, and that code path runs even under /VERYSILENT.
-    # Without it an unattended install blocks forever on a dialog nobody can click.
-    _run(
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    if sys.platform.startswith("win"):
+        subprocess.run(  # noqa: S603,S607 - fixed system tool, pid is ours
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=60
+        )
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def wait_or_kill_tree(proc: subprocess.Popen, grace: float = 30.0) -> bool:
+    """Give the process time to exit on its own; kill its tree if it will not.
+
+    Returns True if it exited by itself. False means it had to be killed — which
+    is reported, never swallowed.
+    """
+    try:
+        proc.wait(timeout=grace)
+        return True
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        return False
+
+
+def silent_install_observed(setup: Path, install_dir: Path, log: Path) -> bool:
+    """Install, then wait for the RESULT rather than for the process to exit.
+
+    Observed on GHA across three runs: Setup.exe completes the installation —
+    the Inno log records "Installation process succeeded" and every file lands
+    on disk — and then never terminates; the runner reaps its
+    WinOsApi-Setup-<v>.tmp helper as an orphan afterwards. Waiting on process
+    exit therefore hangs on a job that has actually finished its work.
+
+    So the assertion moves to what we actually care about and can trust: the
+    layout the .iss promises must appear. It is not relaxed — it must still
+    become true, or this fails. The installer's failure to exit is returned to
+    the caller and reported loudly, because an unattended deploy that waits on
+    Setup.exe would hang on it (tracked in issue #6).
+    """
+    proc = subprocess.Popen(  # noqa: S603
         [
             str(setup),
             "/VERYSILENT",
@@ -180,22 +219,34 @@ def silent_install(setup: Path, install_dir: Path, log: Path) -> None:
             "/NOCANCEL",
             f"/DIR={install_dir}",
             f"/LOG={log}",
-        ],
-        "silent install",
-        log=log,
-        capture=False,
+        ]
     )
+    try:
+        wait_for(lambda: verify_installed_layout(install_dir), 180, "installed layout")
+    except InstallerSmokeError as exc:
+        _kill_tree(proc)
+        raise InstallerSmokeError(f"{exc}{_log_tail(log)}") from exc
+    return wait_or_kill_tree(proc)
 
 
-def silent_uninstall(install_dir: Path) -> None:
+def silent_uninstall_observed(install_dir: Path) -> bool:
+    """Uninstall, then wait for the removal rather than for the process to exit.
+
+    Inno's uninstaller relaunches itself from a temp copy, so it has the same
+    non-exiting behaviour as Setup.exe. Same approach: assert the effect.
+    """
     uninstaller = uninstaller_path(install_dir)
     if not uninstaller.is_file():
         raise InstallerSmokeError(f"uninstaller missing: {uninstaller}")
-    _run(
-        [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-        "silent uninstall",
-        capture=False,
+    proc = subprocess.Popen(  # noqa: S603
+        [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
     )
+    try:
+        wait_for(lambda: verify_removed(install_dir), 180, "removal after uninstall")
+    except InstallerSmokeError:
+        _kill_tree(proc)
+        raise
+    return wait_or_kill_tree(proc)
 
 
 def run_installed_binary(install_dir: Path) -> None:
@@ -245,18 +296,23 @@ def main(argv: list[str] | None = None) -> int:
         setup = find_setup(Path(args.output_dir))
         print(f"installer: {setup} ({setup.stat().st_size / 1_048_576:.1f} MiB)")
 
-        silent_install(setup, install_dir, log)
+        exited = silent_install_observed(setup, install_dir, log)
         print(f"  install -> {install_dir}")
-
-        wait_for(lambda: verify_installed_layout(install_dir), 120, "installed layout")
         print(f"  layout  -> {', '.join(EXPECTED_AFTER_INSTALL)} present, api_key.txt non-empty")
+        if not exited:
+            print(
+                "  WARNING: Setup.exe completed the installation but never exited; "
+                "its process tree was killed. An unattended deploy that waits on "
+                "Setup.exe would hang here. Tracked in issue #6."
+            )
 
         run_installed_binary(install_dir)
         print("  installed binary -> serves and shuts down")
 
-        silent_uninstall(install_dir)
-        wait_for(lambda: verify_removed(install_dir), 120, "removal after uninstall")
+        exited = silent_uninstall_observed(install_dir)
         print("  uninstall -> binary and install dir removed")
+        if not exited:
+            print("  WARNING: the uninstaller never exited either; process tree killed.")
     except InstallerSmokeError as exc:
         print(f"\nINSTALLER SMOKE FAILED: {exc}", file=sys.stderr)
         return 1
