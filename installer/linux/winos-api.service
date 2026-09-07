@@ -1,0 +1,46 @@
+# systemd unit for WinOs-Layer FastAPI server (Linux portable package).
+#
+# NOTE: Default backend is LinuxBackend (real OS). Set WINOS_BACKEND=fake only
+# for Contoso CRM adapter fixtures. On Windows use the Windows EXE / WindowsBackend.
+# This unit is NOT used on Windows.
+#
+# Install (system-wide example):
+#   sudo cp winos-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now winos-api
+#
+# Or user unit:
+#   mkdir -p ~/.config/systemd/user
+#   cp winos-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now winos-api
+
+[Unit]
+Description=WinOs-Layer FastAPI OS API server (LinuxBackend / real OS)
+Documentation=file:///opt/winos-api/LINUX.md
+After=network.target
+
+[Service]
+Type=simple
+# Prefer /opt/winos-api/winos-api (system install) or override ExecStart for ~/.local
+ExecStart=/opt/winos-api/winos-api serve --host 127.0.0.1 --port 8765
+WorkingDirectory=/opt/winos-api
+Restart=on-failure
+RestartSec=5
+
+# auto → LinuxBackend on Linux; use fake only for CRM fixture demos
+Environment=WINOS_BACKEND=auto
+Environment=WINOS_REQUIRE_AUTH=true
+# Optional: EnvironmentFile=-/opt/winos-api/api_key.env
+
+# Bind localhost only (default security posture)
+# Remote access remains DISABLED unless deliberately enabled
+
+# Hardening (adjust if you need broader FS access for adapters)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/winos-api
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+# For user units, use: WantedBy=default.target

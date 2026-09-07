@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+      - name: Forensic audit
+        run: python scripts/forensic_audit.py
+      - name: Validate installer packaging
+        run: python scripts/build_installer.py validate
+      - name: Pytest fake suite (CRM fixtures — WINOS_BACKEND=fake)
+        env:
+          WINOS_BACKEND: fake
+          WINOS_REQUIRE_AUTH: "true"
+        run: pytest -q --tb=short -m "not windows and not linux"
+      - name: Pytest LinuxBackend suite (real OS)
+        env:
+          WINOS_BACKEND: linux
+          WINOS_REQUIRE_AUTH: "true"
+        run: pytest -q --tb=short -m "linux"
+      - name: Pytest portable+linux exclude windows
+        env:
+          WINOS_BACKEND: fake
+          WINOS_REQUIRE_AUTH: "true"
+        run: pytest -q --tb=short -m "not windows"
+      - name: Live Linux smoke
+        env:
+          WINOS_BACKEND: linux
+          WINOS_REQUIRE_AUTH: "true"
+          WINOS_API_KEYS: '["dev-key-change-me"]'
+        run: python scripts/live_linux_smoke.py
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev,windows]"
+          python -c "import mss, PIL; print('mss+Pillow OK')"
+          python -c "import uiautomation; print('uiautomation OK')"
+      - name: Forensic audit
+        run: python scripts/forensic_audit.py
+      - name: Validate installer packaging
+        run: python scripts/build_installer.py validate
+      - name: Pytest portable (fake backend; skip linux+windows markers)
+        env:
+          WINOS_BACKEND: fake
+          WINOS_REQUIRE_AUTH: "true"
+        run: pytest -q --tb=short -m "not windows and not linux"
+      - name: Pytest Windows hard tests (headless-capable + requires_display skip)
+        env:
+          WINOS_BACKEND: windows
+          WINOS_REQUIRE_AUTH: "true"
+        run: pytest -q --tb=short -m windows
+      - name: Live Windows smoke
+        env:
+          WINOS_BACKEND: windows
+          WINOS_REQUIRE_AUTH: "true"
+          WINOS_API_KEYS: '["dev-key-change-me"]'
+        run: python scripts/live_windows_smoke.py
+        # GHA windows-latest often has a desktop session; UIA/screenshot may still
+        # skip inside the script when interactive desktop is limited.
+        continue-on-error: false
