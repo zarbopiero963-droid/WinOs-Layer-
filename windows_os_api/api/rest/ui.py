@@ -32,6 +32,30 @@ class TypeText(BaseModel):
     text: str
 
 
+class Scroll(BaseModel):
+    direction: str = "down"
+    amount: int = 3
+    x: int | None = None
+    y: int | None = None
+
+
+class MouseDrag(BaseModel):
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    button: str = "left"
+    steps: int = 10
+
+
+class KeyName(BaseModel):
+    key: str
+
+
+class Hotkey(BaseModel):
+    keys: list[str]
+
+
 class ClipboardSet(BaseModel):
     text: str
 
@@ -112,6 +136,51 @@ def key_press(body: KeyPress, auth: AuthContext = Depends(require_permission(Per
 @router.post("/input/keyboard/type")
 def type_text(body: TypeText, auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
     return inp.type_text(body.text)
+
+
+# The rest of the input primitives. `ok` means the OS accepted the event, not
+# that the focused window did anything with it — there is no readback for a
+# keystroke. The pointer is the exception: move and drag report `position`.
+@router.post("/input/mouse/double-click")
+def double_click(body: MouseClick,
+                 auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.double_click(body.x, body.y, body.button)
+
+
+@router.post("/input/mouse/scroll")
+def scroll(body: Scroll,
+           auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.scroll(body.direction, body.amount, body.x, body.y)
+
+
+@router.post("/input/mouse/drag")
+def mouse_drag(body: MouseDrag,
+               auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.mouse_drag(body.x1, body.y1, body.x2, body.y2, body.button, body.steps)
+
+
+@router.get("/input/mouse/position")
+def pointer_position(auth: AuthContext = Depends(require_permission(Permission.UI_READ))):
+    position = inp.pointer_position()
+    return {"ok": position is not None, "position": position}
+
+
+@router.post("/input/keyboard/down")
+def key_down(body: KeyName,
+             auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.key_down(body.key)
+
+
+@router.post("/input/keyboard/up")
+def key_up(body: KeyName,
+           auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.key_up(body.key)
+
+
+@router.post("/input/keyboard/hotkey")
+def hotkey(body: Hotkey,
+           auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
+    return inp.hotkey(body.keys)
 
 
 @router.get("/clipboard")

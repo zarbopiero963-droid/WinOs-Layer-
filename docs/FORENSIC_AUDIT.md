@@ -113,10 +113,28 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/os/input/service.py`
-  - `windows_os_api/api/rest/ui.py`
+  - `windows_os_api/os/input/validation.py` — button/scroll/key/chord/steps
+    validation, one home, applied by every backend at the point that acts
+  - `windows_os_api/api/rest/ui.py` — move/click/key/type plus `double-click`,
+    `scroll`, `drag`, `position`, `keyboard/down`, `keyboard/up`, `hotkey`
+  - `windows_os_api/backends/{linux,windows,fake}.py`
 - **Tests:**
+  - `tests/linux/test_input_linux.py` — delivery read back from `xev` under Xvfb
+  - `tests/windows/test_input_windows.py` — real SendInput on windows-latest
+  - `tests/unit/test_input_validation_contract.py`
   - `tests/integration/test_api_os_layers.py`
-- **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
+- **How to run:** `pytest tests/unit/test_input_validation_contract.py -q`
+  (real delivery: `xvfb-run -a pytest -m linux -q`)
+- **Note:** `double_click`, `scroll`, `key_down`, `key_up` and `hotkey` did not
+  exist in any backend, and `mouse_drag` existed only in `windows.py`, although
+  this entry already read DONE. Two defects found along the way, both on BOTH
+  backends: an unknown mouse button fell through to left
+  (`{"left": "1", ...}.get(button, "1")`), so a typo performed a left click
+  reported as the button the caller named; and `mouse_move` on Linux returned
+  `{"ok": True}` for a move that never happened — under a bare Xvfb with no
+  window manager, `xdotool mousemove` is a silent no-op and the pointer stays
+  at the screen centre. `ok` now means the OS accepted the event; the pointer,
+  which IS readable, is verified.
 
 ## PR10: Clipboard
 - **Status:** DONE

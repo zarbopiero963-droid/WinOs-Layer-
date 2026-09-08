@@ -14,6 +14,14 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.input.validation import (
+    InputRejected,
+    validate_button,
+    validate_hotkey,
+    validate_key,
+    validate_scroll,
+    validate_steps,
+)
 
 # Minimal 1x1 PNG
 _PNG_1X1 = base64.b64decode(
@@ -274,15 +282,93 @@ class FakeBackend:
         }
 
     # --- Input ---
+    # The fake applies the SAME validation as the real backends. It has no OS to
+    # refuse anything for it, so without this a test written against the fake
+    # would believe a typo'd button or an out-of-range scroll is accepted — and
+    # a fake that is more permissive than production certifies the wrong thing.
     def mouse_move(self, x: int, y: int) -> dict[str, Any]:
+        try:
+            x, y = validate_position(x, y)
+        except GeometryRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y}
         self._mouse = {"x": x, "y": y}
         self._input_log.append({"type": "mouse_move", "x": x, "y": y})
-        return {"ok": True, **self._mouse}
+        return {"ok": True, **self._mouse, "position": dict(self._mouse)}
+
+    def pointer_position(self) -> dict[str, int] | None:
+        return dict(self._mouse)
 
     def mouse_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
         self._mouse = {"x": x, "y": y}
         self._input_log.append({"type": "mouse_click", "x": x, "y": y, "button": button})
         return {"ok": True, "x": x, "y": y, "button": button}
+
+    def double_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
+        self._mouse = {"x": x, "y": y}
+        self._input_log.append(
+            {"type": "double_click", "x": x, "y": y, "button": button, "clicks": 2}
+        )
+        return {"ok": True, "x": x, "y": y, "button": button, "clicks": 2}
+
+    def scroll(self, direction: str = "down", amount: int = 3,
+               x: int | None = None, y: int | None = None) -> dict[str, Any]:
+        try:
+            direction, amount = validate_scroll(direction, amount)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "direction": direction, "amount": amount}
+        if x is not None and y is not None:
+            moved = self.mouse_move(x, y)
+            if not moved.get("ok"):
+                return {**moved, "ok": False}
+        self._input_log.append({"type": "scroll", "direction": direction, "amount": amount})
+        return {"ok": True, "direction": direction, "amount": amount}
+
+    def key_down(self, key: str) -> dict[str, Any]:
+        return self._key_transition(key, "down")
+
+    def key_up(self, key: str) -> dict[str, Any]:
+        return self._key_transition(key, "up")
+
+    def _key_transition(self, key: str, state: str) -> dict[str, Any]:
+        try:
+            key = validate_key(key)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "key": key}
+        self._input_log.append({"type": f"key_{state}", "key": key})
+        return {"ok": True, "key": key, "state": state}
+
+    def hotkey(self, keys: list[str]) -> dict[str, Any]:
+        try:
+            keys = validate_hotkey(keys)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "keys": keys}
+        self._input_log.append({"type": "hotkey", "keys": list(keys)})
+        return {"ok": True, "keys": keys, "chord": "+".join(keys)}
+
+    def mouse_drag(self, x1: int, y1: int, x2: int, y2: int,
+                   button: str = "left", *, steps: int = 10) -> dict[str, Any]:
+        try:
+            button = validate_button(button)
+            steps = validate_steps(steps)
+            x1, y1 = validate_position(x1, y1)
+            x2, y2 = validate_position(x2, y2)
+        except (InputRejected, GeometryRejected) as exc:
+            return {"ok": False, "error": str(exc), "button": button}
+        self._mouse = {"x": x2, "y": y2}
+        self._input_log.append({
+            "type": "mouse_drag", "from": {"x": x1, "y": y1},
+            "to": {"x": x2, "y": y2}, "button": button, "steps": steps,
+        })
+        return {"ok": True, "from": {"x": x1, "y": y1}, "requested": {"x": x2, "y": y2},
+                "position": dict(self._mouse), "button": button, "steps": steps}
 
     def key_press(self, key: str, modifiers: list[str] | None = None) -> dict[str, Any]:
         entry = {"type": "key_press", "key": key, "modifiers": modifiers or []}
