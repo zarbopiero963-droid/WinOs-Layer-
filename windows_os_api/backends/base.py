@@ -198,6 +198,25 @@ class OSBackend(Protocol):
     def network_connections(self) -> list[dict[str, Any]]:
         ...
 
+    def list_routes(self) -> list[dict[str, Any]]:
+        """The routing table. Entries carry a `default` flag for 0.0.0.0/0."""
+        ...
+
+    def dns_resolve(self, host: str) -> dict[str, Any]:
+        """Forward lookup. Delegates to `os/network/dns.py` on every backend —
+        `socket.getaddrinfo` is the same call everywhere, so three copies could
+        only differ by drifting."""
+        ...
+
+    def dns_reverse(self, address: str) -> dict[str, Any]:
+        ...
+
+    def ping(self, host: str, count: int = 2, timeout: int = 2) -> dict[str, Any]:
+        """ICMP echo, bounded. `ok` means at least one reply came back;
+        `received` says how many, because "1 of 4" is a different answer from
+        "all of them"."""
+        ...
+
     # Services
     def list_services(self) -> list[dict[str, Any]]:
         ...

@@ -175,14 +175,33 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `tests/integration/test_api_os_layers.py`
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
-## PR14: Network interfaces/connections
+## PR14: Network interfaces/connections + routes, DNS, ping
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/os/network/service.py`
-  - `windows_os_api/api/rest/network.py`
+  - `windows_os_api/os/network/validation.py` — host/IP/ping-bounds validation,
+    one home, applied by every backend at the point that acts
+  - `windows_os_api/os/network/dns.py` — one resolver, shared by all backends
+  - `windows_os_api/api/rest/network.py` — interfaces/connections plus
+    `routes`, `dns/resolve`, `dns/reverse`, `ping`
+  - `windows_os_api/backends/{linux,windows,fake}.py`
 - **Tests:**
+  - `tests/linux/test_network_linux.py` — kernel routing table + live resolver
+  - `tests/windows/test_network_windows.py` — `route print` + Windows `ping`
+  - `tests/unit/test_network_probes_contract.py`
   - `tests/integration/test_api_os_layers.py`
-- **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
+- **How to run:** `pytest tests/unit/test_network_probes_contract.py -q`
+- **Note:** `list_routes`, `dns_resolve`/`dns_reverse` and `ping` did not exist,
+  although this entry already read DONE. Design notes worth keeping:
+  routes come from `/proc/net/route` on Linux (no binary: `ip` is absent on
+  minimal systems, and an empty list would read as "no routes" when it meant
+  "no tool"); DNS is `socket.getaddrinfo` in **one** shared module rather than
+  three copies that could only drift; and `ping` is the first endpoint to hand
+  a caller-supplied string to an external program, so a host is validated
+  before it gets there. That is **option**-injection defence, not shell
+  injection — argv already removes the shell, but `ping -f` is still a flood
+  ping if `-f` arrives where a hostname belongs. A hostname cannot begin with
+  `-`, which removes the class.
 
 ## PR15: Services control
 - **Status:** DONE

@@ -22,6 +22,12 @@ from windows_os_api.os.input.validation import (
     validate_scroll,
     validate_steps,
 )
+from windows_os_api.os.network.validation import (
+    NetworkRejected,
+    validate_host,
+    validate_ip,
+    validate_ping,
+)
 
 # Minimal 1x1 PNG
 _PNG_1X1 = base64.b64decode(
@@ -478,6 +484,67 @@ class FakeBackend:
         return [
             {"local": "10.0.0.5:8765", "remote": "127.0.0.1:54321", "status": "LISTEN", "pid": 42},
         ]
+
+    # --- Network probes ---
+    #
+    # The fake answers from fixtures — it must not touch the network, or the
+    # suite stops being offline and deterministic. It applies the SAME
+    # validation as the real backends, so a test written against it cannot come
+    # to believe that a leading-hyphen host or an unbounded count is accepted.
+    def list_routes(self) -> list[dict[str, Any]]:
+        return [
+            {"interface": "Ethernet", "destination": "0.0.0.0", "gateway": "10.0.0.1",
+             "netmask": "0.0.0.0", "metric": 25, "default": True, "up": True,
+             "source": "fake"},
+            {"interface": "Ethernet", "destination": "10.0.0.0", "gateway": "0.0.0.0",
+             "netmask": "255.255.255.0", "metric": 281, "default": False, "up": True,
+             "source": "fake"},
+        ]
+
+    def dns_resolve(self, host: str) -> dict[str, Any]:
+        try:
+            host = validate_host(host)
+        except NetworkRejected as exc:
+            return {"ok": False, "error": str(exc), "host": host}
+        known = {
+            "localhost": ["127.0.0.1"],
+            "contoso-crm.local": ["10.0.0.5"],
+        }
+        addresses = known.get(host.lower())
+        if not addresses:
+            return {"ok": False, "error": f"could not resolve {host!r}: not in fake DNS",
+                    "host": host, "addresses": []}
+        return {"ok": True, "host": host, "addresses": addresses,
+                "ipv4": addresses, "ipv6": []}
+
+    def dns_reverse(self, address: str) -> dict[str, Any]:
+        try:
+            address = validate_ip(address)
+        except NetworkRejected as exc:
+            return {"ok": False, "error": str(exc), "address": address}
+        known = {"127.0.0.1": "localhost", "10.0.0.5": "contoso-crm.local"}
+        hostname = known.get(address)
+        if not hostname:
+            return {"ok": False, "error": f"no reverse record for {address}",
+                    "address": address}
+        return {"ok": True, "address": address, "hostname": hostname,
+                "aliases": [], "addresses": [address]}
+
+    def ping(self, host: str, count: int = 2, timeout: int = 2) -> dict[str, Any]:
+        try:
+            host = validate_host(host)
+            count, timeout = validate_ping(count, timeout)
+        except NetworkRejected as exc:
+            return {"ok": False, "error": str(exc), "host": host}
+        reachable = host in ("127.0.0.1", "localhost", "10.0.0.5", "contoso-crm.local")
+        return {
+            "ok": reachable,
+            "host": host,
+            "transmitted": count,
+            "received": count if reachable else 0,
+            "exit_code": 0 if reachable else 1,
+            "output": f"fake ping to {host}",
+        }
 
     # --- Services ---
     def list_services(self) -> list[dict[str, Any]]:

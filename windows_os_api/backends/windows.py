@@ -6,11 +6,22 @@ win32. Never returns Fake Contoso CRM data.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import platform
+import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from windows_os_api.os.network import dns as _dns
+from windows_os_api.os.network.validation import (
+    NetworkRejected,
+    validate_host,
+    validate_ping,
+)
 
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
 from windows_os_api.os.windows.geometry import (
@@ -35,6 +46,35 @@ class WindowsBackendUnavailable(RuntimeError):
 def _require_windows() -> None:
     if sys.platform != "win32":
         raise WindowsBackendUnavailable("WindowsBackend requires win32 platform")
+
+
+def _looks_like_ipv4(value: str) -> bool:
+    try:
+        ipaddress.IPv4Address(value)
+    except ValueError:
+        return False
+    return True
+
+
+# Windows prints "Received = 2" where Linux prints "2 received", and the word is
+# localised on a non-English machine — hence the digits-after-'=' fallback.
+_PING_RECEIVED_WIN = re.compile(r"Received\s*=\s*(\d+)", re.IGNORECASE)
+
+
+def _parse_ping_received_windows(output: str) -> int | None:
+    """Replies received, or None when the summary cannot be read.
+
+    None means "not parsed" and is reported as such rather than as 0, which
+    would be an invented answer — and the wrong one, since exit code 0 already
+    says at least one reply arrived.
+    """
+    match = _PING_RECEIVED_WIN.search(output or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1351,6 +1391,101 @@ class WindowsBackend:
                 "pid": c.pid,
             })
         return out
+
+    # ------------------------------------------------------------------
+    # Network probes: routes, DNS, ping
+    # ------------------------------------------------------------------
+    def list_routes(self) -> list[dict[str, Any]]:
+        """The IPv4 routing table via `route print -4`, parsed positionally.
+
+        Linux reads /proc; Windows has no equivalent file, so this parses the
+        one table `route` prints. The parser keys on the four-column numeric
+        shape rather than on the header text, which is localised — a machine in
+        Italian prints "Route attive" and a header match would return nothing
+        while reporting no error.
+        """
+        exe = shutil.which("route")
+        if not exe:
+            return []
+        try:
+            r = subprocess.run(  # noqa: S603
+                [exe, "print", "-4"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+
+        out: list[dict[str, Any]] = []
+        for line in (r.stdout or "").splitlines():
+            fields = line.split()
+            # destination netmask gateway interface metric
+            if len(fields) != 5:
+                continue
+            destination, netmask, gateway, interface, metric = fields
+            if not _looks_like_ipv4(destination) or not _looks_like_ipv4(netmask):
+                continue
+            try:
+                metric_value = int(metric)
+            except ValueError:
+                continue
+            out.append({
+                "interface": interface,
+                "destination": destination,
+                # "On-link" is what Windows prints for a directly attached
+                # network. Normalised to the same 0.0.0.0 Linux reports, so a
+                # caller does not need a per-platform branch to read the field.
+                "gateway": "0.0.0.0" if gateway.lower() == "on-link" else gateway,
+                "netmask": netmask,
+                "metric": metric_value,
+                "default": destination == "0.0.0.0" and netmask == "0.0.0.0",
+                "up": True,
+                "source": "route print",
+            })
+        return out
+
+    def dns_resolve(self, host: str) -> dict[str, Any]:
+        return _dns.resolve(host)
+
+    def dns_reverse(self, address: str) -> dict[str, Any]:
+        return _dns.reverse(address)
+
+    def ping(self, host: str, count: int = 2, timeout: int = 2) -> dict[str, Any]:
+        """ICMP echo via the Windows `ping`, as argv and bounded.
+
+        The flags differ from Linux: `-n` is the count and `-w` is a per-reply
+        timeout in **milliseconds**, not seconds. Passing the Linux flags here
+        would make `-W 2` a 2ms timeout, which fails against anything but
+        loopback and looks like a network fault rather than a bug.
+        """
+        try:
+            host = validate_host(host)
+            count, timeout = validate_ping(count, timeout)
+        except NetworkRejected as exc:
+            return {"ok": False, "error": str(exc), "host": host}
+        exe = shutil.which("ping")
+        if not exe:
+            return {"ok": False, "error": "ping binary not found", "host": host,
+                    "available": False}
+        try:
+            r = subprocess.run(  # noqa: S603
+                [exe, "-n", str(count), "-w", str(timeout * 1000), host],
+                capture_output=True, text=True,
+                timeout=count * timeout + 5, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "ping did not finish within its own limits",
+                    "host": host, "count": count}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "host": host}
+
+        return {
+            "ok": r.returncode == 0,
+            "host": host,
+            "transmitted": count,
+            "received": _parse_ping_received_windows(r.stdout),
+            "exit_code": r.returncode,
+            "output": r.stdout[:4000],
+        }
 
     def list_services(self) -> list[dict[str, Any]]:
         return [{"name": "WinOsApi", "status": "unknown", "note": "use pywin32 service APIs"}]
