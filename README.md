@@ -471,11 +471,54 @@ E' la stessa classe di difetto di `ok: true` su una finestra inesistente e di
 `state: null` presentato come `verified: true`. Un campo che dice sempre la
 stessa cosa non e' un'informazione: e' rumore che sembra un'informazione.
 
-> **Limite dichiarato.** «Zero elementi» e «non ho guardato» restano ancora
-> indistinguibili nella risposta: entrambi sono `200` con lista vuota. E' una
-> decisione di contratto aperta con l'owner (issue #6, domanda D3) e non e'
-> stata presa qui. L'audio su Windows resta non implementato per lo stesso
-> motivo — richiederebbe `pycaw`, cioe' una dipendenza nuova (domanda D4).
+### `supported` — «nessuno» e «non ho guardato» sono risposte diverse
+
+`GET /v1/printers` rispondeva `{"printers": []}` in **quattro** situazioni, e il
+chiamante non poteva distinguerle: non ci sono stampanti / il backend non le
+implementa / la discovery non e' stata eseguita / la discovery e' fallita. Una
+sola delle quattro e' la risposta che credeva di leggere.
+
+Decisione owner D3-A: il contratto e' **additivo** — la chiave dei dati resta
+dov'era, accanto compaiono `supported` e, quando serve, `error_code`.
+
+| Situazione | Risposta |
+|---|---|
+| supportata, con risultati | `{"supported": true, "printers": [...]}` |
+| supportata, nessun elemento | `{"supported": true, "printers": []}` |
+| il backend non la implementa | `{"supported": false, "printers": [], "error_code": "CAPABILITY_NOT_SUPPORTED"}` |
+| implementata, ma qui manca lo strumento | `{"supported": false, "printers": [], "error_code": "CAPABILITY_UNAVAILABLE"}` |
+| supportata, discovery fallita | `{"supported": true, "printers": [], "error_code": "DISCOVERY_FAILED"}` |
+
+Gli ultimi due codici di «non supportata» sembrano lo stesso caso e non lo sono,
+ed e' la distinzione che rende il campo utile:
+
+```
+Windows + audio    -> NOT_SUPPORTED   servirebbe pycaw nel progetto (D4-B):
+                                      installare qualcosa non cambia niente
+Linux   + printers -> UNAVAILABLE     lpstat non c'e' su QUESTA macchina:
+                                      installare CUPS le fa comparire
+```
+
+Un codice solo per entrambi direbbe al chiamante di arrendersi anche quando
+basta un pacchetto. Il backend dichiara in `NOT_IMPLEMENTED` cio' che non
+implementa affatto; tutto il resto che risulta `false` e' implementato ma privo
+dello strumento.
+
+**`DISCOVERY_FAILED` esiste perche' i backend adesso lo dicono.** Prima
+inghiottivano i propri errori e restituivano `[]`: un `lpstat` in timeout
+diventava «non ci sono stampanti». Ora sollevano `DiscoveryFailed`, e il caso e'
+raggiungibile davvero — altrimenti sarebbe testabile solo iniettando il
+fallimento nel modulo che lo gestisce, cioe' testando il test.
+
+`GET /v1/audio/volume` segue la stessa regola con un valore singolo:
+`{"volume": null}` diceva «il volume e' nullo», che e' diverso da «non so
+leggerlo qui».
+
+> **Audio su Windows: `supported: false`, dichiarato** (decisione owner D4-B).
+> Richiederebbe Core Audio COM via `pycaw`, una dipendenza nuova, e diventera'
+> una PR dedicata quando servira'. Nel frattempo l'API lo dice invece di
+> rispondere `200` con lista vuota — che su qualunque PC significherebbe
+> «questa macchina non ha audio», ed e' falso.
 
 ## Terminal — allowlist, non denylist
 

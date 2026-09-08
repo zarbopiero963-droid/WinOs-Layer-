@@ -108,6 +108,10 @@ class FakeBackend:
         self._clipboard = ""
         self._mouse = {"x": 0, "y": 0}
         self._volume = 50
+        # `_muted` mancava: `audio_volume()` sollevava AttributeError finche'
+        # `audio_set_mute()` non veniva chiamato, quindi GET /v1/audio/volume
+        # rispondeva 500 a processo fresco. Nessun test lo copriva.
+        self._muted = False
         self._processes: dict[int, dict[str, Any]] = {
             1: {"pid": 1, "name": "System", "status": "running", "cpu_percent": 0.1, "memory_mb": 8.0},
             42: {"pid": 42, "name": "ContosoCRM.exe", "status": "running", "cpu_percent": 2.5, "memory_mb": 128.0},

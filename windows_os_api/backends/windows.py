@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from windows_os_api.os.capability import DiscoveryFailed
 from windows_os_api.os.network import dns as _dns
 from windows_os_api.os.network.validation import (
     NetworkRejected,
@@ -48,6 +49,14 @@ from windows_os_api.os.input.validation import (
 
 class WindowsBackendUnavailable(RuntimeError):
     pass
+
+
+# Capability che questo backend NON implementa affatto — distinte da quelle che
+# implementa ma che mancano su una macchina specifica. L'audio richiederebbe
+# Core Audio COM via pycaw, che l'owner ha deciso di non aggiungere adesso
+# (decisione D4-B, issue #6): nessuna installazione sulla macchina lo abilita,
+# e dirlo e' diverso dal dire "qui non c'e'".
+_WINDOWS_NOT_IMPLEMENTED = frozenset({"audio"})
 
 
 def _require_windows() -> None:
@@ -241,6 +250,7 @@ class WindowsBackend:
     """Real Windows backend. Imports win32 / COM only when instantiated on Windows."""
 
     name = "windows"
+    NOT_IMPLEMENTED = _WINDOWS_NOT_IMPLEMENTED
 
     def __init__(self, sandbox_root: str = "sandbox") -> None:
         _require_windows()
@@ -326,6 +336,12 @@ class WindowsBackend:
             "registry": self._winreg is not None,
             "services": self._win32service is not None,
             "printers": self._win32print is not None,
+            "devices": self._win32api is not None,
+            # D4-B: l'audio su Windows richiederebbe Core Audio COM (pycaw), che
+            # l'owner ha deciso di non aggiungere adesso. Dichiarato non
+            # supportato, non finto-vuoto: una lista vuota direbbe "questa
+            # macchina non ha dispositivi audio", che e' falso su ogni PC.
+            "audio": False,
             "atspi": False,
         }
 
@@ -1625,11 +1641,11 @@ class WindowsBackend:
             rows = svc.EnumServicesStatus(
                 handle, svc.SERVICE_WIN32, svc.SERVICE_STATE_ALL
             )
-        except Exception:  # noqa: BLE001
-            # Reported as "none enumerated", not as an invented row. Telling
-            # "none" from "could not look" is issue #6 D3 and is deliberately
-            # not decided here.
-            return []
+        except Exception as exc:  # noqa: BLE001
+            # Dichiarato, non trasformato in "nessun servizio": rispondere []
+            # a un errore del Service Control Manager affermerebbe che questa
+            # macchina non ha servizi. Il chiamante vede DISCOVERY_FAILED.
+            raise DiscoveryFailed(f"EnumServicesStatus fallita: {exc}") from exc
         finally:
             if handle is not None:
                 try:
@@ -1680,8 +1696,8 @@ class WindowsBackend:
             return []
         try:
             raw = self._win32api.GetLogicalDriveStrings()
-        except Exception:  # noqa: BLE001
-            return []
+        except Exception as exc:  # noqa: BLE001
+            raise DiscoveryFailed(f"GetLogicalDriveStrings fallita: {exc}") from exc
 
         kinds = {
             0: "unknown",
@@ -1724,8 +1740,8 @@ class WindowsBackend:
             level = 2
             flags = wp.PRINTER_ENUM_LOCAL | wp.PRINTER_ENUM_CONNECTIONS
             rows = wp.EnumPrinters(flags, None, level)
-        except Exception:  # noqa: BLE001
-            return []
+        except Exception as exc:  # noqa: BLE001
+            raise DiscoveryFailed(f"EnumPrinters fallita: {exc}") from exc
 
         try:
             default = wp.GetDefaultPrinter()

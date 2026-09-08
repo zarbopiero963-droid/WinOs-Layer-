@@ -38,9 +38,13 @@ class TerminalBody(BaseModel):
     command: str
     policy: str = "ALLOW"
 
+# Le quattro GET di sola lettura restituiscono l'inviluppo del contratto D3-A:
+# la chiave dei dati resta quella di sempre (additivo), accanto compaiono
+# `supported` e, quando serve, `error_code`. Le route lo passano cosi' com'e':
+# re-incartarlo qui vorrebbe dire duplicare la decisione in cinque punti.
 @router.get("/services")
 def list_services(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"services": svcs.list_services()}
+    return svcs.list_services()
 
 @router.post("/services/{name}")
 def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(require_permission(Permission.SERVICE_CONTROL))):
@@ -50,7 +54,7 @@ def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(
 
 @router.get("/audio/devices")
 def audio_devices(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"devices": audio.devices()}
+    return audio.devices()
 
 @router.get("/audio/volume")
 def audio_volume(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
@@ -70,11 +74,11 @@ def audio_set_mute(body: MuteBody, auth: AuthContext = Depends(require_permissio
 
 @router.get("/devices")
 def list_devices(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"devices": devices.list_devices()}
+    return devices.list_devices()
 
 @router.get("/printers")
 def list_printers(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"printers": printers.list_printers()}
+    return printers.list_printers()
 
 @router.get("/users")
 def list_users(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
