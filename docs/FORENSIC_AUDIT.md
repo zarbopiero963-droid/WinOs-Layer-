@@ -860,3 +860,40 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   controllo servizi su Windows resta NON implementato per decisione owner: sara'
   una PR dedicata con allowlist, privilege gate, verifica e audit, testata su un
   servizio creato dal test stesso.
+
+
+## Sessioni e privilegi misurati su Windows (ricognizione stub, issue #6)
+- **Status:** DONE
+- **Problema:** due stub incondizionati su campi che riguardano chi e' connesso
+  alla macchina e con quali poteri.
+  `list_sessions` restituiva `[{"id": 1, "user": <utente>, "state": "Active"}]` —
+  una sessione che nessuno aveva misurato, famiglia del "WinOsApi" tolto in #27.
+  `list_users` restituiva `"admin": False` asserito: su una sessione elevata e'
+  FALSO, e il runner CI di GitHub gira elevato, quindi il caso non e' teorico.
+  Difetto gemello su Linux: il fallback derivato marcava ogni riga
+  `"state": "Active"`, stato mai misurato su righe sintetizzate.
+- **Files:**
+  - `windows_os_api/backends/windows.py` (`WTSEnumerateSessions`;
+    `_is_administrator` via `CheckTokenMembership`; `_is_elevated` separato;
+    flag `sessions`)
+  - `windows_os_api/backends/linux.py` (fallback derivato: `state: "unknown"` +
+    `derived: True`; flag `sessions`)
+  - `windows_os_api/os/users/service.py` (`/v1/sessions` col contratto `supported`)
+  - `windows_os_api/api/rest/services.py`, `windows_os_api/os/system/service.py`
+- **Tests:**
+  - `tests/security/test_sessions_and_privileges_honesty.py` (9)
+  - `tests/windows/test_system_inventory_windows.py` (5 nuovi su Windows reale,
+    fra cui la verifica che `admin` sia True sul runner elevato — dove il vecchio
+    valore era dimostrabilmente falso)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** `admin: False` asserito -> 1 rosso; sessione inventata
+  rimessa -> 4 rossi; `_is_administrator` che risponde False invece di None -> 1
+  rosso; Linux che torna ad asserire `state: "Active"` -> 1 rosso.
+- **Distinzione chiave:** `admin` (appartenenza al gruppo, come `u.name == "root"`
+  su Linux) e `elevated` (processo elevato adesso) sono due campi. Un privilegio
+  non misurabile e' `None`, mai `False`: `False` significa "ho guardato", ed e' la
+  risposta su cui il chiamante procede.
+- **Honest limits:** i 5 test Windows girano solo su `windows-latest` in CI.
+  `power_action` su Windows resta un rifiuto incondizionato non strutturato (P2
+  della ricognizione, non toccato qui). `GET /v1/registry` e issue #50 restano
+  decisioni owner.

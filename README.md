@@ -564,6 +564,43 @@ l'allowlist sarebbe un suggerimento e non un confine.
 verifica spiando `subprocess.run` e asserendo che non e' stato chiamato — non
 guardando il valore di ritorno, che sarebbe uguale nei due casi.
 
+### Sessioni e privilegi: misurati, non asseriti
+
+`GET /v1/sessions` e `GET /v1/users` su Windows restituivano dati inventati:
+
+```python
+def list_sessions(self):  return [{"id": 1, "user": <utente>, "state": "Active"}]
+def list_users(self):     return [{..., "admin": False}]
+```
+
+Nessuno aveva misurato quella sessione ne' quello stato. E `admin: False` su una
+sessione elevata e' un'affermazione **falsa su una proprieta' di sicurezza** —
+il runner CI di GitHub gira elevato, quindi il caso non e' teorico.
+
+Adesso le sessioni vengono da `WTSEnumerateSessions` (sola lettura, nessuna
+elevazione, come `EnumServicesStatus`), con lo stato mappato da quello che
+riporta il sistema e `source: "wts"`.
+
+**`admin` e `elevated` sono due cose diverse:**
+
+| campo | domanda | come si misura |
+|---|---|---|
+| `admin` | l'utente e' nel gruppo Administrators? | `CheckTokenMembership` — la stessa domanda di `u.name == "root"` su Linux |
+| `elevated` | il processo sta girando elevato **adesso**? | `IsUserAnAdmin()` |
+
+Un amministratore che lancia un processo non elevato e' `admin` ma non
+`elevated`: e' esattamente il caso in cui il vecchio `False` sembrava plausibile.
+
+**Un privilegio non misurabile e' `null`, mai `false`.** `false` significa «ho
+guardato e non ce l'ha», ed e' la risposta su cui il chiamante decide di
+procedere: sbagliarla in quella direzione e' il fail-open.
+
+Difetto gemello su Linux, corretto insieme: quando `loginctl` non c'e', le
+sessioni vengono **derivate** dagli utenti connessi — e ogni riga usciva con
+`state: "Active"`, uno stato mai misurato appiccicato a righe sintetizzate. Ora
+dicono `state: "unknown"` e `derived: true`. Le sessioni vere lette da
+`loginctl` mantengono il loro stato misurato.
+
 ### Su Windows il controllo dei servizi e' dichiaratamente non implementato
 
 Decisione owner D5-B. `POST /v1/services/{name}` su Windows risponde **501**:

@@ -106,7 +106,7 @@ def list_users(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_
 
 @router.get("/sessions")
 def list_sessions(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"sessions": users.list_sessions()}
+    return users.list_sessions()
 
 @router.get("/session")
 def get_session(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):

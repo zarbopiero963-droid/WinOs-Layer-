@@ -42,6 +42,7 @@ def capabilities() -> dict[str, Any]:
             "audio": True,
             "services": True,
             "service_control": True,
+            "sessions": True,
             "devices": True,
             "printers": True,
             "registry_compat": True,

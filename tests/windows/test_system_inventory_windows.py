@@ -222,3 +222,59 @@ def test_the_spooler_is_not_stopped_by_asking(backend):
         assert after.get("Spooler") == before["Spooler"], (
             f"lo stato di Spooler e' cambiato: {before['Spooler']} -> {after.get('Spooler')}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Sessioni e privilegi misurati (ricognizione stub, issue #6)
+# ---------------------------------------------------------------------------
+def test_sessions_come_from_the_system_not_from_a_literal(backend):
+    """Restituiva `[{"id": 1, "user": <utente>, "state": "Active"}]`.
+
+    Nessuno aveva misurato quella sessione. Su un Windows vero ce n'e' almeno
+    una — quella in cui gira il runner — e i suoi campi vengono dal sistema.
+    """
+    sessions = backend.list_sessions()
+    assert sessions, "nessuna sessione enumerata su una macchina in uso"
+    for s in sessions:
+        assert s["source"] == "wts", s
+        assert isinstance(s["id"], int), s
+        assert s["state"] and s["state"] != "Active", (
+            f"'Active' con la A maiuscola era il letterale inventato: {s}"
+        )
+        assert "station" in s, s
+
+
+def test_the_console_session_is_reported(backend):
+    """La sessione 0 (Services) esiste su ogni Windows.
+
+    Un'asserzione che non dipende da come e' configurato il runner.
+    """
+    ids = {s["id"] for s in backend.list_sessions()}
+    assert 0 in ids, f"sessione 0 assente: {sorted(ids)}"
+
+
+def test_the_admin_flag_is_measured_and_matches_the_elevated_runner(backend):
+    """`admin` era il letterale `False`. Il runner GitHub gira ELEVATO.
+
+    Quindi su questa macchina il vecchio valore era dimostrabilmente falso, ed
+    e' la prova migliore che il campo andava misurato: non un caso di
+    laboratorio, il caso in cui il test gira.
+    """
+    user = backend.list_users()[0]
+    assert user["admin"] is not None, "il privilegio non e' stato misurato"
+    assert isinstance(user["admin"], bool), user
+    assert user["admin"] is True, (
+        f"il runner GitHub gira elevato: admin dovrebbe essere True, e' {user['admin']!r}"
+    )
+
+
+def test_admin_and_elevated_are_reported_separately(backend):
+    """Due domande diverse: appartenere al gruppo, e girare elevato adesso."""
+    user = backend.list_users()[0]
+    assert "admin" in user and "elevated" in user, user
+    assert user["elevated"] is not None, user
+
+
+def test_sessions_capability_is_declared(backend):
+    flags = backend.capability_flags()
+    assert flags["sessions"] is True, flags
