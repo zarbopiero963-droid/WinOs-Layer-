@@ -225,6 +225,55 @@ range a 16 bit della geometria X11. Fuori range si rifiuta, **non si clampa**:
 restituire una finestra di una dimensione che non e' stata chiesta, dichiarando
 successo, sarebbe reinterpretare la richiesta invece che rispondere.
 
+## Network — route, DNS, ping
+
+```bash
+curl localhost:8000/v1/network/routes -H "X-API-Key: $KEY"
+curl -X POST localhost:8000/v1/network/dns/resolve -H "X-API-Key: $KEY" -d '{"host":"localhost"}'
+curl -X POST localhost:8000/v1/network/ping        -H "X-API-Key: $KEY" -d '{"host":"127.0.0.1","count":2}'
+```
+
+`resolve`, `reverse` e `ping` sono **POST**, non GET: raggiungono la rete su un
+nome fornito dal chiamante, quindi non sono safe né idempotenti nel senso HTTP e
+non devono essere messi in cache o precaricati da nulla nel mezzo.
+
+**Route senza binari.** Su Linux si leggono da `/proc/net/route`, non da
+`ip route`: iproute2 non c'e' su ogni sistema, e una lista vuota si leggerebbe
+come «nessuna route» quando in realta' significa «nessun tool». Su Windows si
+parsa `route print -4`. Il campo `gateway` e' normalizzato: dove Windows scrive
+`On-link`, l'API risponde `0.0.0.0`, come Linux — cosi' chi legge non ha bisogno
+di un ramo per piattaforma.
+
+**DNS senza subprocess.** `socket.getaddrinfo`, in **un solo** modulo condiviso
+dai backend: e' la stessa chiamata su Linux e Windows, e tre copie potrebbero
+solo divergere. Niente `nslookup` o `dig`: aggiungerebbero una dipendenza da un
+binario e passerebbero una stringa del chiamante a una riga di comando, senza
+alcun vantaggio.
+
+### `ping` e l'option injection
+
+`ping` e' il primo endpoint che consegna una stringa del chiamante a un
+programma esterno. Gira come argv con `shell=False`, quindi **non** c'e'
+injection di shell — ma argv da solo non basta:
+
+```
+ping -f            flood ping
+ping -c 1000000    una sonda che non si ferma
+ping -t            (Windows) ping infinito
+```
+
+Un hostname non puo' cominciare con `-`, quindi rifiutare quella forma elimina
+la classe intera. In piu': `count` 1..10 e `timeout` 1..10 secondi, **rifiutati
+se fuori range, non clampati** — una sonda che gira piu' a lungo di quanto
+chiesto non e' un favore.
+
+`ok` significa «almeno una risposta e' tornata»; `received` dice **quante**,
+perche' «1 su 4» e' una risposta diversa da «tutte» e il chiamante non deve
+tirare a indovinare quale ha ricevuto. Se il binario manca, la risposta lo dice
+(`available: false`) invece di far sembrare l'host irraggiungibile: mandare un
+operatore a guardare la rete quando il problema e' un pacchetto non installato
+e' la peggiore diagnosi possibile.
+
 ## Input — cosa significa `ok` per un click
 
 `POST /v1/input/mouse/{move,click,double-click,scroll,drag}` e

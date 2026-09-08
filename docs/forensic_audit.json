@@ -202,12 +202,20 @@
   {
     "pr": 14,
     "status": "DONE",
-    "title": "Network interfaces/connections",
+    "title": "Network interfaces/connections + routes, DNS, ping",
     "files": [
       "windows_os_api/os/network/service.py",
-      "windows_os_api/api/rest/network.py"
+      "windows_os_api/os/network/validation.py",
+      "windows_os_api/os/network/dns.py",
+      "windows_os_api/api/rest/network.py",
+      "windows_os_api/backends/linux.py",
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/fake.py"
     ],
     "tests": [
+      "tests/linux/test_network_linux.py",
+      "tests/windows/test_network_windows.py",
+      "tests/unit/test_network_probes_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
     "remaining": null

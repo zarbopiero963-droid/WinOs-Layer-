@@ -9,11 +9,21 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
+import socket
+import struct
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
+
+from windows_os_api.os.network import dns as _dns
+from windows_os_api.os.network.validation import (
+    NetworkRejected,
+    validate_host,
+    validate_ping,
+)
 
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
 from windows_os_api.os.windows.geometry import (
@@ -74,6 +84,34 @@ def _ensure_pyatspi():
     import pyatspi  # type: ignore
 
     return pyatspi
+
+
+def _hex_le_to_ip(hex_value: str) -> str:
+    """`/proc/net/route` stores addresses as hex in host byte order.
+
+    On x86 that is little-endian, so `010200C0` is 192.0.2.1 — the bytes read
+    back to front. Verified against the live table before this was written.
+    """
+    return socket.inet_ntoa(struct.pack("<L", int(hex_value, 16)))
+
+
+_PING_RECEIVED = re.compile(r"(\d+)\s+(?:packets\s+)?received", re.IGNORECASE)
+
+
+def _parse_ping_received(output: str) -> int | None:
+    """How many replies came back, or None when the summary cannot be read.
+
+    None means "not parsed" and is reported as such rather than as 0, which
+    would be an invented answer — and the wrong one, since exit code 0 already
+    says at least one reply arrived.
+    """
+    match = _PING_RECEIVED.search(output or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 def _display_env() -> dict[str, str]:
@@ -1831,6 +1869,103 @@ class LinuxBackend:
                 }
             )
         return out
+
+    # ------------------------------------------------------------------
+    # Network probes: routes, DNS, ping
+    # ------------------------------------------------------------------
+    def list_routes(self) -> list[dict[str, Any]]:
+        """The kernel routing table, read from /proc — no binary required.
+
+        `ip route` would need iproute2, which is not installed on every system
+        (it is absent from the container this was written in). /proc/net/route
+        is the kernel's own view and is always there on Linux, so this works on
+        a minimal host instead of returning an empty list that reads as "no
+        routes" when it really means "no tool".
+        """
+        path = Path("/proc/net/route")
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+
+        out: list[dict[str, Any]] = []
+        for line in lines[1:]:  # the first line is the column header
+            fields = line.split()
+            if len(fields) < 8:
+                continue
+            try:
+                destination = _hex_le_to_ip(fields[1])
+                gateway = _hex_le_to_ip(fields[2])
+                mask = _hex_le_to_ip(fields[7])
+                flags = int(fields[3], 16)
+                metric = int(fields[6])
+            except (ValueError, OSError):
+                continue
+            out.append({
+                "interface": fields[0],
+                "destination": destination,
+                "gateway": gateway,
+                "netmask": mask,
+                "metric": metric,
+                # 0.0.0.0/0 is the default route — the one an operator asks
+                # about first, so it is labelled rather than left to be inferred
+                # from two zero strings.
+                "default": destination == "0.0.0.0" and mask == "0.0.0.0",
+                "up": bool(flags & 0x0001),  # RTF_UP
+                "source": "/proc/net/route",
+            })
+        return out
+
+    def dns_resolve(self, host: str) -> dict[str, Any]:
+        return _dns.resolve(host)
+
+    def dns_reverse(self, address: str) -> dict[str, Any]:
+        return _dns.reverse(address)
+
+    def ping(self, host: str, count: int = 2, timeout: int = 2) -> dict[str, Any]:
+        """ICMP echo via the `ping` binary, as argv and bounded.
+
+        Bounded matters: `ping` with no count runs until something kills it, and
+        this is reachable through an HTTP endpoint. Both the per-reply timeout
+        and an overall subprocess timeout are set, so the request cannot outlive
+        its own limits even if the binary ignores one of them.
+        """
+        try:
+            host = validate_host(host)
+            count, timeout = validate_ping(count, timeout)
+        except NetworkRejected as exc:
+            return {"ok": False, "error": str(exc), "host": host}
+        if not shutil.which("ping"):
+            return {"ok": False, "error": "ping binary not installed (iputils-ping)",
+                    "host": host, "available": False}
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["ping", "-c", str(count), "-W", str(timeout), host],
+                capture_output=True,
+                text=True,
+                # Enough for every reply to time out, plus room to exit.
+                timeout=count * timeout + 5,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "ping did not finish within its own limits",
+                    "host": host, "count": count}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "host": host}
+
+        return {
+            # Exit code 0 means at least one reply came back. The count is
+            # reported too, because "1 of 4 replied" is a different answer from
+            # "all did", and the caller should not have to guess which they got.
+            "ok": r.returncode == 0,
+            "host": host,
+            "transmitted": count,
+            "received": _parse_ping_received(r.stdout),
+            "exit_code": r.returncode,
+            "output": r.stdout[:4000],
+        }
 
     # ------------------------------------------------------------------
     # Services (systemctl --user and system)
