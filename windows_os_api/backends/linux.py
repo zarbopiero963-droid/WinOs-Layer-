@@ -211,6 +211,7 @@ class LinuxBackend:
             # Su Linux il controllo E' implementato: se systemctl manca e'
             # UNAVAILABLE (installabile), non NOT_SUPPORTED.
             "service_control": has_systemctl,
+            "sessions": True,
             "devices": Path("/sys/block").is_dir(),
             "printers": bool(shutil.which("lpstat")),
             "registry_compat": True,
@@ -2138,14 +2139,19 @@ class LinuxBackend:
                     return parsed
             except Exception:  # noqa: BLE001
                 pass
+        # Fallback derivato dagli utenti connessi: NON e' un'enumerazione di
+        # sessioni. `state` era il letterale "Active" — uno stato che nessuno
+        # aveva misurato, appiccicato a righe sintetizzate. `source` dice gia'
+        # da dove vengono; ora anche lo stato dice la verita'.
         users = self.list_users()
         return [
             {
                 "id": i + 1,
                 "user": u.get("username", ""),
-                "state": "Active",
+                "state": "unknown",
                 "client": u.get("terminal") or "local",
                 "source": "psutil",
+                "derived": True,
             }
             for i, u in enumerate(users)
         ]

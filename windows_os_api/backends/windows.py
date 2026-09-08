@@ -299,6 +299,20 @@ class WindowsBackend:
             self._win32print = win32print
         except ImportError:
             pass
+        self._win32ts = None
+        self._win32security = None
+        try:
+            import win32ts  # type: ignore
+
+            self._win32ts = win32ts
+        except ImportError:
+            pass
+        try:
+            import win32security  # type: ignore
+
+            self._win32security = win32security
+        except ImportError:
+            pass
         self._caps = self._probe_capabilities()
 
     def _probe_capabilities(self) -> dict[str, bool]:
@@ -342,6 +356,7 @@ class WindowsBackend:
             "service_control": False,
             "printers": self._win32print is not None,
             "devices": self._win32api is not None,
+            "sessions": self._win32ts is not None,
             # D4-B: l'audio su Windows richiederebbe Core Audio COM (pycaw), che
             # l'owner ha deciso di non aggiungere adesso. Dichiarato non
             # supportato, non finto-vuoto: una lista vuota direbbe "questa
@@ -1801,13 +1816,116 @@ class WindowsBackend:
             })
         return out
 
+    def _is_administrator(self) -> bool | None:
+        """L'utente corrente appartiene al gruppo Administrators?
+
+        `None` quando non si riesce a misurarlo. Prima era il letterale `False`,
+        e su una sessione elevata quella era un'affermazione **falsa su una
+        proprieta' di sicurezza** — proprio il tipo di campo su cui un chiamante
+        prende decisioni.
+
+        `CheckTokenMembership` risponde all'appartenenza al gruppo, che e' la
+        stessa domanda a cui risponde `u.name == "root"` su Linux; e' diversa da
+        «il processo sta girando elevato», riportata a parte come `elevated`.
+        """
+        if not self._win32security:
+            return None
+        try:
+            sec = self._win32security
+            admins = sec.CreateWellKnownSid(sec.WinBuiltinAdministratorsSid, None)
+            return bool(sec.CheckTokenMembership(None, admins))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _is_elevated(self) -> bool | None:
+        """Il processo sta girando elevato? Misurato, e distinto da `admin`."""
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:  # noqa: BLE001
+            return None
+
     def list_users(self) -> list[dict[str, Any]]:
+        """L'utente corrente, con i privilegi MISURATI e non asseriti.
+
+        `admin` era il letterale `False`. Su Linux lo stesso campo e'
+        `u.name == "root"`, cioe' misurato; qui non lo era, e un `False` su una
+        sessione amministrativa e' peggio di un `None`: e' una risposta su cui
+        il chiamante agisce e sbaglia.
+        """
         import os
 
-        return [{"username": os.environ.get("USERNAME", ""), "domain": os.environ.get("USERDOMAIN", ""), "admin": False}]
+        return [{
+            "username": os.environ.get("USERNAME", ""),
+            "domain": os.environ.get("USERDOMAIN", ""),
+            "admin": self._is_administrator(),
+            "elevated": self._is_elevated(),
+        }]
+
+    # Stati di sessione come li riporta la Remote Desktop Services API.
+    _WTS_STATES = {
+        0: "active",
+        1: "connected",
+        2: "connect_query",
+        3: "shadow",
+        4: "disconnected",
+        5: "idle",
+        6: "listen",
+        7: "reset",
+        8: "down",
+        9: "init",
+    }
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        return [{"id": 1, "user": self.list_users()[0]["username"], "state": "Active"}]
+        """Sessioni vere, enumerate dal sistema.
+
+        Restituiva una riga inventata:
+
+            [{"id": 1, "user": <utente corrente>, "state": "Active"}]
+
+        Nessuno aveva misurato ne' quella sessione ne' quello stato. Su Linux lo
+        stesso metodo legge `loginctl`. Era la famiglia del "WinOsApi" tolto in
+        #27, su un endpoint che parla di chi e' connesso alla macchina.
+
+        `WTSEnumerateSessions` e' in sola lettura e non richiede elevazione,
+        come `EnumServicesStatus`.
+        """
+        if not self._win32ts:
+            return []
+        ts = self._win32ts
+        try:
+            rows = ts.WTSEnumerateSessions(ts.WTS_CURRENT_SERVER_HANDLE)
+        except Exception as exc:  # noqa: BLE001
+            raise DiscoveryFailed(f"WTSEnumerateSessions fallita: {exc}") from exc
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                session_id = int(row["SessionId"])
+                station = row.get("WinStationName") or ""
+                state_code = int(row["State"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            user = ""
+            try:
+                user = ts.WTSQuerySessionInformation(
+                    ts.WTS_CURRENT_SERVER_HANDLE, session_id, ts.WTSUserName
+                ) or ""
+            except Exception:  # noqa: BLE001
+                # L'utente di una sessione altrui puo' non essere leggibile: si
+                # riporta la sessione senza inventarne il proprietario.
+                user = ""
+            out.append({
+                "id": session_id,
+                "user": user,
+                "station": station,
+                # Codice ignoto: resta il numero, cercabile. "unknown"
+                # distruggerebbe l'unica informazione disponibile.
+                "state": self._WTS_STATES.get(state_code, f"state_{state_code}"),
+                "source": "wts",
+            })
+        return out
 
     def registry_read(self, path: str, name: str | None = None) -> dict[str, Any]:
         r"""Read a registry value. path like HKLM\SOFTWARE\... or HKCU\Environment."""
