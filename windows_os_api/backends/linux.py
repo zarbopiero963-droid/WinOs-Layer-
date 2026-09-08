@@ -2039,13 +2039,32 @@ class LinuxBackend:
     # Devices / printers / users
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict[str, Any]]:
+        """Block devices from `/sys/block`, reporting only what was measured.
+
+        `status` used to be the literal `"ok"` on every row — a health claim
+        nothing had checked. The entry in `/sys/block` supports exactly one
+        claim, that the device is present, so that is what it now says.
+        `media` comes from `removable`, a file the kernel actually maintains,
+        and falls back to `"unknown"` when it cannot be read rather than
+        guessing "fixed".
+        """
         out: list[dict[str, Any]] = []
         sys_block = Path("/sys/block")
-        if sys_block.is_dir():
-            for d in sorted(sys_block.iterdir())[:50]:
-                out.append(
-                    {"id": d.name, "name": d.name, "type": "block", "status": "ok"}
-                )
+        if not sys_block.is_dir():
+            return out
+        for d in sorted(sys_block.iterdir())[:50]:
+            media = "unknown"
+            try:
+                media = "removable" if (d / "removable").read_text().strip() == "1" else "fixed"
+            except OSError:
+                pass
+            out.append({
+                "id": d.name,
+                "name": d.name,
+                "type": "block",
+                "media": media,
+                "status": "present",
+            })
         return out
 
     def list_printers(self) -> list[dict[str, Any]]:

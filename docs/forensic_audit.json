@@ -230,10 +230,15 @@
     "title": "Services control",
     "files": [
       "windows_os_api/os/services/service.py",
-      "windows_os_api/api/rest/services.py"
+      "windows_os_api/api/rest/services.py",
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/linux.py"
     ],
     "tests": [
-      "tests/integration/test_api_os_layers.py"
+      "tests/integration/test_api_os_layers.py",
+      "tests/unit/test_system_inventory_contract.py",
+      "tests/linux/test_system_inventory_linux.py",
+      "tests/windows/test_system_inventory_windows.py"
     ],
     "remaining": null
   },
@@ -256,10 +261,15 @@
     "title": "Devices enumeration",
     "files": [
       "windows_os_api/os/devices/service.py",
-      "windows_os_api/api/rest/services.py"
+      "windows_os_api/api/rest/services.py",
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/linux.py"
     ],
     "tests": [
-      "tests/integration/test_api_os_layers.py"
+      "tests/integration/test_api_os_layers.py",
+      "tests/unit/test_system_inventory_contract.py",
+      "tests/linux/test_system_inventory_linux.py",
+      "tests/windows/test_system_inventory_windows.py"
     ],
     "remaining": null
   },
@@ -269,10 +279,15 @@
     "title": "Printers",
     "files": [
       "windows_os_api/os/printers/service.py",
-      "windows_os_api/api/rest/services.py"
+      "windows_os_api/api/rest/services.py",
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/linux.py"
     ],
     "tests": [
-      "tests/integration/test_api_os_layers.py"
+      "tests/integration/test_api_os_layers.py",
+      "tests/unit/test_system_inventory_contract.py",
+      "tests/linux/test_system_inventory_linux.py",
+      "tests/windows/test_system_inventory_windows.py"
     ],
     "remaining": null
   },
