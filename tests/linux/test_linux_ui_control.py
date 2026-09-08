@@ -218,11 +218,27 @@ def test_audio_devices_or_skip(linux_backend):
 
 
 def test_services_list_or_skip(linux_backend):
+    """Il binario c'e': o si elencano unit vere, o si dichiara il fallimento.
+
+    Questo test cercava lo stub `status == "unavailable"` ma non l'altro,
+    chiamato "none": bastava quella riga inventata a soddisfare
+    `len(services) >= 1`. Passava senza che nessuna unit fosse stata elencata.
+    """
+    from windows_os_api.os.capability import DiscoveryFailed
+
     if not _have("systemctl"):
         pytest.skip("systemctl binary absent")
-    services = linux_backend.list_services()
+
+    try:
+        services = linux_backend.list_services()
+    except DiscoveryFailed:
+        # Binario presente ma bus irraggiungibile (container): ora e' un esito
+        # dichiarato invece di una lista vuota che sembrava «nessun servizio».
+        return
+
     assert isinstance(services, list)
-    assert len(services) >= 1
-    # Should not be the unavailable stub when systemctl exists
-    if len(services) == 1 and services[0].get("status") == "unavailable":
-        pytest.fail(f"systemctl present but list_services returned stub: {services}")
+    for s in services:
+        assert s["name"] not in ("none", "systemctl"), (
+            f"list_services ha restituito una riga inventata: {s}"
+        )
+        assert s.get("status") != "unavailable", s

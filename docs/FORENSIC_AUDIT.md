@@ -753,3 +753,42 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   L'audio su Windows resta NON implementato per decisione owner D4-B: ora lo
   dichiara (`CAPABILITY_NOT_SUPPORTED`) invece di rispondere lista vuota.
   `control_service` e `registry_write` non toccati: sono D1-B e D2-B, PR successive.
+
+
+## Allowlist esplicita per il controllo dei servizi (decisione owner D1-B)
+- **Status:** DONE
+- **Problema:** `control_service` sanificava il nome dell'unit (niente
+  metacaratteri di shell, niente path traversal) e poi lo passava a `systemctl`.
+  Quella sanificazione impedisce di INIETTARE un comando, non di FERMARE il
+  servizio sbagliato: `ssh`, `firewalld`, `systemd-journald` sono nomi di unit
+  perfettamente validi. L'unica difesa erano i permessi di systemd — fuori da
+  questo programma, e assenti se il processo gira da root.
+- **Files:**
+  - `windows_os_api/os/services/allowlist.py` (nuovo: `check`, `allowed_services`,
+    `ServiceRejected`; default-deny su `WINOS_SERVICE_ALLOWLIST`)
+  - `windows_os_api/os/services/service.py` (gate prima del backend)
+  - `windows_os_api/api/rest/services.py` (403 sul rifiuto, come apps.py; audit
+    con outcome "denied")
+  - `windows_os_api/backends/linux_services.py` (righe inventate rimosse; systemd
+    irraggiungibile -> DiscoveryFailed)
+- **Tests:**
+  - `tests/security/test_service_allowlist.py` (16)
+  - `tests/integration/test_service_control_api.py` (5, via HTTP)
+  - `tests/linux/test_service_listing_honesty_linux.py` (6)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m "not windows"`
+- **BLOCK verificato:** tolto il gate da `control()` -> 4 rossi; allowlist vuota
+  trasformata in "permetti tutto" -> 5 rossi.
+- **Nota sui test:** i primi spy passavano per il motivo sbagliato — con
+  `WINOS_BACKEND=fake` (imposto da `tests/conftest.py`) `control()` non raggiunge
+  mai `linux_services.subprocess.run`, quindi "systemctl non e' stato invocato"
+  era vero anche senza allowlist. Corretto con una fixture che forza LinuxBackend
+  e asserisce il presupposto.
+- **Difetti preesistenti chiusi:** due righe inventate in `list_services`
+  ("systemctl" e "none"); systemd irraggiungibile riportato come lista vuota.
+  Le righe inventate tenevano verdi DUE test esistenti che asserivano "almeno un
+  servizio elencato" e ricevevano la riga fasulla.
+- **Honest limits:** avviare/fermare un servizio reale non e' verificabile in
+  questo container (systemctl presente, systemd non avviato come PID 1). La
+  proprieta' di sicurezza — la richiesta non raggiunge il sistema — e' verificata
+  spiando `subprocess.run`, che e' il punto in cui il sistema verrebbe toccato.
+  `registry_write` non toccato: e' D2-B, PR successiva.

@@ -49,7 +49,19 @@ def list_services(auth: AuthContext = Depends(require_permission(Permission.SYST
 @router.post("/services/{name}")
 def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(require_permission(Permission.SERVICE_CONTROL))):
     result = svcs.control(name, body.action, scope=body.scope)
-    audit("service.control", auth, resource=name, detail=result)
+    denied = bool(result.get("denied"))
+    audit(
+        "service.control", auth, resource=name, detail=result,
+        outcome="denied" if denied else "success",
+    )
+    if denied:
+        # 403, come per il rifiuto della policy sandbox in apps.py: un rifiuto
+        # che risponde 200 e' un successo per chiunque guardi lo status code, e
+        # in un audit trail «negato» e «riuscito» non possono avere la stessa
+        # faccia.
+        from fastapi import HTTPException
+
+        raise HTTPException(403, result.get("error") or "service control denied")
     return result
 
 @router.get("/audio/devices")
