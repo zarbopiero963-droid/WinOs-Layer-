@@ -12,8 +12,11 @@ def get_window(hwnd: int) -> dict[str, Any] | None:
 def focus_window(hwnd: int) -> dict[str, Any]:
     return get_backend().focus_window(hwnd)
 
-def close_window(hwnd: int) -> dict[str, Any]:
-    return get_backend().close_window(hwnd)
+def close_window(hwnd: int, timeout: float = 5.0) -> dict[str, Any]:
+    return get_backend().close_window(hwnd, timeout)
+
+def active_window() -> int | None:
+    return get_backend().active_window()
 
 
 # Geometry / state. Validation lives in os/windows/geometry.py and is applied by

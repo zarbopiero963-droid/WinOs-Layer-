@@ -71,9 +71,25 @@ class OSBackend(Protocol):
         ...
 
     def focus_window(self, hwnd: int) -> dict[str, Any]:
+        """Give a window the focus, and verify it got it.
+
+        `ok` means the window holds the focus now — read back, not assumed. A
+        window manager may refuse (focus-stealing prevention), which comes back
+        as FOCUS_NOT_GRANTED with `active_window` naming what actually has it.
+        """
         ...
 
-    def close_window(self, hwnd: int) -> dict[str, Any]:
+    def close_window(self, hwnd: int, timeout: float = 5.0) -> dict[str, Any]:
+        """Ask a window to close, and wait to see whether it did.
+
+        Closing is a REQUEST: an application with an unsaved document is
+        entitled to put up "save changes?" and stay open, which comes back as
+        WINDOW_STILL_OPEN. Closes a window, not an application.
+        """
+        ...
+
+    def active_window(self) -> int | None:
+        """Which window holds the focus, or None when that cannot be read."""
         ...
 
     # Window geometry / state.

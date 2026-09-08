@@ -101,7 +101,12 @@ def window_manager():
 @pytest.fixture
 def probe_window(window_manager):
     """A real, mapped X window — torn down whatever the test does to it."""
-    title = f"winos-wm-probe-{os.getpid()}-{int(time.time() * 1000) % 100000}"
+    yield from _spawn_probe_window("winos-wm-probe")
+
+
+def _spawn_probe_window(prefix: str):
+    """Open one real xterm and yield it, cleaning up however the test ends."""
+    title = f"{prefix}-{os.getpid()}-{int(time.time() * 1000000) % 1000000}"
     proc = subprocess.Popen(  # noqa: S603
         # `-e sleep 600` keeps the shell out of it: an interactive shell rewrites
         # the title through escape sequences and the search below stops matching.
@@ -160,6 +165,17 @@ def probe_window(window_manager):
 @pytest.fixture
 def hwnd(probe_window):
     return probe_window.hwnd
+
+
+@pytest.fixture
+def second_probe_window(window_manager):
+    """A SECOND real window.
+
+    With only one window on the display, "this window has focus" is a claim no
+    implementation can get wrong — the one candidate is always the answer. Two
+    windows make the assertion mean something.
+    """
+    yield from _spawn_probe_window("winos-wm-probe2")
 
 
 class EventRecorder:

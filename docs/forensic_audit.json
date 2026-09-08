@@ -94,6 +94,7 @@
     "files": [
       "windows_os_api/os/windows/service.py",
       "windows_os_api/os/windows/geometry.py",
+      "windows_os_api/os/windows/errors.py",
       "windows_os_api/api/rest/windows.py",
       "windows_os_api/backends/linux.py",
       "windows_os_api/backends/windows.py",
@@ -101,8 +102,11 @@
     ],
     "tests": [
       "tests/linux/test_window_manager_linux.py",
+      "tests/linux/test_window_contract_linux.py",
       "tests/windows/test_window_manager_windows.py",
+      "tests/windows/test_window_contract_windows.py",
       "tests/unit/test_window_geometry_contract.py",
+      "tests/unit/test_window_focus_close_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
     "remaining": null

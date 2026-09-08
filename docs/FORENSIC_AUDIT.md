@@ -75,14 +75,20 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/os/windows/service.py`
   - `windows_os_api/os/windows/geometry.py` — validation, one home, applied by
     every backend at the point that acts
+  - `windows_os_api/os/windows/errors.py` — structured `error_code` values
+    (`WINDOW_NOT_FOUND`, `WINDOW_STILL_OPEN`, `FOCUS_NOT_GRANTED`,
+    `TOOL_UNAVAILABLE`), added alongside the free-text `error`
   - `windows_os_api/api/rest/windows.py` — list/get/focus/close plus
     `move`, `resize`, `minimize`, `maximize`, `restore`
   - `windows_os_api/backends/{linux,windows,fake}.py` — geometry/state ops,
     each verifying the effect by reading it back
 - **Tests:**
   - `tests/linux/test_window_manager_linux.py` — real X window under Xvfb + openbox
+  - `tests/linux/test_window_contract_linux.py` — focus/close against real windows
   - `tests/windows/test_window_manager_windows.py` — real HWND on windows-latest
+  - `tests/windows/test_window_contract_windows.py` — focus/close on windows-latest
   - `tests/unit/test_window_geometry_contract.py`
+  - `tests/unit/test_window_focus_close_contract.py`
   - `tests/integration/test_api_os_layers.py`
 - **How to run:** `pytest tests/unit/test_window_geometry_contract.py -q`
   (real windows: `xvfb-run -a pytest -m linux -q`)
@@ -94,6 +100,16 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   resize to 700x500 came back 700x498). `ok` means the effect was observed, not
   that a command exited 0 — `wmctrl -i -r 99999999 -b add,maximized_vert` exits
   0 for a window id that does not exist.
+- **Note (focus/close):** `focus_window` and `close_window` were left on the old
+  contract by that change and fixed separately, by owner decision. Both ran
+  their tool with `check=False` and returned `{"ok": True}` whatever happened,
+  including for a window that did not exist — measured on a window whose
+  process had been killed: `xdotool windowclose` exits 1 and `wmctrl -i -c`
+  exits **0**. Focus is now read back (`getactivewindow` /
+  `GetForegroundWindow`), and closing polls until the window is actually gone,
+  because closing is a request an application may refuse. On Windows the
+  mechanism differs and the conclusion does not: `PostMessage(WM_CLOSE)` is
+  asynchronous, so returning without error never meant the window had closed.
 
 ## PR8: UI Automation tree + FakeBackend CRM + real Windows UIA
 - **Status:** DONE

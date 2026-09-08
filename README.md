@@ -189,6 +189,51 @@ python scripts/live_windows_smoke.py
 On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
 Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
 
+## Finestre — focus e chiusura: `ok` significa «e' successo davvero»
+
+`POST /v1/windows/{hwnd}/focus` e `DELETE /v1/windows/{hwnd}`.
+
+**Breaking change.** Prima entrambi eseguivano il comando con `check=False` e
+rispondevano `{"ok": true}` qualunque cosa fosse successo — **anche per una
+finestra che non esisteva**. Adesso rileggono l'effetto:
+
+- `focus_window` verifica con `xdotool getactivewindow` (Linux) o
+  `GetForegroundWindow` (Windows). `ok` significa che la finestra **ha** il
+  focus adesso, e la risposta porta `active_window` con quella che ce l'ha
+  davvero.
+- `close_window` **attende** che la finestra sparisca, con un timeout. Chiudere
+  e' una *richiesta*: un'applicazione con un documento non salvato ha il
+  diritto di mostrare «salvare le modifiche?» e restare aperta.
+
+> Chiude una **finestra**, non un'applicazione: un programma con altre finestre
+> aperte continua a girare.
+
+### `error_code` — accanto a `error`, non al suo posto
+
+| Codice | Significato |
+|---|---|
+| `WINDOW_NOT_FOUND` | L'handle non nomina una finestra: non l'ha mai fatto, o la finestra e' sparita — anche *durante* la chiamata |
+| `WINDOW_STILL_OPEN` | Chiusura richiesta e accettata, finestra ancora li' (dialogo di conferma, documento non salvato) |
+| `FOCUS_NOT_GRANTED` | L'attivazione e' andata a buon fine e il focus ce l'ha un'altra finestra |
+| `TOOL_UNAVAILABLE` | Manca `wmctrl`/`xdotool` o `win32gui` — si risolve nella lista pacchetti, non nel codice |
+
+`error` resta una stringa leggibile: chi la legge oggi continua a funzionare.
+Distinguere «non trovata» da «ancora aperta» facendo match sul testo inglese si
+rompe alla prima riformulazione, ed e' per questo che c'e' il codice.
+
+**Perche' non basta il codice d'uscita.** Misurato su una finestra il cui
+processo era gia' stato ucciso:
+
+```
+xdotool windowclose <finestra morta>  ->  exit 1
+wmctrl -i -c        <finestra morta>  ->  exit 0     <- dichiara successo
+```
+
+E' la stessa bugia che `wmctrl -b add,maximized_vert` raccontava in #18. Su
+Windows il problema e' diverso ma equivalente: `PostMessage(WM_CLOSE)` e'
+**asincrona** e ritorna appena il messaggio e' in coda, quindi «e' ritornata
+senza errori» non ha mai significato «la finestra si e' chiusa».
+
 ## Finestre — la richiesta non e' il risultato
 
 `POST /v1/windows/{hwnd}/move|resize|minimize|maximize|restore` restituiscono la
