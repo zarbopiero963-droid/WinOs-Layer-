@@ -189,6 +189,37 @@ python scripts/live_windows_smoke.py
 On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
 Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
 
+## ComputerAgent — puo' eseguire, ma solo dietro un gate dichiarato
+
+`POST /v1/workflows/agent` e il tool MCP `agent_run` pianificano e, **quando un
+gate esplicito lo autorizza**, eseguono.
+
+```
+execute_intent → plan → workflow
+      ↓
+confidence >= 0.8   AND   risk == low   AND   sandbox policy = ALLOW (ogni step)
+      ↓
+invoke_action → sandbox → backend → audit
+```
+
+Se una qualunque condizione manca, la risposta e' `status: "planned"` e il campo
+`did_not_execute_because` **nomina quale**: `CONFIDENCE_BELOW_THRESHOLD`,
+`RISK_NOT_LOW`, `CONFIRMATION_REQUIRED`, `DENIED_BY_POLICY`, `NO_STEPS_TO_EXECUTE`.
+Un `False` secco lascerebbe il chiamante a indovinare fra «incerto», «rischioso»
+e «la policy ha detto no» — tre situazioni con tre risposte diverse.
+
+**Il gate non e' il confine di sicurezza.** L'enforcement del sandbox sta dentro
+`invoke_action`: il gate decide se *tentare*, l'enforcement decide se *avviene*.
+C'e' un test che forza il gate a dire «esegui» su un piano negato dalla policy e
+dimostra che l'azione viene comunque rifiutata — una risposta sbagliata del
+livello AI costa l'accuratezza del report, mai la sicurezza.
+
+> **Nota onesta sullo stato attuale.** Con il generator di oggi nessun workflow
+> soddisfa insieme `confidence >= 0.8` e `risk == low`: l'unico ramo ad alta
+> confidenza assegna `risk = "medium"`, e creare un cliente *e'* un'azione a
+> rischio medio. E' una proprieta' del generator, non del gate. La soglia non e'
+> stata abbassata per «far succedere» l'esecuzione.
+
 ## Finestre — focus e chiusura: `ok` significa «e' successo davvero»
 
 `POST /v1/windows/{hwnd}/focus` e `DELETE /v1/windows/{hwnd}`.

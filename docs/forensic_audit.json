@@ -488,9 +488,11 @@
     "status": "DONE",
     "title": "Computer agent",
     "files": [
-      "windows_os_api/apps/agent/computer.py"
+      "windows_os_api/apps/agent/computer.py",
+      "windows_os_api/apps/agent/gate.py"
     ],
     "tests": [
+      "tests/unit/test_agent_execution_gate.py",
       "tests/unit/test_workflows_agent.py",
       "tests/e2e/test_universal_adapter_e2e.py"
     ],

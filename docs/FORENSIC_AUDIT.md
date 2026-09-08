@@ -412,10 +412,33 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/apps/agent/computer.py`
+  - `windows_os_api/apps/agent/gate.py` — the explicit execution gate
 - **Tests:**
+  - `tests/unit/test_agent_execution_gate.py`
   - `tests/unit/test_workflows_agent.py`
   - `tests/e2e/test_universal_adapter_e2e.py`
-- **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
+- **How to run:** `pytest tests/unit/test_agent_execution_gate.py -q`
+- **Note:** the agent may execute its own plan, but only through a declared
+  gate: `confidence >= 0.8` AND `risk == low` AND the sandbox policy allowing
+  every step. Owner decision, issue #6.
+
+  It previously decided on `plan["requires_confirmation"]` alone. That is true
+  for every workflow the current generator produces, so the branch never ran and
+  nothing said so — found because a test asserting things about `executed`
+  passed while asserting nothing, `executed` being permanently `[]`. A dead
+  branch that looks live is worse than either a live one or none.
+
+  The gate is **not** the security boundary: `invoke_action` enforces the
+  sandbox itself (#13). The gate decides whether to attempt and names the
+  condition that stopped it; the enforcement point decides whether it happens.
+  `test_the_sandbox_still_refuses_when_the_gate_wrongly_says_execute` forces the
+  gate to say yes on a denied plan and proves the action is still refused —
+  a wrong answer in the AI layer costs the accuracy of the report, never safety.
+
+  With today's generator no workflow qualifies: the only high-confidence branch
+  hardcodes `risk="medium"`, and creating a customer genuinely is a medium-risk
+  action. That is a property of the generator, not of the gate, and the
+  threshold was deliberately not lowered to make execution happen.
 
 ## PR36: MCP JSON-RPC server
 - **Status:** DONE
