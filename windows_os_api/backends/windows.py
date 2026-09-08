@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from windows_os_api.os.capability import DiscoveryFailed
+from windows_os_api.os.capability import CAPABILITY_NOT_SUPPORTED, DiscoveryFailed
 from windows_os_api.os.network import dns as _dns
 from windows_os_api.os.network.validation import (
     NetworkRejected,
@@ -56,7 +56,7 @@ class WindowsBackendUnavailable(RuntimeError):
 # Core Audio COM via pycaw, che l'owner ha deciso di non aggiungere adesso
 # (decisione D4-B, issue #6): nessuna installazione sulla macchina lo abilita,
 # e dirlo e' diverso dal dire "qui non c'e'".
-_WINDOWS_NOT_IMPLEMENTED = frozenset({"audio"})
+_WINDOWS_NOT_IMPLEMENTED = frozenset({"audio", "service_control"})
 
 
 def _require_windows() -> None:
@@ -335,6 +335,11 @@ class WindowsBackend:
             "sendinput": True,  # ctypes user32 always present on win32
             "registry": self._winreg is not None,
             "services": self._win32service is not None,
+            # Elencare i servizi e controllarli sono due capability distinte: la
+            # prima e' implementata (PR #27), la seconda no (decisione owner
+            # D5-B). Un flag solo direbbe "servizi: si'" e lascerebbe credere
+            # che anche start/stop funzionino.
+            "service_control": False,
             "printers": self._win32print is not None,
             "devices": self._win32api is not None,
             # D4-B: l'audio su Windows richiederebbe Core Audio COM (pycaw), che
@@ -1671,7 +1676,37 @@ class WindowsBackend:
         return out
 
     def control_service(self, name: str, action: str) -> dict[str, Any]:
-        return {"ok": False, "error": "service control requires elevated pywin32", "name": name, "action": action}
+        """Non implementato, e lo DICE (decisione owner D5-B, issue #6).
+
+        Rispondeva `{"ok": False, "error": "service control requires elevated
+        pywin32"}` — un messaggio che sembra un problema di permessi risolvibile
+        elevando il processo. Non lo era: la chiamata non tentava nulla,
+        nemmeno da amministratore. Un errore che sembra un'implementazione
+        funzionante e' peggio di nessuna implementazione, perche' chi lo legge
+        cerca la causa dalla parte sbagliata.
+
+        Il controllo dei servizi su Windows richiederebbe `OpenSCManager` +
+        `OpenService` + `ControlService`, cioe' una superficie privilegiata
+        reale. L'owner ha deciso di non aggiungerla in questa fase: verra' da
+        una PR dedicata con allowlist, privilege gate, verifica e audit, e con
+        test su un servizio creato dal test stesso — mai fermando un servizio
+        del runner.
+
+        La risposta segue il contratto `supported` (#28): il chiamante distingue
+        "non implementato qui" da "non ti e' permesso", che portano a due azioni
+        diverse.
+        """
+        return {
+            "ok": False,
+            "supported": False,
+            "error_code": CAPABILITY_NOT_SUPPORTED,
+            "error": (
+                "il controllo dei servizi non e' implementato su questo backend: "
+                "non e' una questione di permessi o di elevazione"
+            ),
+            "name": name,
+            "action": action,
+        }
 
     def audio_devices(self) -> list[dict[str, Any]]:
         return []

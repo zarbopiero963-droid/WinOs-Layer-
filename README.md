@@ -564,6 +564,41 @@ l'allowlist sarebbe un suggerimento e non un confine.
 verifica spiando `subprocess.run` e asserendo che non e' stato chiamato — non
 guardando il valore di ritorno, che sarebbe uguale nei due casi.
 
+### Su Windows il controllo dei servizi e' dichiaratamente non implementato
+
+Decisione owner D5-B. `POST /v1/services/{name}` su Windows risponde **501**:
+
+```
+"non ti e' permesso"   ->  403, allowlist   ->  puoi chiedere l'autorizzazione
+"non so farlo"         ->  501, capability  ->  non c'e' niente da chiedere
+```
+
+Rispondeva `{"ok": false, "error": "service control requires elevated pywin32"}`
+— **incondizionatamente**. Il messaggio sembra un problema di permessi
+risolvibile elevando il processo; non lo era, perche' la chiamata non tentava
+nulla, nemmeno da amministratore. Un errore che sembra un'implementazione
+funzionante e' peggio di nessuna implementazione: chi lo legge cerca la causa
+dalla parte sbagliata, e l'allowlist gattava una porta che non si apre.
+
+**Elencare i servizi e controllarli sono due capability distinte**, con due
+flag: su Windows `services` e' `true` (l'enumerazione funziona davvero) e
+`service_control` e' `false`. Un flag solo direbbe «servizi: si'» e lascerebbe
+credere che anche start/stop vada.
+
+La capability e' controllata **prima** dell'allowlist: su un backend che non
+implementa il controllo, «non e' in allowlist» suggerirebbe che aggiungendolo
+funzionerebbe. Autorizzare il servizio non cambia la risposta, e c'e' un test
+che lo verifica.
+
+Su Linux `service_control` segue la presenza di `systemctl`: implementato, e se
+lo strumento manca e' `CAPABILITY_UNAVAILABLE` (installabile), non
+`CAPABILITY_NOT_SUPPORTED`.
+
+> Quando servira', il controllo servizi su Windows sara' una PR dedicata:
+> allowlist → privilege gate → `OpenSCManager` → `ControlService` → verifica →
+> audit, testata su un servizio **creato dal test stesso** — mai fermando un
+> servizio del runner.
+
 ### `/v1/services` non inventa righe
 
 `list_services` restituiva due servizi che non esistono: uno chiamato

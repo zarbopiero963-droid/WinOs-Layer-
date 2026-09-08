@@ -254,7 +254,8 @@
       "tests/windows/test_capability_envelope_windows.py",
       "tests/security/test_service_allowlist.py",
       "tests/integration/test_service_control_api.py",
-      "tests/linux/test_service_listing_honesty_linux.py"
+      "tests/linux/test_service_listing_honesty_linux.py",
+      "tests/security/test_service_control_unsupported.py"
     ],
     "remaining": null
   },

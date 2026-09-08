@@ -208,6 +208,9 @@ class LinuxBackend:
             "screenshot": has_mss,
             "audio": has_audio,
             "services": has_systemctl,
+            # Su Linux il controllo E' implementato: se systemctl manca e'
+            # UNAVAILABLE (installabile), non NOT_SUPPORTED.
+            "service_control": has_systemctl,
             "devices": Path("/sys/block").is_dir(),
             "printers": bool(shutil.which("lpstat")),
             "registry_compat": True,

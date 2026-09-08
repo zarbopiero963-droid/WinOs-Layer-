@@ -50,17 +50,25 @@ def list_services(auth: AuthContext = Depends(require_permission(Permission.SYST
 def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(require_permission(Permission.SERVICE_CONTROL))):
     result = svcs.control(name, body.action, scope=body.scope)
     denied = bool(result.get("denied"))
+    unsupported = result.get("supported") is False
     audit(
         "service.control", auth, resource=name, detail=result,
-        outcome="denied" if denied else "success",
+        outcome="denied" if (denied or unsupported) else "success",
     )
+    from fastapi import HTTPException
+
+    if unsupported:
+        # 501, non 403. «Non ti e' permesso» e «non so farlo» sono due risposte
+        # a due domande diverse, e portano il chiamante a due azioni diverse:
+        # sul 403 puo' chiedere un'autorizzazione, sul 501 no. Decisione owner
+        # D5-B: su Windows il controllo dei servizi e' dichiaratamente non
+        # implementato.
+        raise HTTPException(501, result.get("error") or "service control not supported")
     if denied:
         # 403, come per il rifiuto della policy sandbox in apps.py: un rifiuto
         # che risponde 200 e' un successo per chiunque guardi lo status code, e
         # in un audit trail «negato» e «riuscito» non possono avere la stessa
         # faccia.
-        from fastapi import HTTPException
-
         raise HTTPException(403, result.get("error") or "service control denied")
     return result
 

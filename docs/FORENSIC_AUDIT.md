@@ -826,3 +826,37 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   `GET /v1/registry` (lettura) NON passa da questa allowlist: D2-B riguarda la
   scrittura, e la lettura e' una classe di rischio diversa — non estesa di
   iniziativa dell'agente, segnalata all'owner.
+
+
+## control_service su Windows: capability dichiarata non supportata (decisione owner D5-B)
+- **Status:** DONE
+- **Problema:** `WindowsBackend.control_service` restituiva
+  `{"ok": False, "error": "service control requires elevated pywin32"}`
+  INCONDIZIONATAMENTE. Il messaggio sembra un problema di permessi risolvibile
+  elevando il processo; non lo era — la chiamata non tentava nulla, nemmeno da
+  amministratore. L'allowlist introdotta in #29 gattava su Windows una porta che
+  non si apre.
+- **Decisione owner (D5-B):** NON implementare `OpenSCManager`/`ControlService`
+  adesso; dichiarare la capability non supportata col contratto `supported`.
+- **Files:**
+  - `windows_os_api/backends/windows.py` (flag `service_control: False`,
+    `NOT_IMPLEMENTED` esteso, risposta col contratto invece dello stub)
+  - `windows_os_api/backends/linux.py` (flag `service_control: has_systemctl` —
+    implementato, quindi UNAVAILABLE e non NOT_SUPPORTED quando manca)
+  - `windows_os_api/os/services/service.py` (capability PRIMA dell'allowlist)
+  - `windows_os_api/api/rest/services.py` (501 per "non so farlo", 403 resta per
+    "non ti e' permesso")
+  - `windows_os_api/os/system/service.py` (flag nella tabella del backend fake)
+- **Tests:**
+  - `tests/security/test_service_control_unsupported.py` (11)
+  - `tests/integration/test_service_control_api.py` (3 nuovi: 501 vs 403)
+  - `tests/windows/test_system_inventory_windows.py` (3 nuovi su Windows reale,
+    fra cui la verifica che lo stato di Spooler NON cambi — il runner e' elevato)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** capability controllata DOPO l'allowlist -> 3 rossi;
+  ritorno dello stub "requires elevated pywin32" -> 1 rosso; flag unico
+  (`services` che copre anche il controllo) -> 1 rosso.
+- **Honest limits:** i 3 test Windows girano solo su `windows-latest` in CI. Il
+  controllo servizi su Windows resta NON implementato per decisione owner: sara'
+  una PR dedicata con allowlist, privilege gate, verifica e audit, testata su un
+  servizio creato dal test stesso.
