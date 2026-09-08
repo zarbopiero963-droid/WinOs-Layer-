@@ -21,6 +21,16 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.input.validation import (
+    MOUSE_BUTTONS,
+    SCROLL_BUTTONS,
+    InputRejected,
+    validate_button,
+    validate_hotkey,
+    validate_key,
+    validate_scroll,
+    validate_steps,
+)
 
 from windows_os_api.backends import linux_audio as _laudio
 from windows_os_api.backends import linux_services as _lsvc
@@ -1076,16 +1086,32 @@ class LinuxBackend:
         session = detect_session()
         if session.get("x11") and shutil.which("xdotool"):
             try:
-                subprocess.run(  # noqa: S603
-                    ["xdotool", "mousemove", str(x), str(y)],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=_display_env(),
-                )
-                return {"ok": True, "x": x, "y": y, "backend": "xdotool"}
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": str(e)}
+                x, y = validate_position(x, y)
+            except GeometryRejected as exc:
+                return {"ok": False, "error": str(exc), "x": x, "y": y}
+            ok, detail = self._xdotool(["mousemove", str(x), str(y)], timeout=5)
+            if not ok:
+                return {"ok": False, "error": detail, "x": x, "y": y}
+            # The pointer is one of the few input effects X reports back, so
+            # this checks instead of assuming — and the check is not academic:
+            # on a bare Xvfb with NO window manager, `xdotool mousemove` is a
+            # silent no-op and the pointer stays at the screen centre. This used
+            # to return {"ok": True} for a move that never happened, and the
+            # methods below branch on that answer.
+            position = self.pointer_position()
+            if position is None:
+                return {"ok": False, "error": "could not read the pointer position",
+                        "requested": {"x": x, "y": y}}
+            if position != {"x": x, "y": y}:
+                return {
+                    "ok": False,
+                    "error": (f"pointer stayed at {position} instead of moving to "
+                              f"{{'x': {x}, 'y': {y}}} — is a window manager running?"),
+                    "requested": {"x": x, "y": y},
+                    "position": position,
+                    "backend": "xdotool",
+                }
+            return {"ok": True, "x": x, "y": y, "position": position, "backend": "xdotool"}
         if session.get("wayland"):
             tool = wayland_input_tool()
             cmd = build_wayland_click_cmd(x, y, tool=tool)
@@ -1111,9 +1137,17 @@ class LinuxBackend:
 
     def mouse_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
         session = detect_session()
+        # BREAKING: an unknown button used to fall through to left — a typo
+        # produced a left click reported as the button the caller named. Refused
+        # now, because reporting an action you did not take is worse than
+        # refusing one you cannot.
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
         if session.get("x11") and shutil.which("xdotool"):
             self.mouse_move(x, y)
-            btn = {"left": "1", "middle": "2", "right": "3"}.get(button, "1")
+            btn = str(MOUSE_BUTTONS[button])
             try:
                 subprocess.run(  # noqa: S603
                     ["xdotool", "click", btn],
@@ -1225,6 +1259,214 @@ class LinuxBackend:
                 "tool": tool,
             }
         return {"ok": False, "error": "xdotool not installed"}
+
+    # ------------------------------------------------------------------
+    # Input: the rest of the primitives
+    #
+    # What `ok` means here, and what it does not
+    # ------------------------------------------
+    # Window geometry could be read back from the X server, so `ok` there means
+    # "the effect was observed". Keystrokes and clicks have no such readback:
+    # once the event is handed to the X server it belongs to whatever window has
+    # focus, and nothing reports whether that window did anything with it.
+    #
+    # So `ok` here means the narrower, true thing — **the X server accepted the
+    # event** — which is still strictly more than the surrounding code claimed,
+    # because that ignored the exit code and returned `ok: True` regardless.
+    # Delivery itself is proven where it can be: the tests run `xev`, which
+    # prints every event the X server actually delivers, and assert on that.
+    #
+    # The pointer IS readable, so move and drag verify their final position.
+    # ------------------------------------------------------------------
+    def _xdotool(self, args: list[str], timeout: int = 10) -> tuple[bool, str]:
+        """Run xdotool and REPORT its exit code. Returns (ok, detail)."""
+        if not shutil.which("xdotool"):
+            return False, "xdotool not installed"
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["xdotool", *args],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=_display_env(),
+            )
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+        if r.returncode != 0:
+            return False, (r.stderr or "").strip() or f"xdotool exited {r.returncode}"
+        return True, (r.stdout or "").strip()
+
+    def pointer_position(self) -> dict[str, int] | None:
+        """Where the pointer actually is, or None when it cannot be read."""
+        ok, out = self._xdotool(["getmouselocation", "--shell"], timeout=5)
+        if not ok:
+            return None
+        vals: dict[str, int] = {}
+        for line in out.splitlines():
+            key, _, raw = line.partition("=")
+            if key.strip().lower() in ("x", "y"):
+                try:
+                    vals[key.strip().lower()] = int(raw.strip())
+                except ValueError:
+                    continue
+        return vals if len(vals) == 2 else None
+
+    def _x11_ready(self) -> dict[str, Any] | None:
+        """The refusal to return when this host cannot do X11 input at all."""
+        session = detect_session()
+        if session.get("x11") and shutil.which("xdotool"):
+            return None
+        if session.get("wayland"):
+            return {
+                "ok": False,
+                "error": "not implemented on Wayland; requires ydotool with a portal session",
+                "wayland": True,
+                "tool": wayland_input_tool(),
+            }
+        return {"ok": False, "error": "xdotool not installed"}
+
+    def double_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+        moved = self.mouse_move(x, y)
+        if not moved.get("ok"):
+            return {**moved, "ok": False}
+        # One `click --repeat 2` rather than two calls: the gap between two
+        # separate processes can exceed the double-click interval, and then the
+        # application sees two single clicks, which is a different gesture.
+        ok, detail = self._xdotool(
+            ["click", "--repeat", "2", "--delay", "80", str(MOUSE_BUTTONS[button])]
+        )
+        if not ok:
+            return {"ok": False, "error": detail, "x": x, "y": y, "button": button}
+        return {"ok": True, "x": x, "y": y, "button": button, "clicks": 2,
+                "backend": "xdotool"}
+
+    def scroll(self, direction: str = "down", amount: int = 3,
+               x: int | None = None, y: int | None = None) -> dict[str, Any]:
+        try:
+            direction, amount = validate_scroll(direction, amount)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "direction": direction, "amount": amount}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+        if x is not None and y is not None:
+            moved = self.mouse_move(x, y)
+            if not moved.get("ok"):
+                return {**moved, "ok": False}
+        # On X11 a wheel notch IS a button press: 4/5 vertical, 6/7 horizontal.
+        ok, detail = self._xdotool(
+            ["click", "--repeat", str(amount), str(SCROLL_BUTTONS[direction])]
+        )
+        if not ok:
+            return {"ok": False, "error": detail, "direction": direction, "amount": amount}
+        return {"ok": True, "direction": direction, "amount": amount,
+                "button": SCROLL_BUTTONS[direction], "backend": "xdotool"}
+
+    def key_down(self, key: str) -> dict[str, Any]:
+        """Press and HOLD. The matching key_up is the caller's responsibility."""
+        try:
+            key = validate_key(key)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "key": key}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+        ok, detail = self._xdotool(["keydown", key])
+        if not ok:
+            return {"ok": False, "error": detail, "key": key}
+        return {"ok": True, "key": key, "state": "down", "backend": "xdotool"}
+
+    def key_up(self, key: str) -> dict[str, Any]:
+        try:
+            key = validate_key(key)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "key": key}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+        ok, detail = self._xdotool(["keyup", key])
+        if not ok:
+            return {"ok": False, "error": detail, "key": key}
+        return {"ok": True, "key": key, "state": "up", "backend": "xdotool"}
+
+    def hotkey(self, keys: list[str]) -> dict[str, Any]:
+        """A chord — all keys down together, then released."""
+        try:
+            keys = validate_hotkey(keys)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "keys": keys}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+        chord = "+".join(keys)
+        ok, detail = self._xdotool(["key", "--clearmodifiers", chord])
+        if not ok:
+            return {"ok": False, "error": detail, "keys": keys, "chord": chord}
+        return {"ok": True, "keys": keys, "chord": chord, "backend": "xdotool"}
+
+    def mouse_drag(self, x1: int, y1: int, x2: int, y2: int,
+                   button: str = "left", *, steps: int = 10) -> dict[str, Any]:
+        """Press at (x1,y1), move to (x2,y2), release. Parity with WindowsBackend.
+
+        The pointer is one of the few input effects X will report back, so this
+        checks where it ended up instead of assuming the moves landed.
+        """
+        try:
+            button = validate_button(button)
+            steps = validate_steps(steps)
+            x1, y1 = validate_position(x1, y1)
+            x2, y2 = validate_position(x2, y2)
+        except (InputRejected, GeometryRejected) as exc:
+            return {"ok": False, "error": str(exc), "button": button}
+        refusal = self._x11_ready()
+        if refusal:
+            return refusal
+
+        btn = str(MOUSE_BUTTONS[button])
+        moved = self.mouse_move(x1, y1)
+        if not moved.get("ok"):
+            return {**moved, "ok": False}
+        ok, detail = self._xdotool(["mousedown", btn])
+        if not ok:
+            return {"ok": False, "error": detail, "phase": "mousedown"}
+        try:
+            for i in range(1, steps + 1):
+                t = i / steps
+                xi = int(x1 + (x2 - x1) * t)
+                yi = int(y1 + (y2 - y1) * t)
+                step_ok, step_detail = self._xdotool(["mousemove", str(xi), str(yi)], timeout=5)
+                if not step_ok:
+                    return {"ok": False, "error": step_detail, "phase": "mousemove"}
+        finally:
+            # Release even if a move failed. A button left held down is a mouse
+            # the user cannot use — the failure must not also break the desktop.
+            up_ok, up_detail = self._xdotool(["mouseup", btn])
+        if not up_ok:
+            return {"ok": False, "error": up_detail, "phase": "mouseup"}
+
+        position = self.pointer_position()
+        if position is None:
+            return {"ok": False, "error": "could not read the pointer position after the drag",
+                    "requested": {"x": x2, "y": y2}}
+        return {
+            "ok": position == {"x": x2, "y": y2},
+            "from": {"x": x1, "y": y1},
+            "requested": {"x": x2, "y": y2},
+            "position": position,
+            "button": button,
+            "steps": steps,
+            "backend": "xdotool",
+            **({} if position == {"x": x2, "y": y2} else
+               {"error": f"pointer ended at {position}, not at {{'x': {x2}, 'y': {y2}}}"}),
+        }
 
     # ------------------------------------------------------------------
     # Clipboard

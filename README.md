@@ -225,6 +225,48 @@ range a 16 bit della geometria X11. Fuori range si rifiuta, **non si clampa**:
 restituire una finestra di una dimensione che non e' stata chiesta, dichiarando
 successo, sarebbe reinterpretare la richiesta invece che rispondere.
 
+## Input — cosa significa `ok` per un click
+
+`POST /v1/input/mouse/{move,click,double-click,scroll,drag}` e
+`/v1/input/keyboard/{key,type,down,up,hotkey}`.
+
+A differenza della geometria delle finestre, **un tasto non ha rilettura**: una
+volta che l'evento e' consegnato all'OS appartiene alla finestra che ha il
+focus, e nessuno riporta cosa ne ha fatto. Quindi `ok` qui significa la cosa
+piu' stretta e vera — **l'OS ha accettato l'evento** — verificata sul codice
+d'uscita dello strumento (Linux) o sul conteggio restituito da `SendInput`
+(Windows), non data per scontata. La consegna vera e' dimostrata nei test, che
+la rileggono da `xev`.
+
+**Il puntatore e' l'eccezione**: si rilegge, quindi `mouse_move` e `mouse_drag`
+verificano dove e' finito e restituiscono `position` accanto a `requested`.
+
+```bash
+curl -X POST localhost:8000/v1/input/keyboard/hotkey \
+  -H "X-API-Key: $KEY" -d '{"keys":["ctrl","a"]}'
+# {"ok":true,"keys":["ctrl","a"],"chord":"ctrl+a", ...}
+```
+
+`hotkey` prende una **lista**, non `"ctrl+a"`: accettare la stringa vorrebbe
+dire indovinare il separatore, e un tasto il cui nome lo contiene diventerebbe
+in silenzio due tasti.
+
+**Breaking change**: un nome di pulsante sconosciuto ora viene **rifiutato**.
+Prima la mappatura era `{"left": "1", ...}.get(button, "1")`, quindi
+`mouse_click(x, y, "rihgt")` eseguiva un click **sinistro** e rispondeva
+`{"ok": true, "button": "rihgt"}` — il nome chiesto, accanto a un'azione che era
+un'altra. Riportare un'azione che non si e' compiuta e' peggio che rifiutarne
+una che non si puo' compiere.
+
+Limiti: scroll `1..100` notch, chord fino a 8 tasti, drag `1..200` step. Fuori
+range si rifiuta, non si clampa.
+
+> **Nota per chi testa su Linux headless.** Senza un window manager,
+> `xdotool mousemove` e' un **no-op silenzioso**: il puntatore resta al centro
+> dello schermo. Prima `mouse_move` rispondeva comunque `{"ok": true}`; ora
+> rilegge la posizione e lo dice. Se stai automatizzando sotto Xvfb, fai girare
+> un WM (es. `openbox`), o nessun input del mouse arrivera' da nessuna parte.
+
 ## Terminal — allowlist, non denylist
 
 `POST /v1/terminal/execute` esegue **solo comandi registrati**, come argv e con

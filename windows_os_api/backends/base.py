@@ -124,6 +124,42 @@ class OSBackend(Protocol):
     def type_text(self, text: str) -> dict[str, Any]:
         ...
 
+    # Input: the rest of the primitives.
+    #
+    # Unlike window geometry, a keystroke or a click has no readback — once the
+    # OS accepts the event it belongs to whatever window has focus, and nothing
+    # reports what that window did with it. So `ok` here means the OS accepted
+    # the event, checked rather than assumed. Delivery is proven in the tests,
+    # which read the events back from `xev` on Linux.
+    #
+    # The pointer IS readable, so mouse_move and mouse_drag verify where it
+    # ended up and report `position` alongside `requested`.
+    def double_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        ...
+
+    def scroll(self, direction: str = "down", amount: int = 3,
+               x: int | None = None, y: int | None = None) -> dict[str, Any]:
+        ...
+
+    def key_down(self, key: str) -> dict[str, Any]:
+        """Press and hold. The matching key_up is the caller's responsibility."""
+        ...
+
+    def key_up(self, key: str) -> dict[str, Any]:
+        ...
+
+    def hotkey(self, keys: list[str]) -> dict[str, Any]:
+        """A chord: all keys down together, then released."""
+        ...
+
+    def mouse_drag(self, x1: int, y1: int, x2: int, y2: int,
+                   button: str = "left", *, steps: int = 10) -> dict[str, Any]:
+        ...
+
+    def pointer_position(self) -> dict[str, int] | None:
+        """`{x, y}` as the OS reports it, or None when it cannot be read."""
+        ...
+
     # Clipboard
     def clipboard_get(self) -> dict[str, Any]:
         ...

@@ -18,6 +18,14 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.input.validation import (
+    InputRejected,
+    validate_button,
+    validate_hotkey,
+    validate_key,
+    validate_scroll,
+    validate_steps,
+)
 
 
 class WindowsBackendUnavailable(RuntimeError):
@@ -96,6 +104,10 @@ def _sendinput_structs():
 
     return {
         "ctypes": ctypes,
+        # Returned explicitly rather than reached through `ctypes.wintypes`:
+        # that attribute only exists because the import above happened to bind
+        # it, which is not something a caller should have to know.
+        "wintypes": wintypes,
         "user32": user32,
         "INPUT": INPUT,
         "MOUSEINPUT": MOUSEINPUT,
@@ -114,6 +126,11 @@ def _sendinput_structs():
         "KEYEVENTF_KEYUP": KEYEVENTF_KEYUP,
         "KEYEVENTF_UNICODE": KEYEVENTF_UNICODE,
         "KEYEVENTF_EXTENDEDKEY": KEYEVENTF_EXTENDEDKEY,
+        # Wheel. On Windows a scroll is a mouse event carrying a signed delta,
+        # not a button press as it is on X11 — WHEEL_DELTA (120) is one notch.
+        "MOUSEEVENTF_WHEEL": 0x0800,
+        "MOUSEEVENTF_HWHEEL": 0x01000,
+        "WHEEL_DELTA": 120,
     }
 
 
@@ -706,7 +723,14 @@ class WindowsBackend:
         moved = self.mouse_move(x, y)
         if not moved.get("ok"):
             return {**moved, "button": button, "ok": False}
-        button = (button or "left").lower()
+        # BREAKING, and the same change as LinuxBackend: an unknown button used
+        # to fall through to left, so a typo produced a left click reported as
+        # the button the caller named. Both `.get(button, LEFT...)` defaults
+        # below are now unreachable for an invalid name.
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
         # Prefer win32api.mouse_event when available
         if self._win32api:
             try:
@@ -759,7 +783,11 @@ class WindowsBackend:
         steps: int = 10,
     ) -> dict[str, Any]:
         """Drag from (x1,y1) to (x2,y2) using SendInput / mouse_event."""
-        button = (button or "left").lower()
+        try:
+            button = validate_button(button)
+            steps = validate_steps(steps)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "button": button}
         moved = self.mouse_move(x1, y1)
         if not moved.get("ok"):
             return {**moved, "ok": False}
@@ -845,6 +873,150 @@ class WindowsBackend:
             return {"ok": True, "key": key, "modifiers": mods, "method": "SendInput"}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": str(e), "key": key, "modifiers": mods}
+
+    # ------------------------------------------------------------------
+    # Input: the rest of the primitives (parity with LinuxBackend)
+    #
+    # Same limit as there: a keystroke or click has no readback. Once SendInput
+    # accepts the event it belongs to whatever window has focus, and nothing
+    # reports what that window did with it. So `ok` means SendInput accepted it
+    # — checked against the count it returns, not assumed.
+    # ------------------------------------------------------------------
+    def pointer_position(self) -> dict[str, int] | None:
+        """Where the pointer actually is, or None when it cannot be read."""
+        try:
+            si = _sendinput_structs()
+            point = si["wintypes"].POINT()
+            if not si["user32"].GetCursorPos(si["ctypes"].byref(point)):
+                return None
+            return {"x": int(point.x), "y": int(point.y)}
+        except Exception:  # noqa: BLE001
+            return None
+
+    def double_click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        try:
+            button = validate_button(button)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "x": x, "y": y, "button": button}
+        moved = self.mouse_move(x, y)
+        if not moved.get("ok"):
+            return {**moved, "ok": False}
+        try:
+            si = _sendinput_structs()
+            down, up = {
+                "left": (si["MOUSEEVENTF_LEFTDOWN"], si["MOUSEEVENTF_LEFTUP"]),
+                "right": (si["MOUSEEVENTF_RIGHTDOWN"], si["MOUSEEVENTF_RIGHTUP"]),
+                "middle": (si["MOUSEEVENTF_MIDDLEDOWN"], si["MOUSEEVENTF_MIDDLEUP"]),
+            }[button]
+            # All four events in ONE SendInput call. Two separate calls can fall
+            # outside GetDoubleClickTime, and then the application sees two
+            # single clicks — a different gesture from the one that was asked for.
+            inputs = (si["INPUT"] * 4)()
+            for i, flag in enumerate((down, up, down, up)):
+                inputs[i].type = si["INPUT_MOUSE"]
+                inputs[i].union.mi = si["MOUSEINPUT"](0, 0, 0, flag, 0, 0)
+            sent = si["user32"].SendInput(
+                4, si["ctypes"].byref(inputs), si["ctypes"].sizeof(si["INPUT"])
+            )
+            if sent != 4:
+                return {"ok": False, "error": f"SendInput accepted {sent} of 4 events",
+                        "x": x, "y": y, "button": button}
+            return {"ok": True, "x": int(x), "y": int(y), "button": button, "clicks": 2,
+                    "method": "SendInput"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "x": x, "y": y, "button": button}
+
+    def scroll(self, direction: str = "down", amount: int = 3,
+               x: int | None = None, y: int | None = None) -> dict[str, Any]:
+        try:
+            direction, amount = validate_scroll(direction, amount)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "direction": direction, "amount": amount}
+        if x is not None and y is not None:
+            moved = self.mouse_move(x, y)
+            if not moved.get("ok"):
+                return {**moved, "ok": False}
+        try:
+            si = _sendinput_structs()
+            delta = si["WHEEL_DELTA"] * amount
+            # Unlike X11, where a scroll is button 4/5/6/7, Windows sends one
+            # wheel event carrying a signed delta. Down and left are negative.
+            horizontal = direction in ("left", "right")
+            if direction in ("down", "left"):
+                delta = -delta
+            flag = si["MOUSEEVENTF_HWHEEL"] if horizontal else si["MOUSEEVENTF_WHEEL"]
+            inp = si["INPUT"]()
+            inp.type = si["INPUT_MOUSE"]
+            inp.union.mi = si["MOUSEINPUT"](0, 0, delta, flag, 0, 0)
+            sent = si["user32"].SendInput(
+                1, si["ctypes"].byref(inp), si["ctypes"].sizeof(si["INPUT"])
+            )
+            if sent != 1:
+                return {"ok": False, "error": "SendInput wheel event rejected",
+                        "direction": direction, "amount": amount}
+            return {"ok": True, "direction": direction, "amount": amount, "delta": delta,
+                    "method": "SendInput"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "direction": direction, "amount": amount}
+
+    def key_down(self, key: str) -> dict[str, Any]:
+        """Press and HOLD. The matching key_up is the caller's responsibility."""
+        return self._key_transition(key, key_up=False)
+
+    def key_up(self, key: str) -> dict[str, Any]:
+        return self._key_transition(key, key_up=True)
+
+    def _key_transition(self, key: str, *, key_up: bool) -> dict[str, Any]:
+        try:
+            key = validate_key(key)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "key": key}
+        vk = _vk_for_key(key)
+        if vk is None:
+            # Deliberately NOT falling back to the unicode path used by
+            # key_press: a held key must be a real virtual key, or there is
+            # nothing for key_up to release.
+            return {"ok": False, "error": f"unknown key: {key}", "key": key}
+        try:
+            if not self._send_vk(vk, key_up=key_up):
+                return {"ok": False, "error": "SendInput rejected the key event", "key": key}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "key": key}
+        return {"ok": True, "key": key, "state": "up" if key_up else "down",
+                "method": "SendInput"}
+
+    def hotkey(self, keys: list[str]) -> dict[str, Any]:
+        """A chord — all keys down in order, then released in reverse."""
+        try:
+            keys = validate_hotkey(keys)
+        except InputRejected as exc:
+            return {"ok": False, "error": str(exc), "keys": keys}
+        vks = []
+        for k in keys:
+            vk = _vk_for_key(k)
+            if vk is None:
+                return {"ok": False, "error": f"unknown key: {k}", "keys": keys}
+            vks.append((k, vk))
+
+        pressed: list[int] = []
+        try:
+            for name, vk in vks:
+                if not self._send_vk(vk, key_up=False):
+                    return {"ok": False, "error": f"SendInput down failed for {name}",
+                            "keys": keys}
+                pressed.append(vk)
+            return {"ok": True, "keys": keys, "chord": "+".join(keys), "method": "SendInput"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "keys": keys}
+        finally:
+            # Release in reverse, and release even on failure. A modifier left
+            # stuck down turns every later keystroke into a shortcut — the
+            # failure must not also leave the keyboard unusable.
+            for vk in reversed(pressed):
+                try:
+                    self._send_vk(vk, key_up=True)
+                except Exception:  # noqa: BLE001, S110
+                    pass
 
     def type_text(self, text: str) -> dict[str, Any]:
         if text is None:

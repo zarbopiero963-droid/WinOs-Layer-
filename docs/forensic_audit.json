@@ -130,9 +130,16 @@
     "title": "Mouse/keyboard input",
     "files": [
       "windows_os_api/os/input/service.py",
-      "windows_os_api/api/rest/ui.py"
+      "windows_os_api/os/input/validation.py",
+      "windows_os_api/api/rest/ui.py",
+      "windows_os_api/backends/linux.py",
+      "windows_os_api/backends/windows.py",
+      "windows_os_api/backends/fake.py"
     ],
     "tests": [
+      "tests/linux/test_input_linux.py",
+      "tests/windows/test_input_windows.py",
+      "tests/unit/test_input_validation_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
     "remaining": null

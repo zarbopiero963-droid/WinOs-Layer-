@@ -162,6 +162,139 @@ def hwnd(probe_window):
     return probe_window.hwnd
 
 
+class EventRecorder:
+    """Reads back the X events the server actually delivered, via `xev`.
+
+    Input has no readback the way window geometry does: once an event is handed
+    to the X server it belongs to whatever window has focus, and nothing reports
+    what that window did with it. `xev` prints every event it receives, so a
+    test can assert on delivery instead of on a tool's exit code.
+
+    Reads from an offset taken when the fixture yields, so the noise `xev` emits
+    while its own window is being created and mapped is not counted as input.
+    """
+
+    def __init__(self, path, start_offset: int):
+        self.path = path
+        self.start_offset = start_offset
+
+    def text(self) -> str:
+        with open(self.path, encoding="utf-8", errors="replace") as fh:
+            fh.seek(self.start_offset)
+            return fh.read()
+
+    def count(self, pattern: str) -> int:
+        import re
+
+        # MULTILINE, because the patterns anchor on `^` to match an event line
+        # like "KeyPress event, serial 44, ...". Without it `^` only matches the
+        # very start of the capture, and every count comes back 0 while the
+        # events are sitting right there in the text.
+        return len(re.findall(pattern, self.text(), re.MULTILINE))
+
+    def wait_for(self, pattern: str, at_least: int = 1, timeout: float = 5.0) -> int:
+        """Poll until `pattern` has appeared `at_least` times. Returns the count.
+
+        X delivery is asynchronous, so an immediate read can miss an event that
+        is genuinely on its way. This waits for the condition rather than
+        sleeping a guessed amount and hoping.
+        """
+        deadline = time.time() + timeout
+        seen = 0
+        while time.time() < deadline:
+            seen = self.count(pattern)
+            if seen >= at_least:
+                return seen
+            time.sleep(0.05)
+        return seen
+
+
+@pytest.fixture
+def event_recorder(window_manager, tmp_path):
+    """A focused `xev` window that records what the X server delivers to it."""
+    require_wm_tools()
+    if not shutil.which("xev"):
+        message = "xev not installed (package x11-utils)"
+        if os.environ.get("WINOS_REQUIRE_WM") == "1":
+            pytest.fail(message + " (WINOS_REQUIRE_WM=1)")
+        pytest.skip(message)
+
+    title = f"winos-input-probe-{os.getpid()}-{int(time.time() * 1000) % 100000}"
+    log = tmp_path / "xev.log"
+    with open(log, "wb") as sink:
+        proc = subprocess.Popen(  # noqa: S603
+            ["xev", "-name", title],
+            env=x_env(),
+            stdout=sink,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+        found = None
+        for _ in range(100):
+            r = subprocess.run(  # noqa: S603
+                ["xdotool", "search", "--name", title],
+                capture_output=True, text=True, timeout=5, check=False, env=x_env(),
+            )
+            ids = [line for line in r.stdout.split() if line.isdigit()]
+            if ids:
+                found = int(ids[0])
+                break
+            time.sleep(0.1)
+        if found is None:
+            proc.kill()
+            pytest.fail(f"xev window {title!r} never appeared")
+
+        # Put it somewhere known and make it big. xev's default window is
+        # 178x178 wherever the WM decides to place it — measured at (552,450) —
+        # so a click at an arbitrary coordinate lands on the root window
+        # instead, and the recorder sees nothing while the event was delivered
+        # perfectly well somewhere else.
+        for args in (
+            ["windowmove", "--sync", str(found), "40", "40"],
+            ["windowsize", "--sync", str(found), "900", "700"],
+            # Focus, or keystrokes go to whatever window has it.
+            ["windowactivate", "--sync", str(found)],
+        ):
+            subprocess.run(  # noqa: S603
+                ["xdotool", *args],
+                capture_output=True, timeout=10, check=False, env=x_env(),
+            )
+        time.sleep(0.6)  # let the map/expose/focus/configure burst finish
+
+        geom = subprocess.run(  # noqa: S603
+            ["xdotool", "getwindowgeometry", "--shell", str(found)],
+            capture_output=True, text=True, timeout=5, check=False, env=x_env(),
+        )
+        rect = {}
+        for line in (geom.stdout or "").splitlines():
+            key, _, raw = line.partition("=")
+            if key.strip().lower() in ("x", "y", "width", "height"):
+                try:
+                    rect[key.strip().lower()] = int(raw.strip())
+                except ValueError:
+                    continue
+        if len(rect) != 4:
+            proc.kill()
+            pytest.fail(f"could not read the geometry of the xev window {title!r}")
+
+        recorder = EventRecorder(log, log.stat().st_size)
+        recorder.hwnd = found
+        recorder.title = title
+        recorder.rect = rect
+        # Where a test should aim so the event lands INSIDE the recorder.
+        recorder.center = (rect["x"] + rect["width"] // 2,
+                           rect["y"] + rect["height"] // 2)
+        try:
+            yield recorder
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
 @pytest.fixture()
 def linux_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("WINOS_BACKEND", "linux")
