@@ -149,6 +149,21 @@ def test_live_audio_optional(linux_backend):
     reason="systemctl missing",
 )
 def test_live_services_optional(linux_backend):
-    svcs = linux_backend.list_services()
+    """Unit vere, oppure un fallimento dichiarato — mai una riga inventata.
+
+    Questo test asseriva `assert svcs` e passava su una macchina SENZA systemd,
+    perche' `list_services` restituiva un servizio finto chiamato "none". Era
+    verde grazie al difetto che questa PR toglie: asseriva «sono stati elencati
+    dei servizi» e riceveva una riga che nessun sistema ha.
+    """
+    from windows_os_api.os.capability import DiscoveryFailed
+
+    try:
+        svcs = linux_backend.list_services()
+    except DiscoveryFailed:
+        return  # systemd non raggiungibile: esito legittimo e, adesso, dichiarato
+
     assert isinstance(svcs, list)
-    assert svcs
+    for s in svcs:
+        assert s["name"] not in ("none", "systemctl"), f"riga inventata: {s}"
+        assert s.get("unit", "").endswith(".service"), s

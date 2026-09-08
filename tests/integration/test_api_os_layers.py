@@ -29,13 +29,21 @@ def test_filesystem_sandbox(client, auth_headers):
     bad = client.get("/v1/fs/read", headers=auth_headers, params={"path": "../etc/passwd"})
     assert bad.status_code == 403
 
-def test_storage_network_services(client, auth_headers):
+def test_storage_network_services(client, auth_headers, monkeypatch):
     assert len(client.get("/v1/storage/drives", headers=auth_headers).json()["drives"]) >= 1
     assert len(client.get("/v1/network/interfaces", headers=auth_headers).json()["interfaces"]) >= 1
     svcs = client.get("/v1/services", headers=auth_headers).json()["services"]
     assert any(s["name"] == "WinOsApi" for s in svcs)
+
+    # Il controllo dei servizi e' default-deny (decisione owner D1-B, issue #6):
+    # questa chiamata prima rispondeva `ok: true` senza che nessuno avesse
+    # autorizzato `FakeSvc`. Ora serve l'allowlist, e la sua assenza e' un 403.
+    refused = client.post("/v1/services/FakeSvc", headers=auth_headers, json={"action": "start"})
+    assert refused.status_code == 403, refused.text
+
+    monkeypatch.setenv("WINOS_SERVICE_ALLOWLIST", "FakeSvc")
     ctrl = client.post("/v1/services/FakeSvc", headers=auth_headers, json={"action": "start"})
-    assert ctrl.json()["ok"] is True
+    assert ctrl.json()["ok"] is True, ctrl.text
 
 def test_audio_devices_printers_users(client, auth_headers):
     assert client.get("/v1/audio/devices", headers=auth_headers).status_code == 200

@@ -520,6 +520,63 @@ leggerlo qui».
 > rispondere `200` con lista vuota — che su qualunque PC significherebbe
 > «questa macchina non ha audio», ed e' falso.
 
+## Servizi — allowlist esplicita, default-deny
+
+`POST /v1/services/{name}` controlla **solo i servizi scritti in
+`WINOS_SERVICE_ALLOWLIST`**. La variabile non impostata significa insieme vuoto,
+cioe' **nessun servizio controllabile**.
+
+```
+control_service
+      |
+   allowlist
+      |
+servizio autorizzato?
+   |-- SI  -> systemctl
+   \-- NO  -> 403, e systemctl non viene mai invocato
+```
+
+```bash
+WINOS_SERVICE_ALLOWLIST=nginx,postgres   # esattamente questi due
+```
+
+Cosa c'era prima: `control_service` sanificava il nome dell'unit — niente
+metacaratteri di shell, niente path traversal — e poi lo passava a `systemctl`.
+Quella sanificazione impedisce di **iniettare** un comando, non di **fermare il
+servizio sbagliato**: `ssh`, `firewalld`, `systemd-journald` sono tutti nomi di
+unit perfettamente validi. L'unica difesa erano i permessi di systemd, cioe'
+qualcosa che sta fuori da questo programma e che, se il processo gira da root,
+non c'e'.
+
+**Nomi esatti, niente glob.** `nginx` autorizza `nginx`, non `nginx-proxy`. Un
+`nginx*` scritto nella variabile autorizza il servizio letteralmente chiamato
+`nginx*`, cioe' nessuno: i glob sono il modo in cui un'allowlist diventa
+permissiva senza che nessuno se ne accorga. `nginx` e `nginx.service` sono lo
+stesso servizio.
+
+**ADMIN non e' una scorciatoia.** L'allowlist e' controllata prima e
+indipendentemente dal ruolo: una chiave amministrativa che chiede un servizio
+non autorizzato riceve lo stesso 403 di chiunque altro. Se ADMIN bastasse,
+l'allowlist sarebbe un suggerimento e non un confine.
+
+**Il rifiuto avviene prima del sistema.** Un servizio non autorizzato non
+«fallisce dopo aver provato»: non raggiunge mai `systemctl`. C'e' un test che lo
+verifica spiando `subprocess.run` e asserendo che non e' stato chiamato — non
+guardando il valore di ritorno, che sarebbe uguale nei due casi.
+
+### `/v1/services` non inventa righe
+
+`list_services` restituiva due servizi che non esistono: uno chiamato
+`"systemctl"` quando il binario mancava, e uno chiamato `"none"` quando non
+c'erano unit. Sono spariti (stessa famiglia del `WinOsApi` tolto su Windows), e
+il contratto `supported` li rende superflui.
+
+E **systemd irraggiungibile non e' «nessun servizio»**: in un container il
+binario `systemctl` c'e' ma il bus no, e prima l'API rispondeva `200` con lista
+vuota — cioe' affermava che la macchina non ha servizi. Ora e'
+`DISCOVERY_FAILED` con il motivo. Uno scope che fallisce da solo (`--user` senza
+sessione) non annulla l'altro: si annota e si prosegue.
+
 ## Terminal — allowlist, non denylist
 
 `POST /v1/terminal/execute` esegue **solo comandi registrati**, come argv e con

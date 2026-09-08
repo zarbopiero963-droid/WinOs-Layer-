@@ -233,7 +233,9 @@
       "windows_os_api/api/rest/services.py",
       "windows_os_api/backends/windows.py",
       "windows_os_api/backends/linux.py",
-      "windows_os_api/os/capability.py"
+      "windows_os_api/os/capability.py",
+      "windows_os_api/os/services/allowlist.py",
+      "windows_os_api/backends/linux_services.py"
     ],
     "tests": [
       "tests/integration/test_api_os_layers.py",
@@ -244,7 +246,10 @@
       "tests/unit/test_capability_flags_contract.py",
       "tests/integration/test_capability_envelope_api.py",
       "tests/linux/test_capability_envelope_linux.py",
-      "tests/windows/test_capability_envelope_windows.py"
+      "tests/windows/test_capability_envelope_windows.py",
+      "tests/security/test_service_allowlist.py",
+      "tests/integration/test_service_control_api.py",
+      "tests/linux/test_service_listing_honesty_linux.py"
     ],
     "remaining": null
   },
