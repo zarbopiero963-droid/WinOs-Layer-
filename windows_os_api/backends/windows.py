@@ -1819,8 +1819,86 @@ class WindowsBackend:
         finally:
             winreg.CloseKey(key)
 
+    _REGISTRY_HIVES = {
+        "HKLM": "HKEY_LOCAL_MACHINE",
+        "HKEY_LOCAL_MACHINE": "HKEY_LOCAL_MACHINE",
+        "HKCU": "HKEY_CURRENT_USER",
+        "HKEY_CURRENT_USER": "HKEY_CURRENT_USER",
+        "HKCR": "HKEY_CLASSES_ROOT",
+        "HKEY_CLASSES_ROOT": "HKEY_CLASSES_ROOT",
+        "HKU": "HKEY_USERS",
+        "HKEY_USERS": "HKEY_USERS",
+    }
+
     def registry_write(self, path: str, name: str, value: Any) -> dict[str, Any]:
-        return {"ok": False, "error": "registry write requires elevation", "path": path}
+        r"""Scrive davvero un valore nel registro.
+
+        Era uno stub: `{"ok": False, "error": "registry write requires
+        elevation"}`, restituito **incondizionatamente** — non tentava mai,
+        nemmeno da amministratore, e nemmeno sotto `HKCU` dove non serve alcuna
+        elevazione. Un errore sempre uguale non dice niente sul perche'.
+
+        Il percorso e' gia' stato autorizzato dall'allowlist di prefissi
+        (`os/registry/allowlist.py`, decisione owner D2-B): qui non si ri-decide
+        cosa e' scrivibile, si scrive.
+
+        Il valore viene riletto dopo la scrittura: `ok: true` significa «c'e'
+        scritto quello», non «la chiamata non ha sollevato». E' la stessa
+        lezione di #18 e #24.
+        """
+        if not self._winreg:
+            return {"ok": False, "error": "winreg unavailable", "path": path, "name": name}
+        import winreg  # type: ignore
+
+        raw = path.replace("/", "\\")
+        parts = raw.split("\\", 1)
+        if len(parts) != 2:
+            return {"ok": False, "error": "path must be HIVE\\subkey", "path": path}
+        hive_name = self._REGISTRY_HIVES.get(parts[0].upper())
+        if hive_name is None:
+            return {"ok": False, "error": f"unknown hive: {parts[0]}", "path": path}
+        hive = getattr(winreg, hive_name)
+        subkey = parts[1]
+
+        # Il tipo segue il valore: un intero scritto come stringa tornerebbe
+        # indietro come stringa, e chi lo rilegge troverebbe un tipo diverso da
+        # quello che ha scritto.
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            payload, kind = str(value), winreg.REG_SZ
+        elif isinstance(value, int):
+            payload, kind = int(value), winreg.REG_DWORD
+        else:
+            payload, kind = value, winreg.REG_SZ
+
+        try:
+            key = winreg.CreateKeyEx(hive, subkey, 0, winreg.KEY_WRITE | winreg.KEY_READ)
+        except OSError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "code": "permission_denied" if getattr(exc, "winerror", None) == 5 else "open_failed",
+                "path": path,
+                "name": name,
+            }
+        try:
+            winreg.SetValueEx(key, name, 0, kind, payload)
+            written, written_kind = winreg.QueryValueEx(key, name)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc), "path": path, "name": name}
+        finally:
+            winreg.CloseKey(key)
+
+        return {
+            "ok": written == payload,
+            "path": path,
+            "name": name,
+            "value": written,
+            "type": int(written_kind),
+            # `verified` dice che il valore e' stato RILETTO, non solo scritto:
+            # senza, `ok: true` significherebbe soltanto «SetValueEx non ha
+            # sollevato».
+            "verified": True,
+        }
 
     def terminal_execute(self, command: str, policy: str = "ALLOW") -> dict[str, Any]:
         policy = policy.upper()

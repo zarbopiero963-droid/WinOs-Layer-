@@ -132,7 +132,18 @@ def registry_read(path: str, name: str | None = None, auth: AuthContext = Depend
 @router.put("/registry")
 def registry_write(body: RegistryWrite, auth: AuthContext = Depends(require_permission(Permission.REGISTRY_WRITE))):
     result = registry.write(body.path, body.name, body.value)
-    audit("registry.write", auth, resource=body.path, detail={"name": body.name})
+    denied = bool(result.get("denied"))
+    audit(
+        "registry.write", auth, resource=body.path,
+        detail={"name": body.name, "code": result.get("code")},
+        outcome="denied" if denied else "success",
+    )
+    if denied:
+        # 403 come per i servizi e per la policy sandbox: un rifiuto che
+        # risponde 200 e' un successo per chiunque guardi lo status code.
+        from fastapi import HTTPException
+
+        raise HTTPException(403, result.get("error") or "registry write denied")
     return result
 
 @router.post("/terminal/execute")
