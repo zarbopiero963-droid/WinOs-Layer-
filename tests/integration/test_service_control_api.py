@@ -66,3 +66,76 @@ def test_the_refusal_names_the_variable_to_configure(client, auth_headers):
     detail = r.json().get("detail", "")
     assert ENV_VAR in detail, detail
     assert "default-deny" in detail, detail
+
+
+# ---------------------------------------------------------------------------
+# `PUT /v1/registry` — allowlist di prefissi (decisione owner D2-B)
+# ---------------------------------------------------------------------------
+from windows_os_api.os.registry.allowlist import ENV_VAR as REGISTRY_ENV  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def clean_registry_allowlist(monkeypatch):
+    monkeypatch.delenv(REGISTRY_ENV, raising=False)
+
+
+def test_a_write_under_hkcu_software_is_allowed(client, auth_headers):
+    """Il default sicuro funziona: le impostazioni dell'app si scrivono."""
+    r = client.put("/v1/registry", headers=auth_headers,
+                   json={"path": r"HKCU\Software\WinOsTest", "name": "k", "value": "v"})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True, r.text
+
+
+def test_writes_outside_the_allowlist_are_403(client, auth_headers):
+    for path in (r"HKLM\SOFTWARE\Microsoft", r"HKCU\Environment", r"HKCU\SoftwareAltro\X"):
+        r = client.put("/v1/registry", headers=auth_headers,
+                       json={"path": path, "name": "k", "value": "v"})
+        assert r.status_code == 403, f"{path}: {r.status_code} {r.text}"
+
+
+def test_the_critical_areas_are_403_however_they_are_written(client, auth_headers):
+    """Lo stesso posto scritto in quattro modi deve avere lo stesso esito."""
+    for path in (
+        r"HKLM\SYSTEM\CurrentControlSet",
+        r"HKEY_LOCAL_MACHINE\SYSTEM\Foo",
+        r"HKLM\SECURITY\Policy",
+        r"HKLM\SAM\SAM",
+    ):
+        r = client.put("/v1/registry", headers=auth_headers,
+                       json={"path": path, "name": "k", "value": "v"})
+        assert r.status_code == 403, f"{path}: {r.status_code} {r.text}"
+
+
+def test_the_admin_key_cannot_write_outside_the_allowlist(client, admin_headers):
+    """Nessun write arbitrario con solo ADMIN, per decisione owner."""
+    r = client.put("/v1/registry", headers=admin_headers,
+                   json={"path": r"HKLM\SYSTEM\Foo", "name": "k", "value": "v"})
+    assert r.status_code == 403, r.text
+
+
+def test_the_allowlist_extends_the_reachable_paths(client, auth_headers, monkeypatch):
+    r = client.put("/v1/registry", headers=auth_headers,
+                   json={"path": r"HKCU\Tools\App", "name": "k", "value": "v"})
+    assert r.status_code == 403, r.text
+
+    monkeypatch.setenv(REGISTRY_ENV, "HKCU\\Tools\\")
+    r = client.put("/v1/registry", headers=auth_headers,
+                   json={"path": r"HKCU\Tools\App", "name": "k", "value": "v"})
+    assert r.status_code == 200, r.text
+
+
+def test_a_written_value_can_be_read_back_at_the_same_path(client, auth_headers):
+    """Il gate non deve spostare la scrittura.
+
+    Se `check()` restituisse la chiave di confronto (maiuscola), la scrittura
+    finirebbe su `HKCU\\SOFTWARE\\...` e questa rilettura non troverebbe niente:
+    gli store di Fake e Linux sono dizionari, e per un dizionario `Software` e
+    `SOFTWARE` sono due chiavi.
+    """
+    path = r"HKCU\Software\RoundTrip"
+    client.put("/v1/registry", headers=auth_headers,
+               json={"path": path, "name": "Setting", "value": "on"})
+    r = client.get("/v1/registry", headers=auth_headers, params={"path": path, "name": "Setting"})
+    assert r.status_code == 200, r.text
+    assert r.json().get("value") == "on", r.text

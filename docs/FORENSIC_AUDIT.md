@@ -792,3 +792,37 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   proprieta' di sicurezza — la richiesta non raggiunge il sistema — e' verificata
   spiando `subprocess.run`, che e' il punto in cui il sistema verrebbe toccato.
   `registry_write` non toccato: e' D2-B, PR successiva.
+
+
+## Allowlist di prefissi per registry_write + scrittura reale su Windows (decisione owner D2-B)
+- **Status:** DONE
+- **Problema:** nessun controllo sui percorsi di scrittura. `FakeBackend` e
+  `LinuxBackend` scrivevano su QUALUNQUE percorso; `WindowsBackend` non scriveva
+  affatto — uno stub che rispondeva sempre "registry write requires elevation",
+  incondizionatamente, senza mai tentare nemmeno sotto HKCU dove nessuna
+  elevazione serve. La mancanza del gate non si era mai vista perche' la porta
+  non si apriva; implementando la scrittura sarebbe diventata la possibilita' di
+  scrivere ovunque il processo abbia i permessi.
+- **Files:**
+  - `windows_os_api/os/registry/allowlist.py` (nuovo: `check`, `normalize`,
+    `comparison_key`, `allowed_prefixes`, denylist non sovrascrivibile)
+  - `windows_os_api/os/registry/service.py` (gate prima del backend)
+  - `windows_os_api/backends/windows.py` (`registry_write` reale via winreg,
+    con rilettura: `ok: true` significa "c'e' scritto quello")
+  - `windows_os_api/api/rest/services.py` (403 sul rifiuto, audit outcome denied)
+- **Tests:**
+  - `tests/security/test_registry_write_allowlist.py` (35)
+  - `tests/integration/test_service_control_api.py` (registry: 6 via HTTP)
+  - `tests/windows/test_registry_write_windows.py` (6, Windows reale in CI)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** prefisso senza separatore finale -> 1 rosso; hive non
+  canonicalizzata (bypass via HKEY_LOCAL_MACHINE) -> 3 rossi; env che riapre le
+  aree critiche -> 2 rossi; gate tolto da write() -> 5 rossi.
+- **Le tre trappole del prefix-matching**, ognuna con un test: prefisso senza `\`
+  finale (HKCU\Software autorizzerebbe HKCU\SoftwareAltro); alias della hive
+  (HKEY_LOCAL_MACHINE\SYSTEM\ vs HKLM\SYSTEM\); traversal (i segmenti `..` sono
+  RIFIUTATI, non risolti).
+- **Honest limits:** i 6 test Windows girano solo su `windows-latest` in CI.
+  `GET /v1/registry` (lettura) NON passa da questa allowlist: D2-B riguarda la
+  scrittura, e la lettura e' una classe di rischio diversa — non estesa di
+  iniziativa dell'agente, segnalata all'owner.

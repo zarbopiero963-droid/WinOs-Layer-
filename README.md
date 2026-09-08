@@ -577,6 +577,57 @@ vuota — cioe' affermava che la macchina non ha servizi. Ora e'
 `DISCOVERY_FAILED` con il motivo. Uno scope che fallisce da solo (`--user` senza
 sessione) non annulla l'altro: si annota e si prosegue.
 
+## Registro — allowlist di prefissi, aree critiche mai
+
+`PUT /v1/registry` scrive **solo sotto i prefissi autorizzati**.
+
+```
+default:  HKCU\Software\
+estende:  WINOS_REGISTRY_ALLOWLIST=HKCU\Software\MyApp\,HKCU\Company\
+mai:      HKLM\SYSTEM\   HKLM\SECURITY\   HKLM\SAM\
+```
+
+Le tre aree vietate **non si riaprono per configurazione**: scriverle nella
+variabile d'ambiente non le autorizza, la voce viene scartata. Richiedono una
+policy specifica e separata — se bastasse aggiungerle all'allowlist, quella
+policy separata non esisterebbe. `HKLM\SYSTEM\CurrentControlSet\` e' a un errore
+di battitura da una macchina che non riavvia.
+
+**La scrittura su Windows adesso avviene davvero.** Era uno stub che rispondeva
+sempre `{"ok": false, "error": "registry write requires elevation"}` —
+incondizionatamente, senza mai tentare, nemmeno sotto `HKCU` dove nessuna
+elevazione serve. Un errore sempre uguale non dice niente sul perche', e un gate
+davanti a una porta che non si apre sarebbe teatro. Il valore viene **riletto**
+dopo la scrittura: `ok: true` significa «c'e' scritto quello», non «la chiamata
+non ha sollevato».
+
+### I tre modi in cui un gate di prefissi si buca
+
+Hanno un test ciascuno, perche' sono errori che si fanno una volta sola e si
+scoprono tardi:
+
+| Trappola | Esempio | Difesa |
+|---|---|---|
+| prefisso senza separatore | `HKCU\Software` autorizzerebbe `HKCU\SoftwareAltro` | ogni prefisso finisce con `\` |
+| alias della hive | `HKEY_LOCAL_MACHINE\SYSTEM\` vs `HKLM\SYSTEM\` | hive canonicalizzata prima del confronto |
+| traversal | `HKCU\Software\..\..\SYSTEM` | i segmenti `..` sono **rifiutati**, non risolti |
+
+I `..` non si risolvono di proposito: risolverli vorrebbe dire indovinare cosa
+intendeva il chiamante, e un gate non indovina.
+
+**Il confronto e' case-insensitive, il percorso scritto no.** Il gate decide,
+non riscrive la richiesta: restituire la chiave di confronto (maiuscola)
+sposterebbe la scrittura su una chiave diversa da quella chiesta, perche' gli
+store di `FakeBackend` e `LinuxBackend` sono dizionari e per un dizionario
+`Software` e `SOFTWARE` sono due chiavi.
+
+**ADMIN non e' una scorciatoia**, come per i servizi: l'allowlist e' controllata
+prima e indipendentemente dal ruolo.
+
+> **Nota di scope.** `GET /v1/registry` (lettura) **non** passa da questa
+> allowlist: la decisione D2-B riguarda la scrittura, e leggere e' una classe di
+> rischio diversa. Non e' stata estesa di iniziativa dell'agente.
+
 ## Terminal — allowlist, non denylist
 
 `POST /v1/terminal/execute` esegue **solo comandi registrati**, come argv e con
