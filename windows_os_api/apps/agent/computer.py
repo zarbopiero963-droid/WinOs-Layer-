@@ -20,14 +20,18 @@ from __future__ import annotations
 from typing import Any
 from windows_os_api.apps.intent.engine import execute_intent
 from windows_os_api.apps.adapters.engine import create_adapter, invoke_action, get_adapter
+from windows_os_api.apps.adapters.validation import validate_app_id
 from windows_os_api.apps.agent.gate import evaluate
 from windows_os_api.core.events.bus import get_event_bus, Event
 
 class ComputerAgent:
-    def __init__(self, app_id: str = "contoso-crm") -> None:
-        self.app_id = app_id
-        if not get_adapter(app_id):
-            create_adapter(app_id)
+    def __init__(self, app_id: str) -> None:
+        # No default. It used to be "contoso-crm" — the fake backend's demo CRM —
+        # so a caller who never said which application they meant drove that one
+        # instead of being told to say which.
+        self.app_id = validate_app_id(app_id)
+        if not get_adapter(self.app_id):
+            create_adapter(self.app_id)
 
     def run(self, goal: str) -> dict[str, Any]:
         result = execute_intent(goal, app_id=self.app_id)

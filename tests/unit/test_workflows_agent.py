@@ -51,6 +51,6 @@ def test_heal_and_reason():
 
 def test_plan_requires_confirmation_when_risky():
     create_adapter("contoso-crm")
-    p = plan("create new customer")
+    p = plan("create new customer", "contoso-crm")
     assert "workflow" in p
     assert p["confidence"] > 0

@@ -7,7 +7,7 @@ from windows_os_api.apps.semantic.mapper import map_intent_to_element
 from windows_os_api.apps.ui_inspector.service import get_tree
 from windows_os_api.apps.adapters.engine import create_adapter, get_adapter
 
-def generate_workflow(intent: str, app_id: str = "contoso-crm", hwnd: int = 1001) -> Workflow:
+def generate_workflow(intent: str, app_id: str, hwnd: int = 1001) -> Workflow:
     tree = get_tree(hwnd)
     adapter = get_adapter(app_id) or create_adapter(app_id, hwnd)
     steps: list[WorkflowStep] = []

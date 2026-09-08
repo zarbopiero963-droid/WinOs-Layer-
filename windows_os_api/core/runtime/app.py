@@ -7,10 +7,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from windows_os_api import __version__
 from windows_os_api.api.rest.router import api_router
+from windows_os_api.apps.adapters.validation import AppIdRejected
 from windows_os_api.api.websocket.bus import router as ws_router
 from windows_os_api.core.runtime.config import Settings, get_settings
 from windows_os_api.core.security.audit import get_audit_logger
@@ -69,6 +70,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         metrics.timing("http.latency_ms", elapsed)
         response.headers["X-WinOs-Version"] = __version__
         return response
+
+    @app.exception_handler(AppIdRejected)
+    async def app_id_rejected(request: Request, exc: AppIdRejected) -> Response:
+        """A blank `app_id` is a bad request, not a server fault.
+
+        Pydantic answers 422 when the field is *missing*; `""` and `"   "` pass
+        its type check and are refused deeper, at `create_adapter`. Without this
+        handler that refusal escaped as an unhandled exception — a 500, which
+        tells the caller the server broke when in fact their request did.
+        Registered once here rather than caught in each route, for the same
+        reason the check itself is not in the routes.
+        """
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
 
     app.include_router(api_router)
     app.include_router(ws_router)

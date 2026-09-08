@@ -44,7 +44,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"goal": {"type": "string"}, "app_id": {"type": "string"}},
-            "required": ["goal"],
+            # `app_id` is required here for the same reason it already was on
+            # create_adapter and invoke_action above: agent_run drives those two.
+            # It was the one tool on this server that let the caller omit it.
+            "required": ["goal", "app_id"],
         },
     },
     {"name": "ui_tree", "description": "Get UI automation tree", "inputSchema": {
@@ -85,7 +88,27 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
     return err(-32601, f"Method not found: {method}")
 
 
+def _require_declared_arguments(name: str, arguments: dict[str, Any]) -> None:
+    """Enforce each tool's own `required` list before dispatching.
+
+    Without this a missing argument surfaced as `KeyError` and reached the
+    client as the message `'app_id'` — a bare quoted key, which says a field is
+    involved but not that it is missing or that it was required. The schema
+    already declares what is required; this reads it rather than repeating it,
+    so a tool cannot declare one contract and enforce another.
+    """
+    schema = next((t["inputSchema"] for t in TOOLS if t["name"] == name), None)
+    if not schema:
+        return
+    missing = [k for k in schema.get("required", []) if k not in arguments]
+    if missing:
+        raise ValueError(
+            f"{name}: missing required argument(s): {', '.join(missing)}"
+        )
+
+
 def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+    _require_declared_arguments(name, arguments)
     if name == "system_info":
         return system.system_info()
     if name == "list_apps":
@@ -100,7 +123,7 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             create_adapter(arguments["app_id"])
         return invoke_action(arguments["app_id"], arguments["action"], arguments.get("params"))
     if name == "agent_run":
-        return ComputerAgent(arguments.get("app_id", "contoso-crm")).run(arguments["goal"])
+        return ComputerAgent(arguments["app_id"]).run(arguments["goal"])
     if name == "ui_tree":
         return get_backend().get_ui_tree(arguments.get("hwnd"))
     raise ValueError(f"Unknown tool: {name}")

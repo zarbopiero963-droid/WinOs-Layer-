@@ -4,7 +4,7 @@ from typing import Any
 from windows_os_api.apps.workflows.generator import generate_workflow
 from windows_os_api.apps.workflows.recorder import to_dict
 
-def plan(goal: str, app_id: str = "contoso-crm") -> dict[str, Any]:
+def plan(goal: str, app_id: str) -> dict[str, Any]:
     wf = generate_workflow(goal, app_id=app_id)
     ai_hint = None
     engine = "deterministic"
