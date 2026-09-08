@@ -14,6 +14,13 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.windows.errors import (
+    FOCUS_NOT_GRANTED,
+    TOOL_UNAVAILABLE,
+    WINDOW_NOT_FOUND,
+    WINDOW_STILL_OPEN,
+    failure,
+)
 from windows_os_api.os.input.validation import (
     InputRejected,
     validate_button,
@@ -196,19 +203,42 @@ class FakeBackend:
     def get_window(self, hwnd: int) -> dict[str, Any] | None:
         return self._windows.get(hwnd)
 
+    def active_window(self) -> int | None:
+        for hwnd, win in self._windows.items():
+            if win.get("focused"):
+                return hwnd
+        return None
+
     def focus_window(self, hwnd: int) -> dict[str, Any]:
+        # The fake already refused an unknown window, but with a bare
+        # `{"ok": False, "error": "not found"}` — no code, and a different
+        # message from the real backends. A test written against it would learn
+        # the wrong contract, so it now answers exactly as they do.
         if hwnd not in self._windows:
-            return {"ok": False, "error": "not found"}
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
         for w in self._windows.values():
             w["focused"] = False
         self._windows[hwnd]["focused"] = True
-        return {"ok": True, "hwnd": hwnd}
+        return {"ok": True, "hwnd": hwnd, "active_window": hwnd, "verified": True}
 
-    def close_window(self, hwnd: int) -> dict[str, Any]:
+    def close_window(self, hwnd: int, timeout: float = 5.0) -> dict[str, Any]:
         if hwnd not in self._windows:
-            return {"ok": False, "error": "not found"}
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
+        # A window may refuse to close — an unsaved document is the everyday
+        # case. The fake models one so that branch is reachable deterministically:
+        # nothing available here ignores WM_DELETE_WINDOW (xterm and even xev
+        # both close), so without this the WINDOW_STILL_OPEN path could not be
+        # exercised against a backend at all.
+        if self._windows[hwnd].get("refuses_close"):
+            return failure(
+                WINDOW_STILL_OPEN,
+                f"window {hwnd} was asked to close and is still open after "
+                f"{timeout:g}s — an unsaved document or a confirmation dialog "
+                "will do this",
+                hwnd=hwnd, closed=False, verified=True,
+            )
         del self._windows[hwnd]
-        return {"ok": True, "hwnd": hwnd}
+        return {"ok": True, "hwnd": hwnd, "closed": True, "verified": True}
 
     # --- Window geometry / state ---
     #

@@ -29,6 +29,13 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.windows.errors import (
+    FOCUS_NOT_GRANTED,
+    TOOL_UNAVAILABLE,
+    WINDOW_NOT_FOUND,
+    WINDOW_STILL_OPEN,
+    failure,
+)
 from windows_os_api.os.input.validation import (
     InputRejected,
     validate_button,
@@ -487,22 +494,98 @@ class WindowsBackend:
         wins = {w["hwnd"]: w for w in self.list_windows()}
         return wins.get(hwnd)
 
-    def focus_window(self, hwnd: int) -> dict[str, Any]:
+    def active_window(self) -> int | None:
+        """Which window holds the foreground, or None if that cannot be read."""
         if not self._win32gui:
-            return {"ok": False, "error": "win32gui unavailable"}
+            return None
+        try:
+            hwnd = int(self._win32gui.GetForegroundWindow())
+        except Exception:  # noqa: BLE001
+            return None
+        return hwnd or None
+
+    def focus_window(self, hwnd: int) -> dict[str, Any]:
+        """Give a window the foreground, and CHECK that it got it.
+
+        `SetForegroundWindow` is one of the calls Windows is entitled to refuse:
+        a process that does not own the foreground cannot simply take it, and
+        the documented behaviour is to flash the taskbar button instead. It
+        raises on some failures and returns quietly on others, so neither
+        "it did not raise" nor its return value is enough — `GetForegroundWindow`
+        is.
+        """
+        if not self._win32gui:
+            return failure(TOOL_UNAVAILABLE, "win32gui unavailable", hwnd=hwnd)
+        if self.window_geometry(hwnd) is None:
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
+
+        detail = ""
         try:
             self._win32gui.SetForegroundWindow(hwnd)
-            return {"ok": True, "hwnd": hwnd}
         except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
+            # Not returned yet: Windows may have granted the foreground anyway,
+            # and the readback below is what decides.
+            detail = str(e)
 
-    def close_window(self, hwnd: int) -> dict[str, Any]:
+        active = self.active_window()
+        if active is None:
+            return failure(
+                FOCUS_NOT_GRANTED,
+                "could not read which window holds the foreground"
+                + (f": {detail}" if detail else ""),
+                hwnd=hwnd, verified=False,
+            )
+        if active != hwnd:
+            return failure(
+                FOCUS_NOT_GRANTED,
+                f"window {active} holds the foreground, not {hwnd}"
+                + (f" ({detail})" if detail else ""),
+                hwnd=hwnd, active_window=active, verified=True,
+            )
+        return {"ok": True, "hwnd": hwnd, "active_window": active, "verified": True}
+
+    def close_window(self, hwnd: int, timeout: float = 5.0) -> dict[str, Any]:
+        """Ask a window to close, and WAIT to see whether it did.
+
+        `PostMessage` is **asynchronous**: it returns as soon as the message is
+        queued, which is why the previous version's `{"ok": True}` meant no more
+        than "the message was posted". An application with an unsaved document
+        puts up "save changes?" and stays open, and the old answer said it had
+        closed.
+
+        So the message is posted and then `IsWindow` is polled until the handle
+        stops naming a window. WINDOW_STILL_OPEN is the honest answer when it
+        does not — the request was delivered and refused, which is a different
+        outcome from both success and failure.
+
+        Note it closes a WINDOW, not an application: a program with other
+        windows open goes on running.
+        """
         if not self._win32gui:
-            return {"ok": False, "error": "win32gui unavailable"}
-        import win32con  # type: ignore
+            return failure(TOOL_UNAVAILABLE, "win32gui unavailable", hwnd=hwnd)
+        if self.window_geometry(hwnd) is None:
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
 
-        self._win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-        return {"ok": True, "hwnd": hwnd}
+        try:
+            import win32con  # type: ignore
+
+            self._win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        except Exception as e:  # noqa: BLE001
+            return failure(TOOL_UNAVAILABLE, f"could not post WM_CLOSE: {e}", hwnd=hwnd)
+
+        deadline = time.time() + max(timeout, 0.1)
+        while time.time() < deadline:
+            if self.window_geometry(hwnd) is None:
+                return {"ok": True, "hwnd": hwnd, "closed": True, "verified": True}
+            time.sleep(0.05)
+
+        return failure(
+            WINDOW_STILL_OPEN,
+            f"window {hwnd} was asked to close and is still open after "
+            f"{timeout:g}s — an unsaved document or a confirmation dialog will "
+            "do this",
+            hwnd=hwnd, closed=False, verified=True,
+        )
 
     # ------------------------------------------------------------------
     # Window geometry / state

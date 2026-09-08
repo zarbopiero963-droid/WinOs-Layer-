@@ -31,6 +31,13 @@ from windows_os_api.os.windows.geometry import (
     validate_position,
     validate_size,
 )
+from windows_os_api.os.windows.errors import (
+    FOCUS_NOT_GRANTED,
+    TOOL_UNAVAILABLE,
+    WINDOW_NOT_FOUND,
+    WINDOW_STILL_OPEN,
+    failure,
+)
 from windows_os_api.os.input.validation import (
     MOUSE_BUTTONS,
     SCROLL_BUTTONS,
@@ -542,59 +549,96 @@ class LinuxBackend:
         wins = {w["hwnd"]: w for w in self.list_windows()}
         return wins.get(hwnd)
 
-    def focus_window(self, hwnd: int) -> dict[str, Any]:
-        if shutil.which("wmctrl"):
-            try:
-                subprocess.run(  # noqa: S603
-                    ["wmctrl", "-i", "-a", hex(hwnd)],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=_display_env(),
-                )
-                return {"ok": True, "hwnd": hwnd}
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": str(e)}
-        if shutil.which("xdotool"):
-            try:
-                subprocess.run(  # noqa: S603
-                    ["xdotool", "windowactivate", str(hwnd)],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=_display_env(),
-                )
-                return {"ok": True, "hwnd": hwnd}
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": str(e)}
-        return {"ok": False, "error": "wmctrl/xdotool not installed", "windows_ui": False}
+    def active_window(self) -> int | None:
+        """Which window currently holds the focus, or None if that cannot be read."""
+        ok, out = self._xdotool(["getactivewindow"], timeout=5)
+        if not ok:
+            return None
+        try:
+            return int((out or "").strip())
+        except ValueError:
+            return None
 
-    def close_window(self, hwnd: int) -> dict[str, Any]:
-        if shutil.which("wmctrl"):
-            try:
-                subprocess.run(  # noqa: S603
-                    ["wmctrl", "-i", "-c", hex(hwnd)],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=_display_env(),
-                )
-                return {"ok": True, "hwnd": hwnd}
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": str(e)}
-        if shutil.which("xdotool"):
-            try:
-                subprocess.run(  # noqa: S603
-                    ["xdotool", "windowclose", str(hwnd)],
-                    capture_output=True,
-                    timeout=5,
-                    check=False,
-                    env=_display_env(),
-                )
-                return {"ok": True, "hwnd": hwnd}
-            except Exception as e:  # noqa: BLE001
-                return {"ok": False, "error": str(e)}
-        return {"ok": False, "error": "wmctrl/xdotool not installed", "windows_ui": False}
+    def focus_window(self, hwnd: int) -> dict[str, Any]:
+        """Give a window the focus, and CHECK that it got it.
+
+        The previous version ran the tool with `check=False` and returned
+        `{"ok": True}` whatever happened — including for a window that did not
+        exist. Focus is readable (`xdotool getactivewindow`), so there is no
+        reason to assume it: `ok` here means the window holds the focus now, on
+        the same terms as the geometry operations in #18.
+        """
+        if not shutil.which("xdotool") and not shutil.which("wmctrl"):
+            return failure(TOOL_UNAVAILABLE, "wmctrl/xdotool not installed",
+                           hwnd=hwnd, windows_ui=False)
+        if self.window_geometry(hwnd) is None:
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
+
+        ran, detail = self._xdotool(["windowactivate", "--sync", str(hwnd)], timeout=10)
+        if not ran and shutil.which("wmctrl"):
+            self._x_tool(["wmctrl", "-i", "-a", str(hwnd)])
+
+        active = self.active_window()
+        if active is None:
+            # "Not verified" is not the same as failed — and it is certainly not
+            # success, which is what this used to report.
+            return failure(
+                FOCUS_NOT_GRANTED,
+                "could not read which window holds the focus"
+                + (f": {detail}" if detail else ""),
+                hwnd=hwnd, verified=False,
+            )
+        if active != hwnd:
+            # A window manager may refuse focus — focus-stealing prevention is a
+            # feature, not a fault. But reporting success would leave a caller
+            # typing into whatever window actually has it.
+            return failure(
+                FOCUS_NOT_GRANTED,
+                f"window {active} holds the focus, not {hwnd}",
+                hwnd=hwnd, active_window=active, verified=True,
+            )
+        return {"ok": True, "hwnd": hwnd, "active_window": active, "verified": True}
+
+    def close_window(self, hwnd: int, timeout: float = 5.0) -> dict[str, Any]:
+        """Ask a window to close, and WAIT to see whether it did.
+
+        Closing is a request, not a command: `wmctrl -i -c` and
+        `xdotool windowclose` both send WM_DELETE_WINDOW, and an application
+        with an unsaved document is entitled to put up "save changes?" and stay
+        open. So this polls until the window is actually gone and reports
+        WINDOW_STILL_OPEN when it is not.
+
+        The exit code cannot stand in for that. Measured against a window whose
+        process had already been killed: `xdotool windowclose` exits 1 and
+        `wmctrl -i -c` exits **0** — the same lie as `wmctrl -b
+        add,maximized_vert` in #18.
+
+        Note it closes a WINDOW, not an application: a program with other
+        windows open goes on running.
+        """
+        if not shutil.which("xdotool") and not shutil.which("wmctrl"):
+            return failure(TOOL_UNAVAILABLE, "wmctrl/xdotool not installed",
+                           hwnd=hwnd, windows_ui=False)
+        if self.window_geometry(hwnd) is None:
+            return failure(WINDOW_NOT_FOUND, f"window {hwnd} not found", hwnd=hwnd)
+
+        ran, detail = self._xdotool(["windowclose", str(hwnd)], timeout=5)
+        if not ran and shutil.which("wmctrl"):
+            self._x_tool(["wmctrl", "-i", "-c", str(hwnd)])
+
+        deadline = time.time() + max(timeout, 0.1)
+        while time.time() < deadline:
+            if self.window_geometry(hwnd) is None:
+                return {"ok": True, "hwnd": hwnd, "closed": True, "verified": True}
+            time.sleep(0.05)
+
+        return failure(
+            WINDOW_STILL_OPEN,
+            f"window {hwnd} was asked to close and is still open after "
+            f"{timeout:g}s — an unsaved document or a confirmation dialog will "
+            "do this" + (f" ({detail})" if detail else ""),
+            hwnd=hwnd, closed=False, verified=True,
+        )
 
     # ------------------------------------------------------------------
     # Window geometry / state
