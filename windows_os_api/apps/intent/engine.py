@@ -17,7 +17,7 @@ def parse_intent(text: str) -> dict[str, Any]:
             return {"intent": name, "raw": text, "confidence": 0.88}
     return {"intent": "unknown", "raw": text, "confidence": 0.3}
 
-def execute_intent(text: str, app_id: str = "contoso-crm") -> dict[str, Any]:
+def execute_intent(text: str, app_id: str) -> dict[str, Any]:
     parsed = parse_intent(text)
     planned = plan(text, app_id=app_id)
     return {"parsed": parsed, "plan": planned}

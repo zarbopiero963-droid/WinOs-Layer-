@@ -220,6 +220,36 @@ livello AI costa l'accuratezza del report, mai la sicurezza.
 > rischio medio. E' una proprieta' del generator, non del gate. La soglia non e'
 > stata abbassata per «far succedere» l'esecuzione.
 
+### `app_id` si dice sempre — non ha piu' un default
+
+`app_id` risponde alla domanda «su QUALE applicazione»: nessuna azione di questo
+livello ha senso senza. Aveva come default `"contoso-crm"` — il CRM demo del
+backend fake — su sette punti di ingresso, fra cui i body REST, il tool MCP
+`agent_run` e `ComputerAgent`. Chi non diceva su quale app agire non riceveva un
+errore: riceveva la app demo, e la richiesta **andava a buon fine** contro quella.
+Sul backend fake e' una risposta sbagliata; puntato a un desktop vero e' una
+richiesta applicata a qualunque applicazione risponda a quel nome.
+
+Ora il campo e' obbligatorio ovunque:
+
+| Superficie | Se manca | Se e' vuoto (`""` / `"   "`) |
+|---|---|---|
+| REST (`/v1/intent`, `/v1/agent/run`, `/v1/workflows/generate`, `/v1/plan`, `/v1/workflows/record/start`) | `422`, con `app_id` nominato | `422` |
+| MCP `agent_run` | errore JSON-RPC `missing required argument(s): app_id` | `422`-equivalente: `AppIdRejected` |
+| `ComputerAgent(app_id)`, `execute_intent`, `plan`, `generate_workflow`, `discover_actions` | `TypeError` (parametro obbligatorio) | `AppIdRejected` |
+
+Le due meta' servono a cose diverse e servono entrambe: *obbligatorio* copre la
+chiave assente, *non vuoto* copre `""` — lo stesso errore scritto in un altro
+modo, che un parametro obbligatorio da solo lascerebbe passare. Il controllo del
+vuoto sta in `apps/adapters/validation.py` ed e' applicato in `create_adapter`,
+il punto che **agisce**, non nelle route: un controllo che il chiamante puo'
+dimenticare non e' un controllo — stessa ragione per cui l'enforcement del
+sandbox sta dentro `invoke_action`.
+
+`backends/fake.py` continua a nominare `contoso-crm`: e' la fixture che
+*definisce* quella app demo. Un test fallisce se il nome ricompare come default
+in un qualunque altro modulo di produzione.
+
 ## Finestre — focus e chiusura: `ok` significa «e' successo davvero»
 
 `POST /v1/windows/{hwnd}/focus` e `DELETE /v1/windows/{hwnd}`.

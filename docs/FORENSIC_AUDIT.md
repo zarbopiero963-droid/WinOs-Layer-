@@ -659,3 +659,31 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `tests/security/test_security_hard.py` (path traversal / shell still blocked)
 - **How to run:** `pytest -q -m "not windows"`
 - **Honest limits:** Wayland compositor variance; OCR accuracy without tesseract; privilege never silent root.
+
+
+## `app_id` obbligatorio ed esplicito su ogni superficie (issue #6)
+- **Status:** DONE
+- **Problema:** `app_id` — «su quale applicazione» — aveva default `"contoso-crm"`
+  (il CRM demo del backend fake) su sette punti di ingresso di produzione, tre
+  dei quali superfici pubbliche: i body REST, il tool MCP `agent_run` e
+  `ComputerAgent`. Una richiesta che non nominava l'applicazione non riceveva un
+  errore: riceveva la app demo, e andava a buon fine contro quella.
+- **Files:**
+  - `windows_os_api/apps/adapters/validation.py` (nuovo: `validate_app_id`, `AppIdRejected`)
+  - `windows_os_api/apps/adapters/engine.py` (validazione in `create_adapter`, il punto che agisce)
+  - `windows_os_api/apps/agent/computer.py` (default rimosso)
+  - `windows_os_api/api/rest/workflows.py` (`app_id` obbligatorio su `RecordStart`, `IntentBody`, `AgentBody`)
+  - `windows_os_api/api/mcp/server.py` (`agent_run` richiede `app_id`; `required` del singolo tool ora applicato davvero)
+  - `windows_os_api/core/runtime/app.py` (`AppIdRejected` → 422, non 500)
+  - `windows_os_api/apps/intent/engine.py`, `apps/planner/service.py`,
+    `apps/workflows/generator.py`, `apps/automation/actions.py` (default rimossi)
+- **Tests:**
+  - `tests/unit/test_app_id_required_contract.py`
+  - `tests/integration/test_api_adapter_automation.py`
+- **How to run:** `pytest -q -m "not linux and not windows"`
+- **BLOCK verificato:** ripristinando il default in `ComputerAgent` → 2 rossi;
+  nel tool MCP → 3 rossi; nei body REST → 1 rosso; togliendo il controllo del
+  vuoto da `validate_app_id` → 8 rossi.
+- **Honest limits:** `backends/fake.py` continua a nominare `contoso-crm` — e' la
+  fixture che definisce quella app demo, non un default. Il test che vieta il
+  nome copre i moduli di produzione, non le fixture.

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from windows_os_api.apps.ui_inspector.service import find_by_automation_id, get_tree
 from windows_os_api.apps.sandbox.permissions import check_action
+from windows_os_api.apps.adapters.validation import validate_app_id
 from windows_os_api.backends.factory import get_backend
 
 @dataclass
@@ -63,6 +64,10 @@ def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     return actions
 
 def create_adapter(app_id: str, hwnd: int = 1001, trust_level: str = "unsigned") -> Adapter:
+    # Validated here rather than in each caller: this is the point that binds a
+    # name to a running application, and an adapter registered under "" is one
+    # nothing can look up again.
+    app_id = validate_app_id(app_id)
     tree = get_tree(hwnd)
     actions = _default_actions_from_tree(tree)
     adapter = Adapter(

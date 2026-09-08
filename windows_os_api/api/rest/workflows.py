@@ -14,9 +14,14 @@ from windows_os_api.apps.planner.service import plan
 
 router = APIRouter(tags=["automation"])
 
+# `app_id` carries no default on any of these bodies. It used to default to
+# "contoso-crm" — the fake backend's demo CRM — so a request that never named an
+# application was accepted and applied to that one. Required here means FastAPI
+# answers 422 and names the missing field, which is the honest reply to "do this"
+# without "to what".
 class RecordStart(BaseModel):
     name: str
-    app_id: str = "contoso-crm"
+    app_id: str
 
 class RecordStep(BaseModel):
     action: str
@@ -24,11 +29,11 @@ class RecordStep(BaseModel):
 
 class IntentBody(BaseModel):
     text: str
-    app_id: str = "contoso-crm"
+    app_id: str
 
 class AgentBody(BaseModel):
     goal: str
-    app_id: str = "contoso-crm"
+    app_id: str
 
 class HealBody(BaseModel):
     hwnd: int = 1001

@@ -323,11 +323,13 @@
     "status": "DONE",
     "title": "Universal Adapter engine",
     "files": [
-      "windows_os_api/apps/adapters/engine.py"
+      "windows_os_api/apps/adapters/engine.py",
+      "windows_os_api/apps/adapters/validation.py"
     ],
     "tests": [
       "tests/unit/test_adapter_engine.py",
-      "tests/integration/test_api_adapter_automation.py"
+      "tests/integration/test_api_adapter_automation.py",
+      "tests/unit/test_app_id_required_contract.py"
     ],
     "remaining": null
   },
@@ -494,7 +496,8 @@
     "tests": [
       "tests/unit/test_agent_execution_gate.py",
       "tests/unit/test_workflows_agent.py",
-      "tests/e2e/test_universal_adapter_e2e.py"
+      "tests/e2e/test_universal_adapter_e2e.py",
+      "tests/unit/test_app_id_required_contract.py"
     ],
     "remaining": null
   },
@@ -506,7 +509,8 @@
       "windows_os_api/api/mcp/server.py"
     ],
     "tests": [
-      "tests/unit/test_mcp.py"
+      "tests/unit/test_mcp.py",
+      "tests/unit/test_app_id_required_contract.py"
     ],
     "remaining": null
   },
