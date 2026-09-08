@@ -422,6 +422,61 @@ range si rifiuta, non si clampa.
 > rilegge la posizione e lo dice. Se stai automatizzando sotto Xvfb, fai girare
 > un WM (es. `openbox`), o nessun input del mouse arrivera' da nessuna parte.
 
+## Inventario di sistema — servizi, volumi, stampanti
+
+`GET /v1/services`, `GET /v1/devices` e `GET /v1/printers` leggono il sistema
+vero su entrambe le piattaforme. Prima su Windows erano stub, e il primo dei tre
+era il peggiore:
+
+```python
+def list_services(self):  return [{"name": "WinOsApi", "status": "unknown", ...}]
+def list_printers(self):  return []
+def list_devices(self):   return []
+```
+
+`WinOsApi` **non esiste**. Una lista vuota e' poco informativa; una riga
+inventata e' una risposta su cui il chiamante agisce e sbaglia. Ora:
+
+| Endpoint | Windows | Linux |
+|---|---|---|
+| `/v1/services` | Service Control Manager (`OpenSCManager` + `EnumServicesStatus`) | `systemctl` (user + system) |
+| `/v1/devices` | volumi via `GetLogicalDriveStrings` + `GetDriveType` | `/sys/block` |
+| `/v1/printers` | spooler via `EnumPrinters` + `GetDefaultPrinter` | `lpstat -a` |
+
+L'enumerazione dei servizi richiede solo `SC_MANAGER_ENUMERATE_SERVICE`, che un
+utente normale ha: nessun servizio viene aperto, avviato o fermato.
+
+**`list_devices` significa dispositivi a blocchi, su tutti e due gli OS.** Su
+Windows sono i volumi, non i dispositivi PnP: far significare allo stesso
+endpoint «dischi» su un OS e «tutto cio' che ha un driver» sull'altro sarebbe un
+difetto peggiore della lista vuota che sostituisce, perche' nessun client
+potrebbe essere scritto una volta sola. Entrambi marcano `type: "block"`.
+
+Gli stati dei servizi condividono un vocabolario (`running`, `stopped`,
+`starting`, ...): il SCM parla in numeri, systemd in parole, e la tabella di
+traduzione esiste perche' il chiamante non debba conoscerne nessuna delle due.
+Un codice non mappato resta `state_<n>` invece di diventare `unknown` — un
+numero si puo' cercare nella documentazione, la parola «unknown» no.
+
+### `status` dice solo cio' che e' stato misurato
+
+Su Linux ogni riga di `/v1/devices` usciva con `"status": "ok"`: un giudizio di
+salute che nulla aveva controllato. Una voce in `/sys/block` sostiene una sola
+affermazione — che il dispositivo e' presente — e quella e' cio' che la riga
+dice adesso (`"status": "present"`). `media` viene letto da `removable`, un file
+che il kernel mantiene davvero, e vale `"unknown"` se non si riesce a leggerlo:
+dedurre `"fixed"` da un errore di lettura sarebbe inventare.
+
+E' la stessa classe di difetto di `ok: true` su una finestra inesistente e di
+`state: null` presentato come `verified: true`. Un campo che dice sempre la
+stessa cosa non e' un'informazione: e' rumore che sembra un'informazione.
+
+> **Limite dichiarato.** «Zero elementi» e «non ho guardato» restano ancora
+> indistinguibili nella risposta: entrambi sono `200` con lista vuota. E' una
+> decisione di contratto aperta con l'owner (issue #6, domanda D3) e non e'
+> stata presa qui. L'audio su Windows resta non implementato per lo stesso
+> motivo — richiederebbe `pycaw`, cioe' una dipendenza nuova (domanda D4).
+
 ## Terminal — allowlist, non denylist
 
 `POST /v1/terminal/execute` esegue **solo comandi registrati**, come argv e con

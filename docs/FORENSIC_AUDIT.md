@@ -687,3 +687,32 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Honest limits:** `backends/fake.py` continua a nominare `contoso-crm` — e' la
   fixture che definisce quella app demo, non un default. Il test che vieta il
   nome copre i moduli di produzione, non le fixture.
+
+
+## Inventario di sistema reale su Windows — servizi, volumi, stampanti (Gate 3, meta' in lettura)
+- **Status:** DONE
+- **Problema:** su `WindowsBackend` i tre metodi di sola lettura erano stub.
+  `list_services` restituiva `[{"name": "WinOsApi", "status": "unknown", ...}]` —
+  un servizio che **non esiste**: una lista vuota e' poco informativa, una riga
+  inventata e' una risposta su cui il chiamante agisce e sbaglia.
+  `list_printers` e `list_devices` restituivano `[]`. Su Linux, difetto gemello
+  piu' lieve: `list_devices` marcava ogni riga `"status": "ok"`, giudizio di
+  salute mai verificato.
+- **Files:**
+  - `windows_os_api/backends/windows.py` (`EnumServicesStatus`, `EnumPrinters`,
+    `GetLogicalDriveStrings`/`GetDriveType`; capability `services` e `printers`)
+  - `windows_os_api/backends/linux.py` (`status: present` misurato, `media` da `removable`)
+- **Tests:**
+  - `tests/windows/test_system_inventory_windows.py` (14, su Windows reale in CI)
+  - `tests/linux/test_system_inventory_linux.py` (5, contro `/sys/block` vero)
+  - `tests/unit/test_system_inventory_contract.py` (11, cross-platform)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** rimettendo `"status": "ok"` su Linux → 4 rossi;
+  rimettendo lo stub inventato su Windows → 3 rossi. Il guardiano e' basato su
+  AST e distingue la stringa dentro una docstring da quella dentro un `return`,
+  verificato da un test dedicato (`test_the_guard_would_actually_catch_a_reintroduced_row`).
+- **Honest limits:** i 14 test Windows girano solo su `windows-latest` in CI, non
+  in locale (macchina Linux). «Zero elementi» e «non ho guardato» restano
+  indistinguibili nella risposta: decisione owner D3 aperta nella issue #6.
+  Audio Windows non implementato — richiede `pycaw` (decisione owner D4).
+  `control_service` NON toccato: dipende dalla decisione owner D1.

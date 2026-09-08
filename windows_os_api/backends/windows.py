@@ -271,6 +271,24 @@ class WindowsBackend:
             self._winreg = winreg
         except ImportError:
             pass
+        # Services and printers come from separate pywin32 modules. Imported
+        # apart from the block above so that one missing module does not take
+        # the others down with it — they are independent capabilities and the
+        # capability probe reports them independently.
+        self._win32service = None
+        self._win32print = None
+        try:
+            import win32service  # type: ignore
+
+            self._win32service = win32service
+        except ImportError:
+            pass
+        try:
+            import win32print  # type: ignore
+
+            self._win32print = win32print
+        except ImportError:
+            pass
         self._caps = self._probe_capabilities()
 
     def _probe_capabilities(self) -> dict[str, bool]:
@@ -306,6 +324,8 @@ class WindowsBackend:
             "screenshot": has_mss or has_pil or self._win32api is not None,
             "sendinput": True,  # ctypes user32 always present on win32
             "registry": self._winreg is not None,
+            "services": self._win32service is not None,
+            "printers": self._win32print is not None,
             "atspi": False,
         }
 
@@ -1570,8 +1590,69 @@ class WindowsBackend:
             "output": r.stdout[:4000],
         }
 
+    # Service states, as the Service Control Manager reports them. Mapped to the
+    # same vocabulary LinuxBackend uses for systemd, so one caller can read both.
+    _SERVICE_STATES = {
+        1: "stopped",
+        2: "starting",
+        3: "stopping",
+        4: "running",
+        5: "continuing",
+        6: "pausing",
+        7: "paused",
+    }
+
     def list_services(self) -> list[dict[str, Any]]:
-        return [{"name": "WinOsApi", "status": "unknown", "note": "use pywin32 service APIs"}]
+        """Enumerate real Windows services via the Service Control Manager.
+
+        This used to return a single hardcoded entry:
+
+            [{"name": "WinOsApi", "status": "unknown", "note": "use pywin32..."}]
+
+        That service does not exist. A fabricated row is worse than an empty
+        list — an empty list is merely uninformative, while a made-up one is an
+        answer a caller can act on and be wrong. It is gone.
+
+        Enumeration needs only `SC_MANAGER_ENUMERATE_SERVICE`, which an
+        unprivileged user has; nothing here starts, stops or opens a service.
+        """
+        if not self._win32service:
+            return []
+        svc = self._win32service
+        handle = None
+        try:
+            handle = svc.OpenSCManager(None, None, svc.SC_MANAGER_ENUMERATE_SERVICE)
+            rows = svc.EnumServicesStatus(
+                handle, svc.SERVICE_WIN32, svc.SERVICE_STATE_ALL
+            )
+        except Exception:  # noqa: BLE001
+            # Reported as "none enumerated", not as an invented row. Telling
+            # "none" from "could not look" is issue #6 D3 and is deliberately
+            # not decided here.
+            return []
+        finally:
+            if handle is not None:
+                try:
+                    svc.CloseServiceHandle(handle)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                short_name, display_name, status = row[0], row[1], row[2]
+                state_code = int(status[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            out.append({
+                "name": short_name,
+                "display_name": display_name,
+                # Unknown codes keep their number rather than becoming
+                # "unknown": a caller can look up 9 where it cannot look up a word.
+                "status": self._SERVICE_STATES.get(state_code, f"state_{state_code}"),
+                "scope": "system",
+            })
+        return out
 
     def control_service(self, name: str, action: str) -> dict[str, Any]:
         return {"ok": False, "error": "service control requires elevated pywin32", "name": name, "action": action}
@@ -1583,10 +1664,91 @@ class WindowsBackend:
         return {"volume": None, "muted": None}
 
     def list_devices(self) -> list[dict[str, Any]]:
-        return []
+        """Storage volumes, in the same shape LinuxBackend reports for `/sys/block`.
+
+        Deliberately NOT every PnP device. `list_devices` on Linux means block
+        devices, and having one endpoint mean "disks" on one platform and
+        "everything with a driver" on the other would be a worse defect than
+        the empty list this replaces: the caller could not write one piece of
+        code against it.
+
+        `status` is measured, not asserted — `GetDriveType` says what kind of
+        volume it is, and a drive letter that no longer resolves is reported as
+        such rather than as "ok".
+        """
+        if not self._win32api:
+            return []
+        try:
+            raw = self._win32api.GetLogicalDriveStrings()
+        except Exception:  # noqa: BLE001
+            return []
+
+        kinds = {
+            0: "unknown",
+            1: "no_root_dir",
+            2: "removable",
+            3: "fixed",
+            4: "remote",
+            5: "cdrom",
+            6: "ramdisk",
+        }
+        out: list[dict[str, Any]] = []
+        for root in [d for d in raw.split("\x00") if d]:
+            try:
+                code = int(self._win32api.GetDriveType(root))
+            except Exception:  # noqa: BLE001
+                code = 0
+            out.append({
+                "id": root.rstrip("\\"),
+                "name": root.rstrip("\\"),
+                "type": "block",
+                "media": kinds.get(code, f"type_{code}"),
+                # "present" is the claim the enumeration actually supports: the
+                # volume is mounted. It is not a health check, and does not
+                # pretend to be one.
+                "status": "no_root_dir" if code == 1 else "present",
+            })
+        return out
 
     def list_printers(self) -> list[dict[str, Any]]:
-        return []
+        """Real printers via the spooler, local and connected.
+
+        `GetDefaultPrinter` raises when no default is set — which is a normal
+        state on a machine with no printers, not an error, so it is caught and
+        turned into "no printer is default" rather than into no answer at all.
+        """
+        if not self._win32print:
+            return []
+        wp = self._win32print
+        try:
+            level = 2
+            flags = wp.PRINTER_ENUM_LOCAL | wp.PRINTER_ENUM_CONNECTIONS
+            rows = wp.EnumPrinters(flags, None, level)
+        except Exception:  # noqa: BLE001
+            return []
+
+        try:
+            default = wp.GetDefaultPrinter()
+        except Exception:  # noqa: BLE001
+            default = ""
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            info = row if isinstance(row, dict) else {}
+            name = info.get("pPrinterName") or ""
+            if not name:
+                continue
+            out.append({
+                "name": name,
+                "port": info.get("pPortName") or "",
+                "driver": info.get("pDriverName") or "",
+                # The spooler's status word is a bitmask; 0 means "no problem
+                # reported", which is what "idle" means here and nothing more.
+                "status": "idle" if not info.get("Status") else f"status_{info.get('Status')}",
+                "jobs": int(info.get("cJobs") or 0),
+                "default": name == default,
+            })
+        return out
 
     def list_users(self) -> list[dict[str, Any]]:
         import os
