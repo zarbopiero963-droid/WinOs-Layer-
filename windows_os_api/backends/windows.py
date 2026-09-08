@@ -410,7 +410,31 @@ class WindowsBackend:
         return {"uptime_seconds": time.time() - self._start, "boot_time": self._start}
 
     def power_action(self, action: str) -> dict[str, Any]:
-        return {"ok": False, "error": "power actions require interactive elevation", "action": action}
+        """Rifiuto strutturato, come gia' fa LinuxBackend.
+
+        Rispondeva `{"ok": False, "error": "power actions require interactive
+        elevation"}` — incondizionato, e senza `denied` ne' `code`. Due problemi:
+
+        1. **Un chiamante non poteva distinguerlo da un guasto.** Senza
+           `denied: True` e un `code`, un rifiuto di policy ha la stessa forma
+           di una chiamata andata storta, e chi legge non sa se riprovare.
+        2. **I due backend rispondevano in modi diversi alla stessa domanda.**
+           Su Linux la stessa funzione usa gia' `deny_structured` con
+           `code="hardware_protected"`; qui no. Un client scritto contro Linux
+           non riconosceva il rifiuto su Windows.
+
+        Questo NON implementa shutdown/reboot: e' una superficie privilegiata
+        reale e la sua aggiunta e' una decisione dell'owner, non un dettaglio da
+        far passare mentre si sistema un messaggio. Qui cambia solo la FORMA del
+        rifiuto.
+        """
+        from windows_os_api.core.security.privilege import deny_structured
+
+        return deny_structured(
+            "power actions require interactive elevation and ADMIN + WINOS_ALLOW_PRIVILEGED",
+            code="hardware_protected",
+            detail={"action": action},
+        )
 
     # ------------------------------------------------------------------
     # Processes
@@ -1724,6 +1748,15 @@ class WindowsBackend:
         }
 
     def audio_devices(self) -> list[dict[str, Any]]:
+        """Non implementato su questo backend (decisione owner D4-B).
+
+        Restituisce una lista vuota perche' la firma e' `list[...]`, ma via API
+        questo metodo NON viene mai raggiunto: il flag `audio: False` e
+        `NOT_IMPLEMENTED` fanno rispondere `CAPABILITY_NOT_SUPPORTED` prima
+        (#28). La lista vuota resta una trappola solo per chi chiami il backend
+        direttamente, e questa docstring e' l'avviso — implementarlo
+        richiederebbe `pycaw`, che l'owner ha deciso di non aggiungere ora.
+        """
         return []
 
     def audio_volume(self) -> dict[str, Any]:

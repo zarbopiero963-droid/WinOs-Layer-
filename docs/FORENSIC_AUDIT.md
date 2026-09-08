@@ -897,3 +897,33 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   `power_action` su Windows resta un rifiuto incondizionato non strutturato (P2
   della ricognizione, non toccato qui). `GET /v1/registry` e issue #50 restano
   decisioni owner.
+
+
+## power_action: rifiuto strutturato e simmetrico fra i due OS (ricognizione stub P2/P3)
+- **Status:** DONE
+- **Problema:** su Windows `power_action` rispondeva
+  `{"ok": False, "error": "power actions require interactive elevation"}` —
+  incondizionato e SENZA `denied` ne' `code`. Due difetti distinti:
+  (1) un rifiuto di policy aveva la stessa forma di un guasto, quindi il
+  chiamante non sapeva se riprovare o chiedere un permesso;
+  (2) su Linux la stessa funzione usava gia' `deny_structured` con
+  `code="hardware_protected"` — un client scritto contro Linux non riconosceva
+  il rifiuto su Windows, difetto che si manifesta solo cambiando OS.
+- **Files:**
+  - `windows_os_api/backends/windows.py` (`power_action` con `deny_structured`;
+    `audio_devices` documentato — P3)
+- **Tests:**
+  - `tests/security/test_power_action_denial.py` (10)
+  - `tests/windows/test_system_inventory_windows.py` (1 nuovo su Windows reale)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** ritorno del rifiuto piatto -> 2 rossi.
+- **NON implementa shutdown/reboot.** E' una superficie privilegiata reale e la
+  sua aggiunta e' una decisione dell'owner. Due test lo sorvegliano: uno
+  sull'AST (nessun `InitiateSystemShutdown`/`ExitWindowsEx`/`subprocess`), uno
+  che verifica l'assenza di rami condizionali — un `if action == "sleep"` che
+  passasse sarebbe una superficie aggiunta di soppiatto. Sul Windows reale il
+  test gira su un runner ELEVATO: se `power_action` tentasse davvero
+  l'operazione spegnerebbe la macchina invece di fallire.
+- **Honest limits:** il test Windows gira solo su `windows-latest` in CI.
+  `audio_devices` (P3) resta `[]` — irraggiungibile via API grazie a D4-B, e la
+  docstring e' l'avviso per chi chiami il backend direttamente.
