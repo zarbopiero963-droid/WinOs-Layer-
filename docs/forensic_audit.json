@@ -232,13 +232,19 @@
       "windows_os_api/os/services/service.py",
       "windows_os_api/api/rest/services.py",
       "windows_os_api/backends/windows.py",
-      "windows_os_api/backends/linux.py"
+      "windows_os_api/backends/linux.py",
+      "windows_os_api/os/capability.py"
     ],
     "tests": [
       "tests/integration/test_api_os_layers.py",
       "tests/unit/test_system_inventory_contract.py",
       "tests/linux/test_system_inventory_linux.py",
-      "tests/windows/test_system_inventory_windows.py"
+      "tests/windows/test_system_inventory_windows.py",
+      "tests/unit/test_capability_contract.py",
+      "tests/unit/test_capability_flags_contract.py",
+      "tests/integration/test_capability_envelope_api.py",
+      "tests/linux/test_capability_envelope_linux.py",
+      "tests/windows/test_capability_envelope_windows.py"
     ],
     "remaining": null
   },
@@ -248,10 +254,16 @@
     "title": "Audio devices/volume",
     "files": [
       "windows_os_api/os/audio/service.py",
-      "windows_os_api/api/rest/services.py"
+      "windows_os_api/api/rest/services.py",
+      "windows_os_api/os/capability.py"
     ],
     "tests": [
-      "tests/integration/test_api_os_layers.py"
+      "tests/integration/test_api_os_layers.py",
+      "tests/unit/test_capability_contract.py",
+      "tests/unit/test_capability_flags_contract.py",
+      "tests/integration/test_capability_envelope_api.py",
+      "tests/linux/test_capability_envelope_linux.py",
+      "tests/windows/test_capability_envelope_windows.py"
     ],
     "remaining": null
   },
@@ -263,13 +275,19 @@
       "windows_os_api/os/devices/service.py",
       "windows_os_api/api/rest/services.py",
       "windows_os_api/backends/windows.py",
-      "windows_os_api/backends/linux.py"
+      "windows_os_api/backends/linux.py",
+      "windows_os_api/os/capability.py"
     ],
     "tests": [
       "tests/integration/test_api_os_layers.py",
       "tests/unit/test_system_inventory_contract.py",
       "tests/linux/test_system_inventory_linux.py",
-      "tests/windows/test_system_inventory_windows.py"
+      "tests/windows/test_system_inventory_windows.py",
+      "tests/unit/test_capability_contract.py",
+      "tests/unit/test_capability_flags_contract.py",
+      "tests/integration/test_capability_envelope_api.py",
+      "tests/linux/test_capability_envelope_linux.py",
+      "tests/windows/test_capability_envelope_windows.py"
     ],
     "remaining": null
   },
@@ -281,13 +299,19 @@
       "windows_os_api/os/printers/service.py",
       "windows_os_api/api/rest/services.py",
       "windows_os_api/backends/windows.py",
-      "windows_os_api/backends/linux.py"
+      "windows_os_api/backends/linux.py",
+      "windows_os_api/os/capability.py"
     ],
     "tests": [
       "tests/integration/test_api_os_layers.py",
       "tests/unit/test_system_inventory_contract.py",
       "tests/linux/test_system_inventory_linux.py",
-      "tests/windows/test_system_inventory_windows.py"
+      "tests/windows/test_system_inventory_windows.py",
+      "tests/unit/test_capability_contract.py",
+      "tests/unit/test_capability_flags_contract.py",
+      "tests/integration/test_capability_envelope_api.py",
+      "tests/linux/test_capability_envelope_linux.py",
+      "tests/windows/test_capability_envelope_windows.py"
     ],
     "remaining": null
   },

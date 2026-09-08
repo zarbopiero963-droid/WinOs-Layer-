@@ -28,6 +28,8 @@ def capabilities() -> dict[str, Any]:
     if hasattr(b, "capability_flags"):
         flags = dict(b.capability_flags())
     elif getattr(b, "name", "") == "fake":
+        # Il backend fake non ha `capability_flags`: la sua tabella e' qui, ed e'
+        # legittimamente una fixture — supporta tutto perche' tutto e' simulato.
         flags = {
             "processes": True,
             "filesystem": True,
@@ -39,6 +41,8 @@ def capabilities() -> dict[str, Any]:
             "screenshot": True,
             "audio": True,
             "services": True,
+            "devices": True,
+            "printers": True,
             "registry_compat": True,
             "windows_uia": False,
             "fake_crm": True,
@@ -49,30 +53,16 @@ def capabilities() -> dict[str, Any]:
             "privileged": False,
             "vision": True,
         }
-    elif getattr(b, "name", "") == "windows":
-        flags = {
-            "processes": True,
-            "filesystem": True,
-            "network": True,
-            "system": True,
-            "windows_ui": True,
-            "atspi": False,
-            "clipboard": True,
-            "screenshot": True,  # mss / Pillow / BitBlt
-            "audio": False,
-            "services": False,
-            "registry_compat": False,
-            "windows_uia": True,  # real UIA via uiautomation/comtypes/pywinauto
-            "fake_crm": False,
-            "ocr": False,
-            "ocr_tesseract": False,
-            "wayland": False,
-            "x11": False,
-            "privileged": False,
-            "vision": False,
-        }
     else:
         flags = {"system": True}
+
+    # NOTA — qui c'era una terza tabella, `elif backend == "windows"`, hardcoded.
+    # Era IRRAGGIUNGIBILE: `WindowsBackend` espone `capability_flags`, quindi il
+    # primo ramo la intercetta sempre. E dichiarava `"services": False` — falso
+    # da quando il backend enumera davvero i servizi via il Service Control
+    # Manager. Una tabella morta che dice il falso e' peggio di nessuna tabella:
+    # nessuno la corregge, perche' nessuno la vede sbagliare. Un test verifica
+    # che non torni (`test_capability_flags_contract.py`).
 
     feature_list = [
         "system",

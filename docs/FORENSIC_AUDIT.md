@@ -716,3 +716,40 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   indistinguibili nella risposta: decisione owner D3 aperta nella issue #6.
   Audio Windows non implementato — richiede `pycaw` (decisione owner D4).
   `control_service` NON toccato: dipende dalla decisione owner D1.
+
+
+## Contratto `supported` sugli endpoint di sola lettura (decisioni owner D3-A e D4-B)
+- **Status:** DONE
+- **Problema:** `GET /v1/printers` rispondeva `{"printers": []}` in QUATTRO
+  situazioni indistinguibili: nessuna stampante / backend che non le implementa /
+  discovery non eseguita / discovery fallita. Una sola e' la risposta che il
+  chiamante crede di leggere. Stessa classe di difetto di `ok: true` su finestra
+  inesistente (#24) e `state: null` con `verified: true` (#18).
+- **Files:**
+  - `windows_os_api/os/capability.py` (nuovo: `discover`, `unsupported`,
+    `DiscoveryFailed`, i tre `error_code`)
+  - `windows_os_api/os/{services,audio,devices,printers}/service.py` (inviluppo)
+  - `windows_os_api/api/rest/services.py` (le route passano l'inviluppo)
+  - `windows_os_api/backends/windows.py` (`NOT_IMPLEMENTED = {"audio"}` per D4-B;
+    flag `devices`; i fallimenti sollevano invece di restituire `[]`)
+  - `windows_os_api/backends/linux.py` (flag `devices`/`printers`; `lpstat` che
+    fallisce solleva invece di restituire `[]`)
+  - `windows_os_api/os/system/service.py` (rimossa la tabella Windows hardcoded,
+    irraggiungibile e che dichiarava `services: False` — falso)
+  - `windows_os_api/backends/fake.py` (`_muted` non inizializzato: bug preesistente,
+    `GET /v1/audio/volume` rispondeva 500 a processo fresco)
+- **Tests:** i cinque casi richiesti dall'owner, piu' la distinzione fra il caso 3
+  e il caso 5:
+  - `tests/unit/test_capability_contract.py` (12)
+  - `tests/unit/test_capability_flags_contract.py` (8)
+  - `tests/integration/test_capability_envelope_api.py` (15, via HTTP)
+  - `tests/linux/test_capability_envelope_linux.py` (5, backend Linux reale)
+  - `tests/windows/test_capability_envelope_windows.py` (6, Windows reale in CI)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** unificando i due codici di «non supportata» → 3 rossi;
+  rimettendo l'inghiottimento dell'errore di `lpstat` → 1 rosso; rimettendo la
+  tabella Windows morta → 1 rosso; togliendo l'init di `_muted` → 1 rosso.
+- **Honest limits:** i 6 test Windows girano solo su `windows-latest` in CI.
+  L'audio su Windows resta NON implementato per decisione owner D4-B: ora lo
+  dichiara (`CAPABILITY_NOT_SUPPORTED`) invece di rispondere lista vuota.
+  `control_service` e `registry_write` non toccati: sono D1-B e D2-B, PR successive.

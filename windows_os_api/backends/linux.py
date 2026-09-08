@@ -25,6 +25,7 @@ from windows_os_api.os.network.validation import (
     validate_ping,
 )
 
+from windows_os_api.os.capability import DiscoveryFailed
 from windows_os_api.os.terminal.allowlist import CommandRejected, resolve as resolve_command
 from windows_os_api.os.windows.geometry import (
     GeometryRejected,
@@ -207,6 +208,8 @@ class LinuxBackend:
             "screenshot": has_mss,
             "audio": has_audio,
             "services": has_systemctl,
+            "devices": Path("/sys/block").is_dir(),
+            "printers": bool(shutil.which("lpstat")),
             "registry_compat": True,
             "windows_uia": False,  # never claim Windows UIA on Linux
             "ocr": has_ocr,
@@ -2068,20 +2071,28 @@ class LinuxBackend:
         return out
 
     def list_printers(self) -> list[dict[str, Any]]:
-        if shutil.which("lpstat"):
-            try:
-                r = subprocess.run(  # noqa: S603
-                    ["lpstat", "-a"], capture_output=True, text=True, timeout=5
-                )
-                printers = []
-                for line in r.stdout.splitlines():
-                    name = line.split()[0] if line.split() else ""
-                    if name:
-                        printers.append({"name": name, "status": "idle", "default": False})
-                return printers
-            except Exception:  # noqa: BLE001
-                pass
-        return []
+        """Stampanti via `lpstat -a`.
+
+        `lpstat` assente non e' un errore: e' una capability che manca, e la
+        riporta il flag `printers`. Un `lpstat` che invece c'e' e fallisce (CUPS
+        giu', timeout) e' un'altra cosa e lo dice: rispondere `[]` a un timeout
+        affermerebbe che non ci sono stampanti, che e' esattamente il difetto
+        che il contratto D3 toglie.
+        """
+        if not shutil.which("lpstat"):
+            return []
+        try:
+            r = subprocess.run(  # noqa: S603
+                ["lpstat", "-a"], capture_output=True, text=True, timeout=5
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise DiscoveryFailed(f"lpstat -a fallita: {exc}") from exc
+        printers = []
+        for line in r.stdout.splitlines():
+            name = line.split()[0] if line.split() else ""
+            if name:
+                printers.append({"name": name, "status": "idle", "default": False})
+        return printers
 
     def list_users(self) -> list[dict[str, Any]]:
         if self._psutil:
