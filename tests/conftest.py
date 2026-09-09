@@ -13,6 +13,13 @@ os.environ["WINOS_BACKEND"] = "fake"
 os.environ["WINOS_REQUIRE_AUTH"] = "true"
 os.environ["WINOS_API_KEYS"] = '["dev-key-change-me"]'
 os.environ["WINOS_ADMIN_API_KEYS"] = '["admin-key-change-me"]'
+# Gli adapter ora si salvano su disco, e il loro default e' la cartella di
+# configurazione dell'utente: senza questo, far girare la suite lascerebbe
+# manifest nel profilo di chi la lancia. Impostato prima degli import, come il
+# backend, perche' `store_dir()` legge l'ambiente a ogni chiamata.
+os.environ.setdefault(
+    "WINOS_ADAPTER_STORE", str(Path(tempfile.mkdtemp(prefix="winos-adapters-")))
+)
 
 from windows_os_api.core.runtime.config import get_settings
 from windows_os_api.backends.factory import reset_backend

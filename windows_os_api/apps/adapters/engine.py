@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from windows_os_api.apps.ui_inspector.service import find_by_automation_id, get_tree
 from windows_os_api.apps.sandbox.permissions import check_action
+from windows_os_api.apps.adapters import store
 from windows_os_api.apps.adapters.validation import validate_app_id
 from windows_os_api.backends.factory import get_backend
 
@@ -20,12 +21,29 @@ class AdapterAction:
 class Adapter:
     app_id: str
     app_name: str
-    hwnd: int
+    # `None` = ricaricato da disco e non ancora riagganciato a una finestra viva.
+    # Un `hwnd` e' un numero che il sistema operativo riassegna: quello salvato
+    # ieri puo' appartenere oggi a un'altra applicazione, quindi un adapter
+    # ricaricato sa cosa fare ma non piu' su cosa. Il ragionamento per esteso e'
+    # in `store.py`.
+    hwnd: int | None
     actions: list[AdapterAction] = field(default_factory=list)
     trust_level: str = "unsigned"
     openapi: dict[str, Any] = field(default_factory=dict)
+    # Il manifest e' stato scritto? Un disco pieno o una cartella non
+    # scrivibile non devono far fallire un adapter che in memoria funziona —
+    # ma non devono nemmeno passare inosservati, o al riavvio l'adapter
+    # sparisce e nessuno sa perche'.
+    persisted: bool = False
+    persist_error: str | None = None
+
+    @property
+    def bound(self) -> bool:
+        return self.hwnd is not None
 
 _adapters: dict[str, Adapter] = {}
+
+ADAPTER_NOT_BOUND = "ADAPTER_NOT_BOUND"
 
 def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     actions: list[AdapterAction] = []
@@ -79,7 +97,72 @@ def create_adapter(app_id: str, hwnd: int = 1001, trust_level: str = "unsigned")
     )
     adapter.openapi = generate_adapter_openapi(adapter)
     _adapters[app_id] = adapter
+    try:
+        store.save(adapter)
+        adapter.persisted = True
+    except OSError as exc:
+        # Non si solleva: l'adapter in memoria funziona, e far fallire la
+        # creazione per un problema di disco sarebbe peggio. Ma il fatto resta
+        # scritto sull'adapter e viene riportato da `list_adapters`.
+        adapter.persist_error = str(exc)
     return adapter
+
+def rebind_adapter(app_id: str, hwnd: int) -> Adapter | None:
+    """Riaggancia un adapter ricaricato a una finestra viva.
+
+    E' il passo che manca dopo un riavvio: la descrizione e' tornata dal disco,
+    ma su quale finestra applicarla lo sa solo chi chiama, adesso.
+    """
+    adapter = _adapters.get(app_id)
+    if adapter is None:
+        return None
+    adapter.hwnd = hwnd
+    return adapter
+
+def load_persisted_adapters() -> dict[str, Any]:
+    """Rimette in memoria gli adapter salvati, **non agganciati**.
+
+    Restituisce anche i manifest scartati: un adapter che sparisce in silenzio
+    e' un adapter che il chiamante crede di avere.
+
+    Gli adapter gia' in memoria non vengono toccati — uno vivo e agganciato vale
+    piu' della sua fotografia su disco.
+    """
+    manifests, skipped = store.load_all()
+    restored: list[str] = []
+    for manifest in manifests:
+        app_id = manifest["app_id"]
+        if app_id in _adapters:
+            continue
+        adapter = Adapter(
+            app_id=app_id,
+            app_name=manifest.get("app_name") or app_id,
+            hwnd=None,  # noto, non utilizzabile: va riagganciato
+            actions=[
+                AdapterAction(
+                    name=a.get("name", ""),
+                    description=a.get("description", ""),
+                    automation_id=a.get("automation_id", ""),
+                    control_type=a.get("control_type", ""),
+                    params=list(a.get("params") or []),
+                    risk=a.get("risk", "low"),
+                )
+                for a in manifest["actions"]
+                if isinstance(a, dict)
+            ],
+            trust_level=manifest.get("trust_level", "unsigned"),
+        )
+        # Rigenerato, mai riletto dal disco: un documento derivato salvato
+        # accanto alla sua sorgente e' un modo per farli divergere.
+        adapter.openapi = generate_adapter_openapi(adapter)
+        _adapters[app_id] = adapter
+        restored.append(app_id)
+    return {
+        "restored": restored,
+        "skipped": [
+            {"path": s.path, "code": s.code, "reason": s.reason} for s in skipped
+        ],
+    }
 
 def get_adapter(app_id: str) -> Adapter | None:
     return _adapters.get(app_id)
@@ -87,6 +170,8 @@ def get_adapter(app_id: str) -> Adapter | None:
 def list_adapters() -> list[dict[str, Any]]:
     return [
         {"app_id": a.app_id, "app_name": a.app_name, "hwnd": a.hwnd,
+         "bound": a.bound, "persisted": a.persisted,
+         "persist_error": a.persist_error,
          "actions": len(a.actions), "trust_level": a.trust_level}
         for a in _adapters.values()
     ]
@@ -109,6 +194,26 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     action = next((a for a in adapter.actions if a.name == action_name), None)
     if not action:
         return {"ok": False, "error": f"action not found: {action_name}"}
+
+    # Un adapter ricaricato da disco sa COSA fare, non piu' su cosa: l'`hwnd`
+    # salvato e' un numero che il sistema riassegna, e agire su di esso
+    # significherebbe cliccare su una finestra che non e' quella che si crede —
+    # potenzialmente di un'altra applicazione. Si rifiuta, e si dice come
+    # rimediare, invece di indovinare la finestra.
+    if not adapter.bound:
+        return {
+            "ok": False,
+            "error": (
+                f"l'adapter {app_id!r} e' stato ricaricato da disco e non e' "
+                f"agganciato a nessuna finestra: riagganciarlo con un hwnd vivo "
+                f"prima di invocare azioni"
+            ),
+            "code": ADAPTER_NOT_BOUND,
+            "app_id": app_id,
+            "action": action_name,
+            "bound": False,
+        }
+
     params = params or {}
     # Sandbox enforcement lives HERE, not in the callers.
     #
