@@ -670,9 +670,26 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   ma non agganciato*, e `invoke_action` lo rifiuta con `ADAPTER_NOT_BOUND`
   finché non viene riagganciato a una finestra viva. Manifest di versione ignota
   o corrotto: **saltato e riportato**, mai interpretato a naso.
-- **Cosa manca ancora (Gate 4, vedi #6):** capability verification con effetto
-  reale osservabile (la confidence non è verifica), Virtual API generata dalla
-  capability verificata, e la pipeline completa su un **EXE sconosciuto**.
+- **Fatto adesso (capability verification):** `apps/adapters/verification.py`.
+  Un verdetto nasce **solo** dall'effetto riletto dal sistema: si legge lo stato
+  prima, si esegue l'azione, si rilegge dopo, e si guarda se è cambiato come
+  doveva. Stati distinti perché dicono cose diverse — `VERIFIED` (osservato),
+  `FAILED` (provato, effetto assente), `BLOCKED` (la policy nega: *non ho
+  potuto*, che non è *non funziona*), `UNSUPPORTED` (nessun effetto osservabile
+  definito: non lo sappiamo, e lo diciamo), `UNSTABLE` (esiti diversi fra
+  tentativi), `DISCOVERED` (nessuno ha guardato). Il verdetto vive con l'adapter
+  e sopravvive al riavvio; un test statico vieta che una `confidence` rientri
+  nel giudizio.
+  **Due difetti trovati costruendolo**, entrambi tali da far concludere
+  «verificata» per il motivo sbagliato: `FakeBackend.get_ui_tree` restituiva una
+  copia **superficiale** della costante di modulo (i figli erano gli stessi
+  oggetti, quindi chi scriveva nell'albero ricevuto mutava la fixture condivisa
+  per tutti i test successivi), e `invoke_action` sul ramo Edit faceva
+  esattamente quello — `node["value"] = value` su una copia, non
+  sull'applicazione. L'effetto passa ora dal backend (`set_ui_value`), la copia
+  è profonda, e il fake modella un effetto vero invece di uno screenshot.
+- **Cosa manca ancora (Gate 4, vedi #6):** Virtual API generata dalla capability
+  verificata, e la pipeline completa su un **EXE sconosciuto**.
 
 ## Summary
 - DONE: 50 (+ Linux gaps closed)

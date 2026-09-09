@@ -16,6 +16,10 @@ class AdapterAction:
     control_type: str
     params: list[str] = field(default_factory=list)
     risk: str = "low"
+    # `None` = mai provata. Non e' lo stesso di «non funziona»: e' «nessuno ha
+    # guardato». Il verdetto, quando c'e', porta con se' l'evidenza che lo
+    # sostiene (vedi `verification.py`).
+    verification: dict[str, Any] | None = None
 
 @dataclass
 class Adapter:
@@ -146,6 +150,7 @@ def load_persisted_adapters() -> dict[str, Any]:
                     control_type=a.get("control_type", ""),
                     params=list(a.get("params") or []),
                     risk=a.get("risk", "low"),
+                    verification=a.get("verification"),
                 )
                 for a in manifest["actions"]
                 if isinstance(a, dict)
@@ -163,6 +168,38 @@ def load_persisted_adapters() -> dict[str, Any]:
             {"path": s.path, "code": s.code, "reason": s.reason} for s in skipped
         ],
     }
+
+def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str, Any]:
+    """Prova un'azione, registra il verdetto sull'azione e lo rende persistente.
+
+    Il verdetto vive con l'adapter — non in un rapporto che si perde alla
+    chiusura del runtime: al prossimo avvio si deve poter sapere cosa era gia'
+    stato dimostrato, senza rifare tutte le prove.
+    """
+    from windows_os_api.apps.adapters.verification import (
+        verify_action,
+        verify_action_repeatedly,
+    )
+
+    adapter = _adapters.get(app_id)
+    if adapter is None:
+        return {"ok": False, "error": f"nessun adapter registrato per {app_id!r}"}
+    action = next((a for a in adapter.actions if a.name == action_name), None)
+    if action is None:
+        return {"ok": False, "error": f"azione non trovata: {action_name}"}
+
+    verdict = (
+        verify_action(app_id, action_name)
+        if times <= 1
+        else verify_action_repeatedly(app_id, action_name, times=times)
+    )
+    action.verification = verdict
+    try:
+        store.save(adapter)
+    except OSError as exc:
+        adapter.persist_error = str(exc)
+    return {"ok": True, "app_id": app_id, "action": action_name, "verification": verdict}
+
 
 def get_adapter(app_id: str) -> Adapter | None:
     return _adapters.get(app_id)
@@ -272,7 +309,23 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
         }
     if action.control_type == "Edit":
         value = params.get("value", "")
-        node["value"] = value
+        # NOTA — qui c'era `node["value"] = value`, e non faceva quello che
+        # sembrava: `node` appartiene all'albero RESTITUITO da `get_ui_tree`,
+        # cioe' a una copia. Scriverci dentro non cambiava l'applicazione;
+        # sembrava funzionare solo perche' la copia del FakeBackend era
+        # superficiale e condivisa. L'effetto ora passa dal backend, che e'
+        # l'unico che possa produrlo davvero — e la verifica delle capability
+        # lo rilegge da li'.
+        setter = getattr(backend, "set_ui_value", None)
+        if callable(setter):
+            set_result = setter(action.automation_id, str(value))
+            if set_result.get("ok"):
+                return {
+                    "ok": True,
+                    "action": action_name,
+                    "set_value": value,
+                    "element": action.automation_id,
+                }
         # Prefer real UIA ValuePattern / SendInput set_value on Windows
         if hasattr(backend, "name") and backend.name == "windows":
             try:
