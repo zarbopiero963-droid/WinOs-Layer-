@@ -308,6 +308,12 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   **Limite dichiarato:** una denylist è fail-open per costruzione, protegge solo
   ciò che qualcuno ha elencato. È il compromesso accettato in cambio del non
   rompere nessuna lettura esistente.
+  **Trovato da CI su Windows vero:** il termine era `DIGITALPRODUCTID`, e
+  `...\CurrentVersion` contiene un valore chiamato `ProductId` — più corto,
+  quindi non conteneva il termine, e usciva. Ogni voce dell'elenco è ora lo
+  *stem* della famiglia (`PRODUCTID`), e il confronto ignora i separatori, così
+  `API_KEY` e `Proxy-Password` non passano per un underscore. Un termine più
+  specifico del nome che vuole intercettare non intercetta niente.
 
 ## PR21: Terminal execute ALLOW|DENY|ADMIN
 - **Status:** DONE

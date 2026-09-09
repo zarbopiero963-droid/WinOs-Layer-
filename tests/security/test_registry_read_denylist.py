@@ -186,6 +186,56 @@ def test_every_declared_term_actually_blocks(spy, term):
     assert result["code"] == REGISTRY_VALUE_FORBIDDEN, (term, result)
 
 
+def test_the_short_name_of_a_family_is_covered_too(spy):
+    """Il buco che ha trovato CI su Windows vero.
+
+    Il termine era `DIGITALPRODUCTID`, e
+    `HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion` contiene un valore che
+    si chiama **`ProductId`** — piu' corto, quindi non conteneva il termine, e
+    usciva insieme agli altri. Un termine piu' specifico del nome che vuole
+    intercettare non intercetta niente: si mette lo STEM della famiglia.
+    """
+    for value_name in ("ProductId", "DigitalProductId", "DigitalProductId4"):
+        result = registry_service.read(r"HKCU\Software\Contoso", value_name)
+        assert result["ok"] is False, (value_name, result)
+        assert result["code"] == REGISTRY_VALUE_FORBIDDEN, (value_name, result)
+
+
+@pytest.mark.parametrize(
+    "value_name",
+    [
+        "API_KEY",
+        "Proxy-Password",
+        "default.password",
+        "client secret",
+        "PRIVATE_KEY",
+        "priv_key",
+        "Digital Product Id",
+    ],
+)
+def test_a_separator_does_not_get_a_secret_past_the_filter(spy, value_name):
+    """Chi sceglie il nome del valore e' il programma che ci ha messo la password.
+
+    Se il confronto guardasse il nome cosi' com'e' scritto, un trattino o un
+    underscore basterebbe: `API_KEY` non contiene `APIKEY`. Il nome viene
+    appiattito a sole lettere e cifre prima del confronto.
+    """
+    result = registry_service.read(r"HKCU\Software\Contoso", value_name)
+    assert result["ok"] is False, (value_name, result)
+    assert result["code"] == REGISTRY_VALUE_FORBIDDEN, (value_name, result)
+
+
+def test_the_separator_trick_does_not_work_through_enumeration_either(monkeypatch):
+    """Le due difese devono valere insieme, non una per volta."""
+    backend = SpyBackend({"Theme": "dark", "API_KEY": "sk-live-1", "Proxy-Password": "hunter2"})
+    monkeypatch.setattr(registry_service, "get_backend", lambda: backend)
+
+    result = registry_service.read(r"HKCU\Software\Contoso")
+    assert result["withheld"] == ["API_KEY", "Proxy-Password"], result
+    assert "sk-live-1" not in repr(result), "il segreto e' uscito lo stesso"
+    assert "hunter2" not in repr(result), "il segreto e' uscito lo stesso"
+
+
 # ---------------------------------------------------------------------------
 # L'aggiramento in una mossa: enumerare invece di chiedere
 # ---------------------------------------------------------------------------

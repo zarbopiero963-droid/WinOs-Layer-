@@ -253,15 +253,23 @@ FORBIDDEN_READ_PREFIXES = FORBIDDEN_PREFIXES + (
 # Non c'e' dentro tutto: `TOKEN` si', `KEY` da solo no (rifiuterebbe meta' del
 # registro). Il confine e' arbitrario, ed e' esattamente il limite di una
 # denylist.
+#
+# Ogni voce e' lo STEM della famiglia, non un nome preciso. La differenza l'ha
+# trovata CI su Windows vero: il termine era `DIGITALPRODUCTID`, e
+# `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` contiene un valore che si
+# chiama `ProductId` — un nome piu' corto, che quindi NON conteneva il termine, e
+# usciva. `PRODUCTID` copre entrambi. Un termine piu' specifico del nome che
+# vuole intercettare non intercetta niente.
 SECRET_VALUE_TERMS = (
     "PASSWORD",
     "PASSWD",
     "SECRET",
     "CREDENTIAL",
     "PRIVATEKEY",
+    "PRIVKEY",
     "APIKEY",
     "TOKEN",
-    "DIGITALPRODUCTID",
+    "PRODUCTID",
 )
 
 
@@ -275,12 +283,18 @@ def secret_term_in(name: object) -> str | None:
 
     Restituisce il termine invece di un booleano perche' il rifiuto deve poter
     dire PERCHE': «`ProxyPassword` contiene PASSWORD» si corregge, «negato» no.
+
+    Il confronto ignora tutto cio' che non e' una lettera o una cifra, cosi'
+    `API_KEY`, `Proxy-Password` e `default.password` sono lo stesso nome di
+    `ApiKey`, `ProxyPassword` e `DefaultPassword`. Senza, la denylist si
+    aggirerebbe con un trattino: chi sceglie il nome del valore e' il programma
+    che ci ha messo dentro la password, non noi.
     """
     if not isinstance(name, str):
         return None
-    upper = name.upper()
+    flattened = "".join(ch for ch in name.upper() if ch.isalnum())
     for term in SECRET_VALUE_TERMS:
-        if term in upper:
+        if term in flattened:
             return term
     return None
 
