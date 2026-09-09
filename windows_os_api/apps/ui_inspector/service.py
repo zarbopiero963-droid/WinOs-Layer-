@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from windows_os_api.apps.sandbox.ui_guard import check_ui_target
+from windows_os_api.apps.sandbox.ui_guard import rejection as ui_rejection
 from windows_os_api.backends.factory import get_backend
 
 
@@ -84,12 +86,24 @@ def find_text_vision(text: str) -> dict[str, Any]:
 
 
 def click_text_vision(text: str, *, dry_run: bool = False) -> dict[str, Any]:
+    # La policy sandbox vale anche qui. Senza questo controllo bastava chiedere
+    # il testo che si legge SOPRA il pulsante per premere un'azione negata: il
+    # gate stava in `invoke_action`, e questa strada non ci passa. La misura del
+    # difetto e il ragionamento per esteso stanno in `sandbox/ui_guard.py`.
+    verdict = check_ui_target(text, kind="click_text")
+    if not verdict["allowed"]:
+        return ui_rejection(verdict, text)
+
     from windows_os_api.apps.vision.ocr import click_text
 
     return click_text(text, dry_run=dry_run)
 
 
 def accessible_click(name: str, role: str | None = None) -> dict[str, Any]:
+    verdict = check_ui_target(name, kind="click")
+    if not verdict["allowed"]:
+        return ui_rejection(verdict, name)
+
     backend = get_backend()
     result: dict[str, Any] | None = None
     if hasattr(backend, "accessible_click"):
@@ -110,6 +124,10 @@ def accessible_click(name: str, role: str | None = None) -> dict[str, Any]:
 
 
 def accessible_set_text(name: str, text: str, role: str | None = None) -> dict[str, Any]:
+    verdict = check_ui_target(name, kind="set_text")
+    if not verdict["allowed"]:
+        return ui_rejection(verdict, name)
+
     backend = get_backend()
     if hasattr(backend, "accessible_set_text"):
         return backend.accessible_set_text(name, text, role=role)

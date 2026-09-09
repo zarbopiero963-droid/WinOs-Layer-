@@ -5,11 +5,32 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from windows_os_api.core.permissions.model import Permission
 from windows_os_api.core.security.auth import AuthContext, require_permission
+from windows_os_api.api.rest.deps import audit
 from windows_os_api.apps.ui_inspector import service as ui
 from windows_os_api.os.input import service as inp
 from windows_os_api.os.display import service as disp
 
 router = APIRouter(tags=["ui"])
+
+
+def _deny_if_sandboxed(result: dict, event: str, auth: AuthContext, resource: str) -> dict:
+    """403 quando la policy sandbox ha rifiutato, come registry e servizi.
+
+    Un rifiuto che risponde 200 e' un successo per chiunque guardi lo status
+    code. E il tentativo va in audit: una lettura riuscita e' l'uso normale
+    dell'endpoint, un'azione rifiutata dalla policy e' un evento di sicurezza.
+    """
+    if not result.get("denied"):
+        return result
+    audit(
+        event, auth, resource=resource,
+        detail={"code": result.get("code"), "action": result.get("action"),
+                "app_id": result.get("app_id")},
+        outcome="denied",
+    )
+    from fastapi import HTTPException
+
+    raise HTTPException(403, result.get("error") or "denied by sandbox policy")
 
 
 class MouseMove(BaseModel):
@@ -107,7 +128,9 @@ def ui_accessible_click(
     body: AccessibleClick,
     auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL)),
 ):
-    return ui.accessible_click(body.name, role=body.role)
+    return _deny_if_sandboxed(
+        ui.accessible_click(body.name, role=body.role), "ui.click", auth, body.name
+    )
 
 
 @router.post("/ui/set-text")
@@ -115,7 +138,10 @@ def ui_accessible_set_text(
     body: AccessibleSetText,
     auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL)),
 ):
-    return ui.accessible_set_text(body.name, body.text, role=body.role)
+    return _deny_if_sandboxed(
+        ui.accessible_set_text(body.name, body.text, role=body.role),
+        "ui.set_text", auth, body.name,
+    )
 
 
 @router.post("/input/mouse/move")
@@ -219,4 +245,7 @@ def vision_find(body: VisionFind, auth: AuthContext = Depends(require_permission
 
 @router.post("/ui/vision/click")
 def vision_click(body: VisionClick, auth: AuthContext = Depends(require_permission(Permission.UI_CONTROL))):
-    return ui.click_text_vision(body.text, dry_run=body.dry_run)
+    return _deny_if_sandboxed(
+        ui.click_text_vision(body.text, dry_run=body.dry_run),
+        "ui.vision_click", auth, body.text,
+    )

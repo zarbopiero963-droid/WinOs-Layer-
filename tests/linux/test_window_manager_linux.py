@@ -37,6 +37,26 @@ def _settle(seconds: float = 0.6) -> None:
     time.sleep(seconds)
 
 
+def _wait_until(condition, timeout: float = 5.0) -> bool:
+    """Poll for the condition instead of sleeping a guessed amount.
+
+    `_settle()` is a fixed sleep, and a fixed sleep is a bet on how busy the
+    machine is. It lost once on a full-suite run here: the maximize below had
+    not been applied when the geometry was read, and the test failed while the
+    window manager was simply still working — the same test then passed on its
+    own three times in a row.
+
+    A duration answers «is enough time gone by»; what the test needs to know is
+    «has it happened yet».
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def test_the_probe_window_is_managed_before_a_test_touches_it(linux_backend, probe_window):
     """The fixture's contract, pinned — because breaking it broke a real run.
 
@@ -146,7 +166,7 @@ def test_maximize_is_confirmed_and_the_window_grows(linux_backend, hwnd):
     assert result["verified"] is True, result
     assert result["state"] == "maximized", result
 
-    _settle()
+    _wait_until(lambda: linux_backend.window_geometry(hwnd)["width"] > before["width"])
     observed = linux_backend.window_geometry(hwnd)
     assert observed["width"] > before["width"], (before, observed)
     # NOT "equals the screen": openbox reserved 38px of the 1024-high screen
