@@ -147,6 +147,7 @@
     ],
     "tests": [
       "tests/linux/test_input_linux.py",
+      "tests/linux/test_x_harness_helpers.py",
       "tests/windows/test_input_windows.py",
       "tests/unit/test_input_validation_contract.py",
       "tests/integration/test_api_os_layers.py"

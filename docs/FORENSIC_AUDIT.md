@@ -136,6 +136,9 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/backends/{linux,windows,fake}.py`
 - **Tests:**
   - `tests/linux/test_input_linux.py` — delivery read back from `xev` under Xvfb
+  - `tests/linux/test_x_harness_helpers.py` — the harness that reads it back:
+    a hung `xdotool` comes back as `None`, geometry is measured, focus is read
+    back, and a window manager under `SIGSTOP` does not take the job down
   - `tests/windows/test_input_windows.py` — real SendInput on windows-latest
   - `tests/unit/test_input_validation_contract.py`
   - `tests/integration/test_api_os_layers.py`
@@ -151,6 +154,15 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   window manager, `xdotool mousemove` is a silent no-op and the pointer stays
   at the screen centre. `ok` now means the OS accepted the event; the pointer,
   which IS readable, is verified.
+- **Note (harness):** the `event_recorder` fixture positioned its `xev` window
+  with `xdotool --sync`, which waits for the window manager to acknowledge the
+  change. On a loaded runner the window manager does not get round to it, the
+  wait ran to the subprocess timeout and `TimeoutExpired` came out of the middle
+  of the fixture: one stalled `windowsize` failed the whole `test-linux` job
+  while every test was passing (run 34276587508). Now the wait is bounded and
+  reported instead of raised (`xdo`), the window is only acted on once the
+  window manager has adopted it (`wait_until_managed`), and the rectangle the
+  tests aim at is MEASURED rather than assumed to be the one that was requested.
 
 ## PR10: Clipboard
 - **Status:** DONE
