@@ -135,7 +135,23 @@ def privilege_elevate(body: ElevateBody, auth: AuthContext = Depends(require_per
 
 @router.get("/registry")
 def registry_read(path: str, name: str | None = None, auth: AuthContext = Depends(require_permission(Permission.REGISTRY_READ))):
-    return registry.read(path, name)
+    result = registry.read(path, name)
+    denied = bool(result.get("denied"))
+    if denied:
+        # Solo i rifiuti finiscono in audit: una lettura riuscita e' l'uso
+        # normale dell'endpoint, un tentativo su un'area vietata e' un evento di
+        # sicurezza, e un registro in cui i due si confondono non si legge.
+        audit(
+            "registry.read", auth, resource=path,
+            detail={"name": name, "code": result.get("code")},
+            outcome="denied",
+        )
+        # 403 come la scrittura: un rifiuto che risponde 200 e' un successo per
+        # chiunque guardi lo status code.
+        from fastapi import HTTPException
+
+        raise HTTPException(403, result.get("error") or "registry read denied")
+    return result
 
 @router.put("/registry")
 def registry_write(body: RegistryWrite, auth: AuthContext = Depends(require_permission(Permission.REGISTRY_WRITE))):

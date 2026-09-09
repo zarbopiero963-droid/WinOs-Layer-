@@ -53,6 +53,8 @@ ENV_VAR = "WINOS_REGISTRY_ALLOWLIST"
 REGISTRY_PATH_NOT_ALLOWED = "REGISTRY_PATH_NOT_ALLOWED"
 REGISTRY_PATH_FORBIDDEN = "REGISTRY_PATH_FORBIDDEN"
 REGISTRY_PATH_INVALID = "REGISTRY_PATH_INVALID"
+REGISTRY_READ_FORBIDDEN = "REGISTRY_READ_FORBIDDEN"
+REGISTRY_VALUE_FORBIDDEN = "REGISTRY_VALUE_FORBIDDEN"
 
 # Il default sicuro: le impostazioni di un'applicazione per l'utente corrente.
 # Nessuna scrittura qui puo' rompere la macchina o toccare un altro utente.
@@ -206,3 +208,142 @@ def rejection(exc: RegistryPathRejected, path: str, name: str) -> dict[str, Any]
         "path": path,
         "name": name,
     }
+
+
+# ---------------------------------------------------------------------------
+# Lettura — decisione owner D6, issue #6 (2026-09-09): DENYLIST
+# ---------------------------------------------------------------------------
+# Quello che c'era prima: niente. `registry_read` leggeva qualunque hive, e la
+# permission `registry.read` e' assegnata anche a `VIEWER`, il ruolo piu' basso
+# (`core/permissions/model.py`). Il ruolo NON e' stato alzato: e' una scelta
+# esplicita dell'owner, che ha preferito filtrare i percorsi invece dei ruoli.
+#
+# **Una denylist e' fail-open per costruzione.** Protegge solo cio' che qualcuno
+# ha pensato di elencare: una chiave sensibile non prevista resta leggibile.
+# L'alternativa era l'allowlist simmetrica alla scrittura (D2-B), che nega tutto
+# per default; l'owner ha scelto la denylist per non rompere nessuna lettura
+# esistente, sapendo il compromesso. Sta scritto qui perche' chi legge questo
+# file dopo sappia che il buco e' noto e accettato, non dimenticato.
+
+# Le tre aree gia' vietate in scrittura, piu' due che riguardano solo la
+# lettura. Riusare `FORBIDDEN_PREFIXES` rende esplicito il rapporto: cio' che non
+# si puo' scrivere non si puo' nemmeno leggere.
+#
+# `HKLM\SYSTEM\` intero, non il solo `...\Control\Lsa\`: `CurrentControlSet` e'
+# un collegamento a `ControlSet001`, quindi una regola sul solo nome corrente si
+# aggira scrivendo `ControlSet001`. Vietare il sottoalbero toglie il gioco degli
+# alias; la configurazione dei servizi ha comunque il suo endpoint dedicato.
+FORBIDDEN_READ_PREFIXES = FORBIDDEN_PREFIXES + (
+    # `DefaultPassword` in chiaro quando l'autologon e' attivo.
+    "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\WINLOGON\\",
+    # `HKU\<SID>` e' l'`HKCU` di un ALTRO utente. Il proprio resta raggiungibile
+    # come `HKCU\`, quindi vietare l'hive non toglie nulla a chi chiede il suo.
+    "HKU\\",
+)
+
+# Termini cercati come sottostringa nel NOME del valore, ovunque compaia: un
+# programma qualunque puo' tenere una password sotto `HKCU\Software\<suo nome>\`,
+# che nessun elenco di percorsi prevedera' mai.
+#
+# Il costo e' dichiarato: e' una sottostringa, quindi rifiuta anche nomi innocui
+# che la contengono — `PasswordExpiryDays`, `TokenLifetime`. Un rifiuto e'
+# rumoroso e si corregge; una credenziale che esce e' silenziosa. Il rifiuto dice
+# quale termine ha fatto scattare il blocco, cosi' l'errore si vede subito.
+#
+# Non c'e' dentro tutto: `TOKEN` si', `KEY` da solo no (rifiuterebbe meta' del
+# registro). Il confine e' arbitrario, ed e' esattamente il limite di una
+# denylist.
+#
+# Ogni voce e' lo STEM della famiglia, non un nome preciso. La differenza l'ha
+# trovata CI su Windows vero: il termine era `DIGITALPRODUCTID`, e
+# `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` contiene un valore che si
+# chiama `ProductId` — un nome piu' corto, che quindi NON conteneva il termine, e
+# usciva. `PRODUCTID` copre entrambi. Un termine piu' specifico del nome che
+# vuole intercettare non intercetta niente.
+SECRET_VALUE_TERMS = (
+    "PASSWORD",
+    "PASSWD",
+    "SECRET",
+    "CREDENTIAL",
+    "PRIVATEKEY",
+    "PRIVKEY",
+    "APIKEY",
+    "TOKEN",
+    "PRODUCTID",
+)
+
+
+def _is_read_forbidden(key: str) -> bool:
+    target = key if key.endswith("\\") else key + "\\"
+    return any(target.startswith(bad) for bad in FORBIDDEN_READ_PREFIXES)
+
+
+def secret_term_in(name: object) -> str | None:
+    """Il termine che rende segreto questo nome di valore, o `None`.
+
+    Restituisce il termine invece di un booleano perche' il rifiuto deve poter
+    dire PERCHE': «`ProxyPassword` contiene PASSWORD» si corregge, «negato» no.
+
+    Il confronto ignora tutto cio' che non e' una lettera o una cifra, cosi'
+    `API_KEY`, `Proxy-Password` e `default.password` sono lo stesso nome di
+    `ApiKey`, `ProxyPassword` e `DefaultPassword`. Senza, la denylist si
+    aggirerebbe con un trattino: chi sceglie il nome del valore e' il programma
+    che ci ha messo dentro la password, non noi.
+    """
+    if not isinstance(name, str):
+        return None
+    flattened = "".join(ch for ch in name.upper() if ch.isalnum())
+    for term in SECRET_VALUE_TERMS:
+        if term in flattened:
+            return term
+    return None
+
+
+def check_read(path: object, name: object = None) -> str:
+    """Autorizza una lettura, o solleva `RegistryPathRejected`.
+
+    Due controlli distinti, perche' sono due modi diversi di chiedere la stessa
+    cosa: l'area (il percorso) e il nome del valore.
+    """
+    normalized = normalize(path)
+    key = comparison_key(path)
+
+    if _is_read_forbidden(key):
+        forbidden = ", ".join(p.rstrip("\\") for p in FORBIDDEN_READ_PREFIXES)
+        raise RegistryPathRejected(
+            f"{normalized!r} e' in un'area del registro non leggibile da questa API "
+            f"({forbidden})",
+            code=REGISTRY_READ_FORBIDDEN,
+        )
+
+    term = secret_term_in(name)
+    if term is not None:
+        raise RegistryPathRejected(
+            f"il valore {name!r} non e' leggibile: il nome contiene {term!r}",
+            code=REGISTRY_VALUE_FORBIDDEN,
+        )
+
+    return normalized
+
+
+def filter_values(values: Any) -> tuple[dict[str, Any], list[str]]:
+    """Toglie dai valori enumerati quelli il cui NOME e' una credenziale.
+
+    Senza questo il controllo sul nome sarebbe aggirabile in un passaggio: si
+    chiede la chiave senza `name`, il backend restituisce TUTTI i valori, e la
+    password esce insieme agli altri.
+
+    I nomi tolti vengono restituiti al chiamante, non nascosti: una risposta a
+    cui manca silenziosamente un pezzo e' peggio di un rifiuto, perche' chi legge
+    conclude che il valore non esiste.
+    """
+    if not isinstance(values, dict):
+        return {}, []
+    kept: dict[str, Any] = {}
+    withheld: list[str] = []
+    for value_name, value in values.items():
+        if secret_term_in(value_name) is not None:
+            withheld.append(value_name)
+        else:
+            kept[value_name] = value
+    return kept, withheld

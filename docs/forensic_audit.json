@@ -355,7 +355,9 @@
       "tests/integration/test_api_os_layers.py",
       "tests/security/test_registry_write_allowlist.py",
       "tests/integration/test_service_control_api.py",
-      "tests/windows/test_registry_write_windows.py"
+      "tests/windows/test_registry_write_windows.py",
+      "tests/security/test_registry_read_denylist.py",
+      "tests/windows/test_registry_read_denylist_windows.py"
     ],
     "remaining": null
   },

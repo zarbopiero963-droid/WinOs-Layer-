@@ -280,11 +280,40 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Status:** DONE
 - **Files:**
   - `windows_os_api/os/registry/service.py`
+  - `windows_os_api/os/registry/allowlist.py` — scrittura: allowlist di prefissi
+    (D2-B); lettura: denylist di aree e di nomi di valore (D6)
   - `windows_os_api/api/rest/services.py`
 - **Tests:**
   - `tests/unit/test_fake_backend.py`
   - `tests/integration/test_api_os_layers.py`
+  - `tests/security/test_registry_write_allowlist.py`
+  - `tests/security/test_registry_read_denylist.py`
+  - `tests/windows/test_registry_read_denylist_windows.py` — chiavi vere su
+    Windows vero, su un runner elevato
 - **How to run:** `pytest tests/unit/test_fake_backend.py -q`
+- **Note (lettura):** fino alla decisione owner **D6** la lettura non aveva
+  **nessun** controllo di percorso — `read()` passava la stringa al backend — e
+  `registry.read` è una permission che `ROLE_PERMISSIONS` assegna anche a
+  `VIEWER`, il ruolo più basso. Il chiamante meno privilegiato poteva quindi
+  leggere qualunque chiave apribile dal token del processo: fra le altre
+  `...\CurrentVersion\Winlogon` (dove sta `DefaultPassword` in chiaro con
+  l'autologon attivo) e `HKU\<SID>`, cioè l'`HKCU` di un altro utente.
+  L'owner ha scelto la **denylist** (non l'allowlist simmetrica alla scrittura,
+  e senza alzare il ruolo): sono vietate le tre aree già vietate in scrittura
+  più `Winlogon` e l'hive `HKU\`, e sono rifiutati i nomi di valore che
+  contengono termini da credenziale. Il filtro si applica **anche
+  all'enumerazione** — chiedere la chiave senza `name` restituiva tutti i
+  valori insieme, che era l'aggiramento in una mossa — e ciò che viene tolto è
+  dichiarato in `withheld`, non nascosto.
+  **Limite dichiarato:** una denylist è fail-open per costruzione, protegge solo
+  ciò che qualcuno ha elencato. È il compromesso accettato in cambio del non
+  rompere nessuna lettura esistente.
+  **Trovato da CI su Windows vero:** il termine era `DIGITALPRODUCTID`, e
+  `...\CurrentVersion` contiene un valore chiamato `ProductId` — più corto,
+  quindi non conteneva il termine, e usciva. Ogni voce dell'elenco è ora lo
+  *stem* della famiglia (`PRODUCTID`), e il confronto ignora i separatori, così
+  `API_KEY` e `Proxy-Password` non passano per un underscore. Un termine più
+  specifico del nome che vuole intercettare non intercetta niente.
 
 ## PR21: Terminal execute ALLOW|DENY|ADMIN
 - **Status:** DONE
