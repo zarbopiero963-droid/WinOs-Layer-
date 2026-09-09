@@ -601,11 +601,29 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/apps/adapters/engine.py` — **enforcement point**: `invoke_action`
     calls `check_action` before reaching the backend, so the policy applies to every
     caller (REST, MCP, workflow playback, agent) instead of only the REST route
+  - `windows_os_api/apps/sandbox/ui_guard.py` — **secondo punto di enforcement**:
+    le primitive UI grezze non passano da `invoke_action`, quindi hanno il loro
+  - `windows_os_api/apps/ui_inspector/service.py` — dove il guard è applicato
 - **Tests:**
   - `tests/unit/test_trust_and_sandbox.py`
   - `tests/unit/test_sandbox_enforcement.py` — one test per surface that used to bypass the gate
+  - `tests/security/test_sandbox_ui_primitives.py` — le tre rotte UI che la aggiravano
   - `tests/integration/test_api_adapter_automation.py`
 - **How to run:** `pytest tests/unit/test_trust_and_sandbox.py tests/unit/test_sandbox_enforcement.py -q`
+- **Note (primitive UI):** il gate in `invoke_action` copriva ogni superficie che
+  passa dall'engine, ma **tre rotte agiscono sull'interfaccia senza passarci**:
+  `POST /v1/ui/click`, `POST /v1/ui/set-text` e `POST /v1/ui/vision/click`.
+  Misurato prima della correzione, con `denied_actions={"click_btn_save"}` in
+  vigore: `invoke_action` → `denied=True`; `click_text_vision` → **nessuna policy
+  consultata**, si fermava solo perché su uno schermo vuoto non c'era testo da
+  trovare. Negare un'azione non impediva quindi di premere lo stesso pulsante
+  chiamandolo per nome o per il testo che ci si legge sopra — una seconda porta
+  sulla stessa stanza. Ora le tre primitive consultano la policy tramite gli
+  adapter registrati (`automation_id`, nome o descrizione dell'azione), con
+  rifiuto strutturato + **403** + audit. Le primitive restavano comunque
+  protette dal RBAC (`ui.control`): il difetto era la policy per-azione
+  aggirabile, non un endpoint aperto. Un bersaglio che nessun adapter riconosce
+  passa — non era coperto da nessuna policy nemmeno prima.
 
 ## PR48: Signed adapter trust levels
 - **Status:** DONE

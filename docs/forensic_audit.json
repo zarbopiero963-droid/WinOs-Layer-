@@ -728,11 +728,14 @@
     "title": "Adapter sandbox permissions",
     "files": [
       "windows_os_api/apps/sandbox/permissions.py",
-      "windows_os_api/api/rest/security_routes.py"
+      "windows_os_api/api/rest/security_routes.py",
+      "windows_os_api/apps/sandbox/ui_guard.py",
+      "windows_os_api/apps/ui_inspector/service.py"
     ],
     "tests": [
       "tests/unit/test_trust_and_sandbox.py",
-      "tests/integration/test_api_adapter_automation.py"
+      "tests/integration/test_api_adapter_automation.py",
+      "tests/security/test_sandbox_ui_primitives.py"
     ],
     "remaining": null
   },
