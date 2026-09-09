@@ -136,6 +136,9 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/backends/{linux,windows,fake}.py`
 - **Tests:**
   - `tests/linux/test_input_linux.py` — delivery read back from `xev` under Xvfb
+  - `tests/linux/test_x_harness_helpers.py` — the harness that reads it back:
+    a hung `xdotool` comes back as `None`, geometry is measured, focus is read
+    back, and a window manager under `SIGSTOP` does not take the job down
   - `tests/windows/test_input_windows.py` — real SendInput on windows-latest
   - `tests/unit/test_input_validation_contract.py`
   - `tests/integration/test_api_os_layers.py`
@@ -151,6 +154,15 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   window manager, `xdotool mousemove` is a silent no-op and the pointer stays
   at the screen centre. `ok` now means the OS accepted the event; the pointer,
   which IS readable, is verified.
+- **Note (harness):** the `event_recorder` fixture positioned its `xev` window
+  with `xdotool --sync`, which waits for the window manager to acknowledge the
+  change. On a loaded runner the window manager does not get round to it, the
+  wait ran to the subprocess timeout and `TimeoutExpired` came out of the middle
+  of the fixture: one stalled `windowsize` failed the whole `test-linux` job
+  while every test was passing (run 34276587508). Now the wait is bounded and
+  reported instead of raised (`xdo`), the window is only acted on once the
+  window manager has adopted it (`wait_until_managed`), and the rectangle the
+  tests aim at is MEASURED rather than assumed to be the one that was requested.
 
 ## PR10: Clipboard
 - **Status:** DONE
@@ -897,3 +909,33 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   `power_action` su Windows resta un rifiuto incondizionato non strutturato (P2
   della ricognizione, non toccato qui). `GET /v1/registry` e issue #50 restano
   decisioni owner.
+
+
+## power_action: rifiuto strutturato e simmetrico fra i due OS (ricognizione stub P2/P3)
+- **Status:** DONE
+- **Problema:** su Windows `power_action` rispondeva
+  `{"ok": False, "error": "power actions require interactive elevation"}` —
+  incondizionato e SENZA `denied` ne' `code`. Due difetti distinti:
+  (1) un rifiuto di policy aveva la stessa forma di un guasto, quindi il
+  chiamante non sapeva se riprovare o chiedere un permesso;
+  (2) su Linux la stessa funzione usava gia' `deny_structured` con
+  `code="hardware_protected"` — un client scritto contro Linux non riconosceva
+  il rifiuto su Windows, difetto che si manifesta solo cambiando OS.
+- **Files:**
+  - `windows_os_api/backends/windows.py` (`power_action` con `deny_structured`;
+    `audio_devices` documentato — P3)
+- **Tests:**
+  - `tests/security/test_power_action_denial.py` (10)
+  - `tests/windows/test_system_inventory_windows.py` (1 nuovo su Windows reale)
+- **How to run:** `pytest -q -m "not linux and not windows"` + `pytest -q -m windows` su win32
+- **BLOCK verificato:** ritorno del rifiuto piatto -> 2 rossi.
+- **NON implementa shutdown/reboot.** E' una superficie privilegiata reale e la
+  sua aggiunta e' una decisione dell'owner. Due test lo sorvegliano: uno
+  sull'AST (nessun `InitiateSystemShutdown`/`ExitWindowsEx`/`subprocess`), uno
+  che verifica l'assenza di rami condizionali — un `if action == "sleep"` che
+  passasse sarebbe una superficie aggiunta di soppiatto. Sul Windows reale il
+  test gira su un runner ELEVATO: se `power_action` tentasse davvero
+  l'operazione spegnerebbe la macchina invece di fallire.
+- **Honest limits:** il test Windows gira solo su `windows-latest` in CI.
+  `audio_devices` (P3) resta `[]` — irraggiungibile via API grazie a D4-B, e la
+  docstring e' l'avviso per chi chiami il backend direttamente.

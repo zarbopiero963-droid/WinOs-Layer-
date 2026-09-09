@@ -278,3 +278,18 @@ def test_admin_and_elevated_are_reported_separately(backend):
 def test_sessions_capability_is_declared(backend):
     flags = backend.capability_flags()
     assert flags["sessions"] is True, flags
+
+
+def test_power_action_is_refused_in_the_shared_shape(backend):
+    """Sul Windows vero: rifiuto riconoscibile, e nessuna azione eseguita.
+
+    Il runner GitHub gira elevato — quindi se `power_action` tentasse davvero
+    l'operazione, questo test spegnerebbe la macchina invece di fallire. Che
+    non succeda è esso stesso la prova.
+    """
+    for action in ("shutdown", "reboot", "logoff"):
+        out = backend.power_action(action)
+        assert out["ok"] is False, out
+        assert out["denied"] is True, out
+        assert out["code"] == "hardware_protected", out
+        assert out["detail"]["action"] == action, out
