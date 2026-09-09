@@ -644,13 +644,35 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
 ## PR50: E2E universal adapter path on FakeBackend CRM
-- **Status:** DONE
+- **Status:** PARTIAL — *era* DONE, e non lo era
 - **Files:**
   - `windows_os_api/backends/fake.py`
   - `tests/fixtures/crm_ui_tree.json`
+  - `windows_os_api/apps/adapters/store.py` — manifest versionato, persistenza
+  - `windows_os_api/apps/adapters/engine.py` — reload all'avvio, aggancio finestra
 - **Tests:**
   - `tests/e2e/test_universal_adapter_e2e.py`
+  - `tests/security/test_adapter_persistence.py`
 - **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
+- **Perché non era DONE:** il test end-to-end gira interamente su una **fixture
+  inventata** (`Contoso CRM`, `hwnd: 1001`, `crm_ui_tree.json`). Prova
+  l'idraulica dell'API — discover, albero, azione, workflow — non che l'adapter
+  funzioni su un'applicazione reale che nessuno ha descritto in anticipo. Un
+  metodo che esiste non è una capability dimostrata: è la stessa distinzione che
+  ha portato a `supported=false` (#28) e alla ricognizione stub.
+- **Fatto adesso (persistenza):** un adapter creato viene scritto come manifest
+  versionato e **rimesso in memoria all'avvio del runtime**, quindi l'ispezione
+  che lo costruisce si fa una volta. Con una separazione che è il punto della
+  patch: sopravvive la **descrizione** (azioni, `automation_id`, rischio), non
+  il **legame** con la finestra — l'`hwnd` è un numero che il sistema
+  riassegna, e ricaricarlo come valido darebbe un adapter che clicca su una
+  finestra di un'altra applicazione. Un adapter ricaricato torna quindi *noto
+  ma non agganciato*, e `invoke_action` lo rifiuta con `ADAPTER_NOT_BOUND`
+  finché non viene riagganciato a una finestra viva. Manifest di versione ignota
+  o corrotto: **saltato e riportato**, mai interpretato a naso.
+- **Cosa manca ancora (Gate 4, vedi #6):** capability verification con effetto
+  reale osservabile (la confidence non è verifica), Virtual API generata dalla
+  capability verificata, e la pipeline completa su un **EXE sconosciuto**.
 
 ## Summary
 - DONE: 50 (+ Linux gaps closed)

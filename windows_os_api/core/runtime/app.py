@@ -28,10 +28,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sync_llm_bridge()
         except Exception:  # noqa: BLE001
             pass
+        # Gli adapter salvati tornano in memoria all'avvio: e' questo passo che
+        # rende vera la parola «persistente», senza il quale il manifest sarebbe
+        # un file che nessuno rilegge. Tornano NON agganciati — la descrizione
+        # sopravvive, il legame con la finestra no (vedi `adapters/store.py`).
+        adapters_report: dict[str, list] = {"restored": [], "skipped": []}
+        try:
+            from windows_os_api.apps.adapters.engine import load_persisted_adapters
+
+            adapters_report = load_persisted_adapters()
+        except Exception as exc:  # noqa: BLE001
+            # Un problema nel ripristino non impedisce al server di partire, ma
+            # non sparisce: finisce nell'audit di avvio come il resto.
+            adapters_report = {"restored": [], "skipped": [{"reason": str(exc)}]}
+
         get_audit_logger().log(
             "server.startup",
             subject="system",
-            detail={"version": __version__, "host": settings.effective_host()},
+            detail={
+                "version": __version__,
+                "host": settings.effective_host(),
+                "adapters_restored": adapters_report["restored"],
+                "adapters_skipped": adapters_report["skipped"],
+            },
         )
         get_metrics().incr("server.starts")
         yield

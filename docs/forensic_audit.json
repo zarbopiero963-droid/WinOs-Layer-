@@ -767,15 +767,18 @@
   },
   {
     "pr": 50,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "E2E universal adapter path on FakeBackend CRM",
     "files": [
       "windows_os_api/backends/fake.py",
-      "tests/fixtures/crm_ui_tree.json"
+      "tests/fixtures/crm_ui_tree.json",
+      "windows_os_api/apps/adapters/store.py",
+      "windows_os_api/apps/adapters/engine.py"
     ],
     "tests": [
-      "tests/e2e/test_universal_adapter_e2e.py"
+      "tests/e2e/test_universal_adapter_e2e.py",
+      "tests/security/test_adapter_persistence.py"
     ],
-    "remaining": null
+    "remaining": "Il percorso E2E gira solo sulla fixture Contoso CRM: prova l'idraulica dell'API, non che l'adapter funzioni su un'applicazione reale. Persistenza e manifest ci sono; mancano capability verification con effetto osservabile, Virtual API generata dalla capability verificata, e la pipeline su un EXE sconosciuto. Vedi #6 (Gate 4)."
   }
 ]
