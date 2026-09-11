@@ -267,16 +267,19 @@ class WindowsBackend:
         # Guarded optional Windows deps
         self._win32api = None
         self._win32gui = None
+        self._win32process = None
         self._win32clipboard = None
         self._winreg = None
         try:
             import win32api  # type: ignore
             import win32gui  # type: ignore
+            import win32process  # type: ignore
             import win32clipboard  # type: ignore
             import winreg  # type: ignore
 
             self._win32api = win32api
             self._win32gui = win32gui
+            self._win32process = win32process
             self._win32clipboard = win32clipboard
             self._winreg = winreg
         except ImportError:
@@ -565,7 +568,17 @@ class WindowsBackend:
             if self._win32gui.IsWindowVisible(hwnd):
                 title = self._win32gui.GetWindowText(hwnd)
                 if title:
-                    result.append({"hwnd": hwnd, "title": title, "visible": True})
+                    pid = None
+                    if self._win32process is not None:
+                        try:
+                            _thread_id, pid = (
+                                self._win32process.GetWindowThreadProcessId(hwnd)
+                            )
+                        except Exception:  # noqa: BLE001
+                            pid = None
+                    result.append(
+                        {"hwnd": hwnd, "title": title, "visible": True, "pid": pid}
+                    )
 
         self._win32gui.EnumWindows(_enum, None)
         return result

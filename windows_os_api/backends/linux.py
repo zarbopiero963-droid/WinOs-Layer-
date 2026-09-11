@@ -866,15 +866,9 @@ class LinuxBackend:
     def _atspi_path(self, path_parts: list[str]) -> str:
         return "/" + "/".join(path_parts) if path_parts else "/"
 
-    def _atspi_node(
-        self,
-        acc: Any,
-        pyatspi: Any,
-        depth: int = 0,
-        max_depth: int = 6,
-        path_parts: list[str] | None = None,
-    ) -> dict[str, Any]:
-        path_parts = list(path_parts or [])
+    def _atspi_identity(
+        self, acc: Any, path_parts: list[str], sibling_index: int = 0
+    ) -> tuple[str, str, str, str]:
         try:
             name = acc.name or ""
         except Exception:  # noqa: BLE001
@@ -883,9 +877,43 @@ class LinuxBackend:
             role = acc.getRoleName() if hasattr(acc, "getRoleName") else ""
         except Exception:  # noqa: BLE001
             role = ""
-        part = f"{role}:{name}" if name else role or f"node{len(path_parts)}"
+        # Accessible names below the application root are presentation state,
+        # not identity: GTK text widgets and tabs may change them when their
+        # content changes.  A role + sibling index path remains reproducible
+        # across fresh AT-SPI reads and still identifies one exact node.
+        if path_parts:
+            part = f"{role or 'node'}[{sibling_index}]"
+        else:
+            root_name = name.replace("/", "_")
+            label = f"{role}:{root_name}" if root_name else role or "node"
+            application_id = None
+            try:
+                application = acc.getApplication()
+                application_id = getattr(application, "id", None)
+            except Exception:  # noqa: BLE001
+                pass
+            suffix = (
+                f"#{application_id}"
+                if application_id is not None
+                else f"[{sibling_index}]"
+            )
+            part = f"{label}{suffix}"
+        return name, role, part, self._atspi_path(path_parts + [part])
+
+    def _atspi_node(
+        self,
+        acc: Any,
+        pyatspi: Any,
+        depth: int = 0,
+        max_depth: int = 6,
+        path_parts: list[str] | None = None,
+        sibling_index: int = 0,
+    ) -> dict[str, Any]:
+        path_parts = list(path_parts or [])
+        name, role, part, automation_id = self._atspi_identity(
+            acc, path_parts, sibling_index
+        )
         cur_path = path_parts + [part]
-        automation_id = self._atspi_path(cur_path)
         states = self._atspi_states(acc, pyatspi)
         bounds = self._atspi_bounds(acc)
         value = None
@@ -909,6 +937,7 @@ class LinuxBackend:
                             depth + 1,
                             max_depth,
                             cur_path,
+                            i,
                         )
                     )
                 except Exception:  # noqa: BLE001
@@ -925,6 +954,72 @@ class LinuxBackend:
             "children": kids,
         }
 
+    def _find_atspi_acc_by_path(self, pyatspi: Any, automation_id: str) -> Any | None:
+        desktop = pyatspi.Registry.getDesktop(0)
+
+        def walk(
+            acc: Any, path_parts: list[str], sibling_index: int
+        ) -> Any | None:
+            _name, _role, part, current_id = self._atspi_identity(
+                acc, path_parts, sibling_index
+            )
+            if current_id == automation_id:
+                return acc
+            current_parts = path_parts + [part]
+            try:
+                count = acc.childCount
+            except Exception:  # noqa: BLE001
+                count = 0
+            for index in range(min(count, 80)):
+                try:
+                    found = walk(acc.getChildAtIndex(index), current_parts, index)
+                except Exception:  # noqa: BLE001
+                    continue
+                if found is not None:
+                    return found
+            return None
+
+        try:
+            for index in range(min(desktop.childCount, 40)):
+                found = walk(desktop.getChildAtIndex(index), [], index)
+                if found is not None:
+                    return found
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    def set_ui_value(self, automation_id: str, value: str) -> dict[str, Any]:
+        """Set one exact AT-SPI node and report only a real EditableText write."""
+        try:
+            pyatspi = _ensure_pyatspi()
+            acc = self._find_atspi_acc_by_path(pyatspi, automation_id)
+            if acc is None:
+                return {
+                    "ok": False,
+                    "error": "AT-SPI element not found",
+                    "automation_id": automation_id,
+                }
+            editable = acc.queryEditableText()
+            try:
+                text = acc.queryText()
+                if text.characterCount > 0:
+                    editable.deleteText(0, text.characterCount)
+            except Exception:  # noqa: BLE001
+                pass
+            editable.insertText(0, value, len(value))
+            return {
+                "ok": True,
+                "method": "atspi_editable_text",
+                "automation_id": automation_id,
+                "length": len(value),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": str(exc),
+                "automation_id": automation_id,
+            }
+
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
         try:
             pyatspi = _ensure_pyatspi()
@@ -936,7 +1031,11 @@ class LinuxBackend:
                 count = 0
             for i in range(min(count, 40)):
                 try:
-                    children.append(self._atspi_node(desktop.getChildAtIndex(i), pyatspi))
+                    children.append(
+                        self._atspi_node(
+                            desktop.getChildAtIndex(i), pyatspi, sibling_index=i
+                        )
+                    )
                 except Exception:  # noqa: BLE001
                     continue
             return {

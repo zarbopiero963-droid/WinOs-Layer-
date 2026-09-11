@@ -66,6 +66,11 @@ def _control_type_name(raw: Any) -> str:
         s = raw.replace("ControlType.", "").replace("UIA_", "").replace("ControlTypeId", "")
         if s.endswith("ControlTypeId"):
             s = s[: -len("ControlTypeId")]
+        # uiautomation exposes names such as ``DocumentControl`` and
+        # ``ButtonControl``; the rest of the adapter contract uses the UIA
+        # canonical names (Document, Button, Edit, ...).
+        if s.endswith("Control") and len(s) > len("Control"):
+            s = s[: -len("Control")]
         return s or "Unknown"
     try:
         return str(int(raw))
@@ -446,11 +451,24 @@ def build_tree(
         raise RuntimeError("UIA tree requires Windows (win32)")
 
     errors: list[str] = []
+    incomplete_tree: dict[str, Any] | None = None
+
+    def complete(tree: dict[str, Any]) -> bool:
+        # A desktop root may genuinely be empty.  A concrete top-level window
+        # that another provider can inspect should not stop discovery merely
+        # because the preferred provider transiently returned only its root.
+        return not hwnd or bool(tree.get("children"))
 
     try:
         import uiautomation  # noqa: F401
 
-        return _tree_uiautomation(hwnd, max_depth=max_depth, max_children=max_children)
+        tree = _tree_uiautomation(
+            hwnd, max_depth=max_depth, max_children=max_children
+        )
+        if complete(tree):
+            return tree
+        incomplete_tree = tree
+        errors.append("uiautomation: root has no children")
     except ImportError:
         errors.append("uiautomation not installed")
     except Exception as e:  # noqa: BLE001
@@ -459,7 +477,11 @@ def build_tree(
     try:
         import comtypes  # noqa: F401
 
-        return _tree_comtypes(hwnd, max_depth=max_depth, max_children=max_children)
+        tree = _tree_comtypes(hwnd, max_depth=max_depth, max_children=max_children)
+        if complete(tree):
+            return tree
+        incomplete_tree = tree
+        errors.append("comtypes: root has no children")
     except ImportError:
         errors.append("comtypes not installed")
     except Exception as e:  # noqa: BLE001
@@ -468,11 +490,18 @@ def build_tree(
     try:
         import pywinauto  # noqa: F401
 
-        return _tree_pywinauto(hwnd, max_depth=max_depth, max_children=max_children)
+        tree = _tree_pywinauto(hwnd, max_depth=max_depth, max_children=max_children)
+        if complete(tree):
+            return tree
+        incomplete_tree = tree
+        errors.append("pywinauto: root has no children")
     except ImportError:
         errors.append("pywinauto not installed")
     except Exception as e:  # noqa: BLE001
         errors.append(f"pywinauto: {e}")
+
+    if incomplete_tree is not None:
+        return incomplete_tree
 
     raise RuntimeError(
         "No working UIA backend (need uiautomation, comtypes, or pywinauto): "

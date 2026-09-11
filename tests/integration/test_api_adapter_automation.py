@@ -1,4 +1,8 @@
 """Apps, adapters, workflows, agent via HTTP."""
+from windows_os_api.apps.ui_inspector.service import find_by_automation_id
+from windows_os_api.backends.factory import get_backend
+
+
 def test_discover_and_adapter_flow(client, auth_headers):
     apps = client.post("/v1/apps/discover", headers=auth_headers).json()["apps"]
     assert any(a["id"] == "contoso-crm" for a in apps)
@@ -16,6 +20,66 @@ def test_discover_and_adapter_flow(client, auth_headers):
     oapi = client.get("/v1/apps/contoso-crm/openapi.json", headers=auth_headers).json()
     assert oapi["info"]["title"].startswith("Contoso")
     assert len(oapi["paths"]) >= 1
+
+
+def test_verify_action_http_observes_rolls_back_persists_and_audits(
+    client, auth_headers, admin_headers
+):
+    created = client.post(
+        "/v1/apps/contoso-crm/adapter", headers=auth_headers, json={"hwnd": 1001}
+    )
+    assert created.status_code == 200, created.text
+    actions = client.get(
+        "/v1/apps/contoso-crm/actions", headers=auth_headers
+    ).json()["actions"]
+    edit = next(action for action in actions if action["control_type"] == "Edit")
+    backend = get_backend()
+    original = find_by_automation_id(
+        backend.get_ui_tree(1001), edit["automation_id"]
+    )["value"]
+
+    response = client.post(
+        f"/v1/apps/contoso-crm/actions/{edit['name']}/verify",
+        headers=auth_headers,
+        json={"times": 2},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["ok"] is True, result
+    assert result["recorded"] is True, result
+    assert result["persisted"] is True, result
+    assert result["verification"]["state"] == "VERIFIED", result
+    assert result["verification"]["attempts"] == 2, result
+    restored = find_by_automation_id(
+        backend.get_ui_tree(1001), edit["automation_id"]
+    )["value"]
+    assert restored == original, "HTTP verification left test data in the app"
+
+    actions_after = client.get(
+        "/v1/apps/contoso-crm/actions", headers=auth_headers
+    ).json()["actions"]
+    recorded = next(action for action in actions_after if action["name"] == edit["name"])
+    assert recorded["verification"]["state"] == "VERIFIED", recorded
+
+    audit_entries = client.get("/v1/audit", headers=admin_headers).json()
+    entries = audit_entries.get("entries", audit_entries)
+    assert any(entry.get("action") == "adapter.verify" for entry in entries), entries
+
+
+def test_verify_action_http_rejects_unbounded_repetitions(client, auth_headers):
+    client.post("/v1/apps/contoso-crm/adapter", headers=auth_headers, json={})
+    actions = client.get(
+        "/v1/apps/contoso-crm/actions", headers=auth_headers
+    ).json()["actions"]
+    edit = next(action for action in actions if action["control_type"] == "Edit")
+
+    for times in (0, 11):
+        response = client.post(
+            f"/v1/apps/contoso-crm/actions/{edit['name']}/verify",
+            headers=auth_headers,
+            json={"times": times},
+        )
+        assert response.status_code == 422, response.text
 
 def test_workflow_generate_and_intent(client, auth_headers):
     client.post("/v1/apps/contoso-crm/adapter", headers=auth_headers, json={})

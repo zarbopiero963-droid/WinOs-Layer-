@@ -7,7 +7,13 @@ from windows_os_api.core.permissions.model import Permission
 from windows_os_api.core.security.auth import AuthContext, require_permission
 from windows_os_api.api.rest.deps import audit
 from windows_os_api.apps.discovery import service as discovery
-from windows_os_api.apps.adapters.engine import create_adapter, get_adapter, invoke_action, list_adapters
+from windows_os_api.apps.adapters.engine import (
+    create_adapter,
+    get_adapter,
+    invoke_action,
+    list_adapters,
+    verify_and_record,
+)
 from windows_os_api.apps.schema.generator import app_openapi
 from windows_os_api.apps.sandbox.permissions import check_action, get_policy
 from windows_os_api.apps.automation.actions import discover_actions
@@ -27,6 +33,9 @@ class InvokeBody(BaseModel):
 class CreateAdapterBody(BaseModel):
     hwnd: int = 1001
     trust_level: str = "unsigned"
+
+class VerifyActionBody(BaseModel):
+    times: int = Field(default=1, ge=1, le=10)
 
 @router.get("")
 def list_apps(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
@@ -81,7 +90,29 @@ def invoke(app_id: str, action_name: str, body: InvokeBody, auth: AuthContext = 
     audit("adapter.invoke", auth, resource=f"{app_id}/{action_name}", detail=result)
     return result
 
+@router.post("/{app_id}/actions/{action_name}/verify")
+def verify(
+    app_id: str,
+    action_name: str,
+    body: VerifyActionBody,
+    auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE)),
+):
+    # La verifica modifica temporaneamente l'app e persiste il verdetto: per
+    # questo richiede ADAPTER_MANAGE, non il solo permesso di invocazione.
+    result = verify_and_record(app_id, action_name, times=body.times)
+    state = (result.get("verification") or {}).get("state")
+    outcome = "success" if result.get("ok") else "failure"
+    if state == "BLOCKED":
+        outcome = "denied"
+    audit(
+        "adapter.verify",
+        auth,
+        resource=f"{app_id}/{action_name}",
+        outcome=outcome,
+        detail=result,
+    )
+    return result
+
 @router.get("/{app_id}/openapi.json")
 def openapi_for_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
     return app_openapi(app_id)
-

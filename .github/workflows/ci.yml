@@ -39,7 +39,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb xdotool wmctrl x11-utils openbox xterm iputils-ping
+            xvfb xdotool wmctrl x11-utils openbox xterm iputils-ping \
+            dbus-x11 at-spi2-core python3-pyatspi mousepad
       - name: Forensic audit
         run: python scripts/forensic_audit.py
       - name: Validate installer packaging
@@ -62,8 +63,12 @@ jobs:
           # skip here would mean the install broke — and a skipped test reads
           # exactly like a passing one.
           WINOS_REQUIRE_PING: "1"
+          # Capability verification must touch and read back a real GTK app.
+          # Missing AT-SPI/Mousepad is a failed gate here, never a green skip.
+          WINOS_REQUIRE_ATSPI: "1"
         run: |
-          xvfb-run -a --server-args="-screen 0 1280x1024x24" pytest -q --tb=short -m "linux"
+          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            pytest -q --tb=short -m "linux"
       - name: Pytest portable+linux exclude windows (under Xvfb)
         env:
           WINOS_BACKEND: fake
@@ -111,6 +116,9 @@ jobs:
           # ping ships with Windows, so its absence would be an anomaly worth
           # failing on rather than skipping past.
           WINOS_REQUIRE_PING: "1"
+          # The Notepad capability test is the hard gate for real UIA
+          # write/readback/rollback. It may not disappear behind pytest.skip.
+          WINOS_REQUIRE_UI: "1"
         run: pytest -q --tb=short -m windows
       - name: Live Windows smoke
         env:

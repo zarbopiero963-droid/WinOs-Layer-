@@ -114,6 +114,13 @@ def to_manifest(adapter: Any) -> dict[str, Any]:
                 "control_type": action.control_type,
                 "params": list(action.params),
                 "risk": action.risk,
+                # Il verdetto di verifica vive con l'adapter: al prossimo avvio
+                # si deve poter sapere cosa era gia' stato dimostrato, senza
+                # rifare tutte le prove. Campo AGGIUNTIVO — un manifest che non
+                # ce l'ha resta leggibile, e per questo la versione non sale:
+                # sale quando cambia il significato dei campi, non quando se ne
+                # aggiunge uno compatibile.
+                "verification": action.verification,
             }
             for action in adapter.actions
         ],

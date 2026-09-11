@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import os
 import platform
 import time
@@ -40,6 +41,17 @@ from windows_os_api.os.network.validation import (
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+
+def _find_node(tree: dict[str, Any], automation_id: str) -> dict[str, Any] | None:
+    """Il nodo con quell'`automation_id`, dentro l'albero VERO del backend."""
+    if tree.get("automation_id") == automation_id:
+        return tree
+    for child in tree.get("children") or []:
+        found = _find_node(child, automation_id)
+        if found is not None:
+            return found
+    return None
+
 
 CRM_UI_TREE: dict[str, Any] = {
     "hwnd": 1001,
@@ -135,6 +147,19 @@ class FakeBackend:
         }
         self._input_log: list[dict[str, Any]] = []
         self._terminal_log: list[dict[str, Any]] = []
+        # L'albero UI e' STATO di questa istanza, non la costante di modulo.
+        #
+        # `get_ui_tree` restituiva `dict(CRM_UI_TREE)`: una copia SUPERFICIALE.
+        # Il dizionario di primo livello era nuovo, ma `children` e i nodi figli
+        # erano gli stessi oggetti, quindi un chiamante che scriveva
+        # `node["value"] = ...` modificava la costante di modulo — e la modifica
+        # restava per tutti i test successivi.
+        #
+        # Conta adesso piu' di prima: la verifica delle capability osserva
+        # l'effetto rileggendo l'albero. Con una fixture condivisa e mutabile
+        # avrebbe osservato la PROPRIA scrittura invece dell'effetto, e concluso
+        # «verificata» per il motivo sbagliato.
+        self._ui_tree: dict[str, Any] = copy.deepcopy(CRM_UI_TREE)
 
     # --- System ---
     def get_system_info(self) -> dict[str, Any]:
@@ -312,7 +337,10 @@ class FakeBackend:
     # --- UI ---
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
         if hwnd is None or hwnd == 1001:
-            return dict(CRM_UI_TREE)
+            # Copia PROFONDA: quello che il chiamante riceve e' suo, e non puo'
+            # modificare lo stato del backend scrivendoci dentro. Un'ispezione
+            # che cambia cio' che ispeziona non e' un'ispezione.
+            return copy.deepcopy(self._ui_tree)
         win = self._windows.get(hwnd or 0)
         return {
             "hwnd": hwnd,
@@ -418,6 +446,31 @@ class FakeBackend:
     def type_text(self, text: str) -> dict[str, Any]:
         self._input_log.append({"type": "type_text", "text": text})
         return {"ok": True, "length": len(text)}
+
+    def set_ui_value(self, automation_id: str, value: str) -> dict[str, Any]:
+        """Scrive in un campo dell'albero UI, e lo scrive DAVVERO.
+
+        Un'applicazione finta i cui campi non cambiano quando ci si scrive
+        dentro non modella un'applicazione: modella uno screenshot. E senza un
+        effetto vero non esiste un caso «verificata» onesto — la verifica
+        delle capability osserva rileggendo l'albero, e su uno screenshot non
+        c'e' mai niente da osservare.
+
+        L'effetto passa da qui, dal backend, non dal chiamante che modifica il
+        dizionario che gli e' stato restituito: quella era una scrittura su una
+        copia, che sembrava funzionare solo perche' la copia era condivisa.
+        """
+        node = _find_node(self._ui_tree, automation_id)
+        if node is None:
+            return {"ok": False, "error": "element not found", "automation_id": automation_id}
+        if node.get("control_type") != "Edit":
+            return {
+                "ok": False,
+                "error": f"{node.get('control_type')} non e' un campo scrivibile",
+                "automation_id": automation_id,
+            }
+        node["value"] = value
+        return {"ok": True, "automation_id": automation_id, "value": value}
 
     # --- Clipboard ---
     def clipboard_get(self) -> dict[str, Any]:
