@@ -1,11 +1,13 @@
 """Auto workflow generation with confidence / risk / rollback."""
 from __future__ import annotations
+
 import uuid
-from typing import Any
-from windows_os_api.apps.workflows.recorder import Workflow, WorkflowStep, _workflows
+
+from windows_os_api.apps.adapters.engine import create_adapter, get_adapter
 from windows_os_api.apps.semantic.mapper import map_intent_to_element
 from windows_os_api.apps.ui_inspector.service import get_tree
-from windows_os_api.apps.adapters.engine import create_adapter, get_adapter
+from windows_os_api.apps.workflows.recorder import Workflow, WorkflowStep, _workflows
+
 
 def generate_workflow(intent: str, app_id: str, hwnd: int = 1001) -> Workflow:
     tree = get_tree(hwnd)
@@ -38,7 +40,12 @@ def generate_workflow(intent: str, app_id: str, hwnd: int = 1001) -> Workflow:
         if el and el.get("automation_id"):
             act = next((a for a in adapter.actions if a.automation_id == el["automation_id"]), None)
             if act:
-                steps.append(WorkflowStep(action=act.name, params={}))
+                steps.append(
+                    WorkflowStep(
+                        action=act.name,
+                        params={name: "" for name in act.params},
+                    )
+                )
                 confidence = 0.75
                 risk = act.risk
 
