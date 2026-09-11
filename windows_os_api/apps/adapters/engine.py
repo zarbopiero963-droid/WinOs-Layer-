@@ -114,15 +114,19 @@ def create_adapter(app_id: str, hwnd: int = 1001, trust_level: str = "unsigned")
     # nothing can look up again.
     app_id = validate_app_id(app_id)
     tree = get_tree(hwnd)
+    actions = _default_actions_from_tree(tree)
     # UIA/AT-SPI providers can transiently reject a read while the target is
     # creating or refreshing its accessibility peers.  The backend reports
-    # that explicitly as an error tree; retry only that case.  A successful
-    # tree with no actions is a legitimate observation and returns at once.
+    # that explicitly as an error tree.  Some providers first return only the
+    # top-level window and publish its children on a later read, so an empty
+    # action set is incomplete for discovery and receives the same bounded
+    # wait.  If the application genuinely has no actionable controls, the
+    # adapter is still returned after the deadline.
     deadline = time.monotonic() + 3.0
-    while tree.get("error") and time.monotonic() < deadline:
+    while (tree.get("error") or not actions) and time.monotonic() < deadline:
         time.sleep(0.05)
         tree = get_tree(hwnd)
-    actions = _default_actions_from_tree(tree)
+        actions = _default_actions_from_tree(tree)
     adapter = Adapter(
         app_id=app_id,
         app_name=tree.get("name") or app_id,

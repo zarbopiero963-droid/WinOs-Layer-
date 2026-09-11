@@ -27,7 +27,7 @@ def test_create_adapter_from_crm_tree(tmp_path, monkeypatch):
     assert len(adapter.openapi["paths"]) == len(adapter.actions)
 
 
-def test_create_adapter_retries_an_explicitly_failed_tree(tmp_path, monkeypatch):
+def test_create_adapter_retries_an_incomplete_tree(tmp_path, monkeypatch):
     from windows_os_api.apps.adapters import engine
 
     monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(tmp_path))
@@ -41,11 +41,9 @@ def test_create_adapter_retries_an_explicitly_failed_tree(tmp_path, monkeypatch)
         calls += 1
         if calls == 1:
             return {
-                "name": "",
+                "name": "Contoso CRM",
                 "control_type": "Window",
                 "children": [],
-                "error": "accessibility provider is still refreshing",
-                "ok": False,
             }
         return get_tree(hwnd)
 
