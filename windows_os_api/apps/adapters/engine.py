@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import re
+import time
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Callable
@@ -113,6 +114,14 @@ def create_adapter(app_id: str, hwnd: int = 1001, trust_level: str = "unsigned")
     # nothing can look up again.
     app_id = validate_app_id(app_id)
     tree = get_tree(hwnd)
+    # UIA/AT-SPI providers can transiently reject a read while the target is
+    # creating or refreshing its accessibility peers.  The backend reports
+    # that explicitly as an error tree; retry only that case.  A successful
+    # tree with no actions is a legitimate observation and returns at once.
+    deadline = time.monotonic() + 3.0
+    while tree.get("error") and time.monotonic() < deadline:
+        time.sleep(0.05)
+        tree = get_tree(hwnd)
     actions = _default_actions_from_tree(tree)
     adapter = Adapter(
         app_id=app_id,

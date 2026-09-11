@@ -130,15 +130,19 @@ def test_uia_notepad_tree_with_children():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows (win32)")
 @pytest.mark.requires_display
-def test_notepad_type_text_and_adapter():
+def test_notepad_type_text_and_adapter(monkeypatch):
     """Start Notepad, type via SendInput / set_value, create_adapter from tree."""
     from windows_os_api.apps.adapters.engine import create_adapter, reset_adapters
     from windows_os_api.apps.ui_inspector import uia_windows
-    from windows_os_api.backends.windows import WindowsBackend
+    from windows_os_api.backends.factory import get_backend, reset_backend
+    from windows_os_api.core.runtime.config import get_settings
 
     _require_live_ui(uia_windows.uia_available(), "UIA library not installed")
 
-    backend = WindowsBackend()
+    monkeypatch.setenv("WINOS_BACKEND", "windows")
+    get_settings.cache_clear()
+    reset_backend()
+    backend = get_backend()
     proc = None
     try:
         previous = {int(w["hwnd"]) for w in backend.list_windows()}
@@ -185,6 +189,8 @@ def test_notepad_type_text_and_adapter():
         assert "contoso" not in adapter.app_name.lower()
     finally:
         reset_adapters()
+        reset_backend()
+        get_settings.cache_clear()
         if proc is not None and proc.poll() is None:
             proc.terminate()
             try:

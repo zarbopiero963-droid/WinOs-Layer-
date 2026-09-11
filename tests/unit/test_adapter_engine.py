@@ -26,6 +26,37 @@ def test_create_adapter_from_crm_tree(tmp_path, monkeypatch):
     assert adapter.openapi["openapi"].startswith("3.")
     assert len(adapter.openapi["paths"]) == len(adapter.actions)
 
+
+def test_create_adapter_retries_an_explicitly_failed_tree(tmp_path, monkeypatch):
+    from windows_os_api.apps.adapters import engine
+
+    monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(tmp_path))
+    monkeypatch.setenv("WINOS_BACKEND", "fake")
+    get_settings.cache_clear()
+    reset_backend()
+    calls = 0
+
+    def transient_tree(hwnd=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "name": "",
+                "control_type": "Window",
+                "children": [],
+                "error": "accessibility provider is still refreshing",
+                "ok": False,
+            }
+        return get_tree(hwnd)
+
+    monkeypatch.setattr(engine, "get_tree", transient_tree)
+
+    adapter = create_adapter("contoso-crm", hwnd=1001)
+
+    assert calls == 2
+    assert adapter.app_name == "Contoso CRM"
+    assert adapter.actions
+
 def test_invoke_set_and_click(tmp_path, monkeypatch):
     monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setenv("WINOS_BACKEND", "fake")
