@@ -233,6 +233,13 @@ def test_uninstall_removes_the_runtime_audit_log():
     assert "logs" in _uninstall_directives()
 
 
+def test_uninstall_removes_product_owned_runtime_directories():
+    """The installed backend and service TEMP must leave no residue below {app}."""
+    cleanup = _uninstall_directives()
+    assert r'Name: "{app}\sandbox"' in cleanup
+    assert r'Name: "{app}\tmp"' in cleanup
+
+
 def test_every_code_generated_file_is_covered_by_uninstalldelete():
     """Generalised guard: a new file written from [Code] must also be removed.
 
