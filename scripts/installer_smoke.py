@@ -195,20 +195,7 @@ def wait_or_kill_tree(proc: subprocess.Popen, grace: float = 30.0) -> bool:
 
 
 def silent_install_observed(setup: Path, install_dir: Path, log: Path) -> bool:
-    """Install, then wait for the RESULT rather than for the process to exit.
-
-    Observed on GHA across three runs: Setup.exe completes the installation —
-    the Inno log records "Installation process succeeded" and every file lands
-    on disk — and then never terminates; the runner reaps its
-    WinOsApi-Setup-<v>.tmp helper as an orphan afterwards. Waiting on process
-    exit therefore hangs on a job that has actually finished its work.
-
-    So the assertion moves to what we actually care about and can trust: the
-    layout the .iss promises must appear. It is not relaxed — it must still
-    become true, or this fails. The installer's failure to exit is returned to
-    the caller and reported loudly, because an unattended deploy that waits on
-    Setup.exe would hang on it (tracked in issue #6).
-    """
+    """Require both the installed layout and a normally exiting Setup process."""
     proc = subprocess.Popen(  # noqa: S603
         [
             str(setup),
@@ -229,11 +216,7 @@ def silent_install_observed(setup: Path, install_dir: Path, log: Path) -> bool:
 
 
 def silent_uninstall_observed(install_dir: Path) -> bool:
-    """Uninstall, then wait for the removal rather than for the process to exit.
-
-    Inno's uninstaller relaunches itself from a temp copy, so it has the same
-    non-exiting behaviour as Setup.exe. Same approach: assert the effect.
-    """
+    """Require both complete removal and a normally exiting uninstaller."""
     uninstaller = uninstaller_path(install_dir)
     if not uninstaller.is_file():
         raise InstallerSmokeError(f"uninstaller missing: {uninstaller}")
@@ -309,10 +292,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  install -> {install_dir}")
         print(f"  layout  -> {', '.join(EXPECTED_AFTER_INSTALL)} present, api_key.txt non-empty")
         if not exited:
-            print(
-                "  WARNING: Setup.exe completed the installation but never exited; "
-                "its process tree was killed. An unattended deploy that waits on "
-                "Setup.exe would hang here. Tracked in issue #6."
+            raise InstallerSmokeError(
+                "Setup.exe produced the layout but never exited; its process tree was killed"
             )
 
         run_installed_binary(install_dir)
@@ -324,7 +305,9 @@ def main(argv: list[str] | None = None) -> int:
         exited = silent_uninstall_observed(install_dir)
         print("  uninstall -> binary and install dir removed")
         if not exited:
-            print("  WARNING: the uninstaller never exited either; process tree killed.")
+            raise InstallerSmokeError(
+                "the uninstaller removed the product but never exited; its process tree was killed"
+            )
     except InstallerSmokeError as exc:
         print(f"\nINSTALLER SMOKE FAILED: {exc}", file=sys.stderr)
         return 1
