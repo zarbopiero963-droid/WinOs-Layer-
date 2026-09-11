@@ -1,20 +1,8 @@
 name: Build
 
 on:
-  push:
-    tags: ["v*"]
-  # Packaging changes must prove the artifact still runs BEFORE they land.
-  # Scoped with paths so ordinary PRs never pay for a Windows runner.
-  pull_request:
-    paths:
-      - ".github/workflows/build.yml"
-      - "installer/**"
-      - "scripts/build_installer.py"
-      - "scripts/artifact_smoke.py"
-      - "scripts/installer_smoke.py"
-      - "scripts/windows_service_smoke.py"
-      - "windows_os_api/cli/**"
-      - "pyproject.toml"
+  # Artifact + installer smoke are expensive (windows-latest is 2x).
+  # Start from Actions → Build → Run workflow when you want a shippable build.
   workflow_dispatch:
 
 concurrency:
