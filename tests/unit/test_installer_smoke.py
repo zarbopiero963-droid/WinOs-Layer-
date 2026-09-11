@@ -254,3 +254,17 @@ def test_every_code_generated_file_is_covered_by_uninstalldelete():
     cleanup = _uninstall_directives()
     uncovered = sorted(name for name in generated if name not in cleanup)
     assert not uncovered, f"files created by [Code] but never uninstalled: {uncovered}"
+
+
+def test_silent_install_never_blocks_on_the_api_key_message():
+    """A /VERYSILENT deployment must not wait forever for an invisible dialog."""
+    code = _iss_section("Code")
+    assert "if not WizardSilent then" in code
+
+
+def test_hanging_installer_is_a_hard_failure_not_a_warning():
+    """Keep the real installer gate fail-closed if Setup stops exiting again."""
+    script = (ISS.parents[2] / "scripts" / "installer_smoke.py").read_text(encoding="utf-8")
+    assert "raise InstallerSmokeError" in script
+    assert "Setup.exe produced the layout but never exited" in script
+    assert "WARNING: Setup.exe" not in script
