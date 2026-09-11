@@ -49,6 +49,10 @@ Type: files; Name: "{app}\api_key.txt"
 ; The server writes its audit log next to itself when started from {app}; that
 ; log records API key prefixes and executed command lines.
 Type: filesandordirs; Name: "{app}\logs"
+; The configured backend and the service's private TEMP/TMP create these
+; directories at runtime. They contain only product-owned data below {app}.
+Type: filesandordirs; Name: "{app}\sandbox"
+Type: filesandordirs; Name: "{app}\tmp"
 ; Then drop the directory itself, once nothing of ours remains in it.
 Type: dirifempty; Name: "{app}"
 
