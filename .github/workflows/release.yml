@@ -27,9 +27,12 @@ jobs:
       - name: Stage native NSSM in Windows artifacts
         shell: pwsh
         run: |
-          $candidates = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File
-          $native = $candidates | Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
-          if (-not $native) { throw "Native NSSM win64 binary not found; refusing Chocolatey shim" }
+          # The pinned Chocolatey package flattens its selected architecture to
+          # lib\nssm\tools\nssm.exe.  Read the package payload directly: the
+          # similarly named executable under Chocolatey's bin directory is a shim.
+          $native = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File |
+            Select-Object -First 1
+          if (-not $native) { throw "Native NSSM package payload not found; refusing Chocolatey shim" }
           Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
           Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - run: python scripts/build_installer.py validate
