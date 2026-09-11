@@ -39,9 +39,17 @@ def test_e2e_crm_adapter_path(client, auth_headers):
     agent = client.post("/v1/agent/run", headers=auth_headers, json={"goal": "nuovo cliente", "app_id": "contoso-crm"}).json()
     assert agent["intent"]["intent"] == "create_customer"
 
-    # 8 per-app openapi
+    # 8 per-app OpenAPI: nasce dalla capability verificata, non dalla scoperta
+    verified = client.post(
+        f"/v1/apps/contoso-crm/actions/{email_action}/verify",
+        headers=auth_headers,
+        json={"times": 2},
+    ).json()
+    assert verified["verification"]["state"] == "VERIFIED"
     oapi = client.get("/v1/apps/contoso-crm/openapi.json", headers=auth_headers).json()
-    assert any("/actions/" in p for p in oapi["paths"])
+    assert set(oapi["paths"]) == {
+        f"/v1/apps/contoso-crm/actions/{email_action}"
+    }
 
     # 9 control center served
     home = client.get("/")

@@ -17,9 +17,17 @@ def test_discover_and_adapter_flow(client, auth_headers):
         json={"params": {"value": "demo@contoso.it"}},
     )
     assert inv.json()["ok"] is True
+    verified = client.post(
+        f"/v1/apps/contoso-crm/actions/{set_email['name']}/verify",
+        headers=auth_headers,
+        json={"times": 2},
+    )
+    assert verified.json()["verification"]["state"] == "VERIFIED", verified.text
     oapi = client.get("/v1/apps/contoso-crm/openapi.json", headers=auth_headers).json()
     assert oapi["info"]["title"].startswith("Contoso")
-    assert len(oapi["paths"]) >= 1
+    assert set(oapi["paths"]) == {
+        f"/v1/apps/contoso-crm/actions/{set_email['name']}"
+    }
 
 
 def test_verify_action_http_observes_rolls_back_persists_and_audits(

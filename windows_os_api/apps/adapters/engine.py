@@ -238,6 +238,11 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
             else verify_action_repeatedly(app_id, action_name, times=times)
         )
         action.verification = verdict
+        # La Virtual API e' una proiezione dei verdetti correnti, non delle
+        # azioni semplicemente scoperte. Aggiornare la copia conservata
+        # sull'adapter nello stesso punto in cui cambia il verdetto impedisce
+        # che una capability fallita resti pubblicata fino al riavvio.
+        adapter.openapi = generate_adapter_openapi(adapter)
         persisted = True
         try:
             store.save(adapter)
@@ -429,19 +434,50 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     return {"ok": True, "action": action_name, "element": action.automation_id}
 
 def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
+    """Genera il contratto per-app dalle sole capability verificate.
+
+    ``verification`` arriva anche dai manifest persistiti, quindi il controllo
+    e' intenzionalmente stretto: deve essere un oggetto e il suo stato deve
+    essere esattamente ``VERIFIED``. Dati mancanti o malformati restano fuori
+    dalla superficie pubblicata (fail-closed).
+    """
     paths: dict[str, Any] = {}
     for a in adapter.actions:
+        if not (
+            isinstance(a.verification, dict)
+            and a.verification.get("state") == "VERIFIED"
+        ):
+            continue
         path = f"/v1/apps/{adapter.app_id}/actions/{a.name}"
         props = {p: {"type": "string"} for p in a.params}
+        params_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": props,
+            "additionalProperties": False,
+        }
+        if a.params:
+            params_schema["required"] = list(a.params)
+        body_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"params": params_schema},
+            "additionalProperties": False,
+        }
+        if a.params:
+            body_schema["required"] = ["params"]
         paths[path] = {
             "post": {
                 "summary": a.description,
                 "operationId": a.name,
                 "requestBody": {
-                    "content": {"application/json": {"schema": {"type": "object", "properties": props}}}
-                } if a.params else None,
-                "responses": {"200": {"description": "OK"}},
+                    "required": True,
+                    "content": {"application/json": {"schema": body_schema}},
+                },
+                "responses": {
+                    "200": {"description": "Action result"},
+                    "403": {"description": "Denied by RBAC or sandbox policy"},
+                },
                 "x-risk": a.risk,
+                "x-verification-state": "VERIFIED",
             }
         }
     return {

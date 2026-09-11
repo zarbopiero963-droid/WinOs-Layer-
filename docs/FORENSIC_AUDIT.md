@@ -650,9 +650,11 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `tests/fixtures/crm_ui_tree.json`
   - `windows_os_api/apps/adapters/store.py` — manifest versionato, persistenza
   - `windows_os_api/apps/adapters/engine.py` — reload all'avvio, aggancio finestra
+  - `windows_os_api/apps/schema/generator.py` — OpenAPI dinamica dai verdetti
 - **Tests:**
   - `tests/e2e/test_universal_adapter_e2e.py`
   - `tests/security/test_adapter_persistence.py`
+  - `tests/security/test_verified_virtual_api.py`
 - **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
 - **Perché non era DONE:** il test end-to-end gira interamente su una **fixture
   inventata** (`Contoso CRM`, `hwnd: 1001`, `crm_ui_tree.json`). Prova
@@ -701,8 +703,19 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   I test hard guidano Notepad tramite UIA reale su Windows e Mousepad tramite
   AT-SPI reale sotto Xvfb/DBus su Linux; l'assenza delle dipendenze UI è un
   fallimento del job dedicato, non uno skip verde.
-- **Cosa manca ancora (Gate 4, vedi #6):** Virtual API generata dalla capability
-  verificata, e la pipeline completa su un **EXE sconosciuto**.
+- **Fatto adesso (Virtual API dinamica):** il documento OpenAPI per-app non
+  pubblica più ogni controllo trovato nell'albero. Un path entra soltanto con
+  un verdetto strutturato il cui stato è esattamente `VERIFIED`; verdetti
+  assenti, malformati, `FAILED`, `BLOCKED`, `UNSUPPORTED` o `UNSTABLE` restano
+  fuori fail-closed. La superficie viene rigenerata nello stesso punto in cui
+  si registra un nuovo verdetto, quindi una verifica fallita rimuove subito il
+  path e una recovery lo ripristina. Il manifest conserva il risultato dopo il
+  restart senza conservare l'`hwnd`. Lo schema del request body ora descrive la
+  rotta reale (`{"params": {"value": ...}}`) invece del vecchio body piatto.
+  Test hard aggiuntivi dimostrano che la capability verificata su Notepad/UIA
+  reale e Mousepad/AT-SPI reale entra effettivamente nella Virtual API.
+- **Cosa manca ancora (Gate 4, vedi #6):** la pipeline completa su un **EXE
+  sconosciuto**.
 
 ## Summary
 - DONE: 50 (+ Linux gaps closed)

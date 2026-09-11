@@ -24,7 +24,9 @@ def test_create_adapter_from_crm_tree(tmp_path, monkeypatch):
     assert any("save" in n for n in names)
     assert any("set_field" in n or "email" in n for n in names)
     assert adapter.openapi["openapi"].startswith("3.")
-    assert len(adapter.openapi["paths"]) == len(adapter.actions)
+    assert adapter.openapi["paths"] == {}, (
+        "azioni scoperte ma non verificate non sono ancora una Virtual API"
+    )
 
 
 def test_create_adapter_retries_an_incomplete_tree(tmp_path, monkeypatch):

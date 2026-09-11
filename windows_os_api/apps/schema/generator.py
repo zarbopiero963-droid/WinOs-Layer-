@@ -5,7 +5,10 @@ from windows_os_api.apps.adapters.engine import get_adapter, create_adapter, gen
 
 def app_openapi(app_id: str, hwnd: int = 1001) -> dict[str, Any]:
     adapter = get_adapter(app_id) or create_adapter(app_id, hwnd)
-    return generate_adapter_openapi(adapter)
+    # Il documento e' dinamico: una verifica successiva puo' aggiungere una
+    # capability, mentre un fallimento successivo deve rimuoverla subito.
+    adapter.openapi = generate_adapter_openapi(adapter)
+    return adapter.openapi
 
 def platform_capabilities_schema() -> dict[str, Any]:
     return {
