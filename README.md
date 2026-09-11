@@ -250,6 +250,25 @@ sandbox sta dentro `invoke_action`.
 *definisce* quella app demo. Un test fallisce se il nome ricompare come default
 in un qualunque altro modulo di produzione.
 
+### La Virtual API pubblica solo capability verificate
+
+`GET /v1/apps/{app_id}/openapi.json` e' un contratto dinamico: una azione
+appena scoperta non compare ancora nei `paths`. Entra soltanto dopo che
+`POST /v1/apps/{app_id}/actions/{action_name}/verify` ha prodotto il verdetto
+esatto `VERIFIED`, cioe' dopo che l'effetto e' stato riletto dal sistema e il
+rollback e' stato confermato. `FAILED`, `BLOCKED`, `UNSUPPORTED`, `UNSTABLE`,
+verdetti assenti o malformati restano fuori in modo fail-closed.
+
+Se una verifica successiva fallisce, il path scompare subito; dopo una recovery
+riappare. Il verdetto persistito conserva la stessa superficie attraverso il
+riavvio, senza conservare l'`hwnd`: finche' l'adapter non viene riagganciato,
+l'invocazione resta rifiutata con `ADAPTER_NOT_BOUND`.
+
+Il body dichiarato nel documento coincide con la rotta reale:
+`{"params": {"value": "..."}}` per un campo editabile. L'endpoint generico
+`/actions/{action_name}` resta la superficie di gestione protetta da RBAC e
+sandbox; l'OpenAPI per-app e' la superficie affidabile derivata dalle prove.
+
 ## Finestre — focus e chiusura: `ok` significa «e' successo davvero»
 
 `POST /v1/windows/{hwnd}/focus` e `DELETE /v1/windows/{hwnd}`.

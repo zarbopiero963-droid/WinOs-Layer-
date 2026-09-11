@@ -256,6 +256,9 @@ def test_notepad_capability_verification_restores_original(monkeypatch, tmp_path
         assert result["ok"] is True, result
         assert result["verification"]["state"] == "VERIFIED", result
         assert result["verification"]["observed"]["rollback_observed"] is True, result
+        assert set(adapter.openapi["paths"]) == {
+            f"/v1/apps/{adapter.app_id}/actions/{action.name}"
+        }, "the real UIA capability did not enter the Virtual API"
 
         fresh = backend.get_ui_tree(hwnd)
         restored = find_by_automation_id(fresh, action.automation_id)

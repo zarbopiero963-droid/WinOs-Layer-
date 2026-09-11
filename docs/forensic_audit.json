@@ -775,6 +775,7 @@
       "windows_os_api/apps/adapters/store.py",
       "windows_os_api/apps/adapters/engine.py",
       "windows_os_api/apps/adapters/verification.py",
+      "windows_os_api/apps/schema/generator.py",
       "windows_os_api/api/rest/apps.py",
       "windows_os_api/api/mcp/server.py",
       "windows_os_api/backends/linux.py"
@@ -783,10 +784,11 @@
       "tests/e2e/test_universal_adapter_e2e.py",
       "tests/security/test_adapter_persistence.py",
       "tests/security/test_capability_verification.py",
+      "tests/security/test_verified_virtual_api.py",
       "tests/integration/test_api_adapter_automation.py",
       "tests/windows/test_uia_hard.py",
       "tests/linux/test_linux_ui_control.py"
     ],
-    "remaining": "Persistenza, manifest e capability verification (effetto osservato, non confidence) ci sono. Mancano la Virtual API generata dalla capability verificata e la pipeline su un EXE sconosciuto. Vedi #6 (Gate 4, pezzi 3 e 4)."
+    "remaining": "Persistenza, manifest, capability verification (effetto osservato, non confidence) e Virtual API dinamica derivata dai soli verdetti VERIFIED ci sono. Manca la pipeline completa su un EXE sconosciuto. Vedi #6 (Gate 4, pezzo 4)."
   }
 ]

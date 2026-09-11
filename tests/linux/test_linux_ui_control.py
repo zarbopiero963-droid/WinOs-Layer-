@@ -296,6 +296,9 @@ def test_mousepad_capability_verification_restores_original(
         assert result["ok"] is True, json.dumps(result, indent=2, ensure_ascii=False)
         assert result["verification"]["state"] == "VERIFIED", result
         assert result["verification"]["observed"]["rollback_observed"] is True, result
+        assert set(adapter.openapi["paths"]) == {
+            f"/v1/apps/{adapter.app_id}/actions/{action.name}"
+        }, "the real AT-SPI capability did not enter the Virtual API"
 
         restored = find_by_automation_id(backend.get_ui_tree(), action.automation_id)
         assert restored is not None, action.automation_id
