@@ -31,7 +31,9 @@ def _install(tmp_path: Path, *, key: str = "deadbeef") -> Path:
     d.mkdir()
     (d / "winos-api.exe").write_bytes(b"MZ")
     (d / "api_key.txt").write_text(key, encoding="utf-8")
-    (d / "service").mkdir()
+    service = d / "service"
+    service.mkdir()
+    (service / "nssm.exe").write_bytes(b"MZ")
     return d
 
 
@@ -67,6 +69,7 @@ def test_installed_layout_rejects_missing_binary(ism, tmp_path):
 
 def test_installed_layout_rejects_missing_service_scripts(ism, tmp_path):
     d = _install(tmp_path)
+    (d / "service" / "nssm.exe").unlink()
     (d / "service").rmdir()
     with pytest.raises(ism.InstallerSmokeError):
         ism.verify_installed_layout(d)
@@ -88,7 +91,7 @@ def test_installed_layout_rejects_absent_install_dir(ism, tmp_path):
 
 def test_removal_accepts_a_clean_uninstall(ism, tmp_path):
     d = _install(tmp_path)
-    for child in sorted(d.iterdir(), reverse=True):
+    for child in sorted(d.rglob("*"), reverse=True):
         child.rmdir() if child.is_dir() else child.unlink()
     d.rmdir()
     ism.verify_removed(d)
@@ -105,6 +108,7 @@ def test_removal_rejects_a_leftover_binary(ism, tmp_path):
 def test_removal_rejects_leftover_files(ism, tmp_path):
     d = _install(tmp_path)
     (d / "winos-api.exe").unlink()
+    (d / "service" / "nssm.exe").unlink()
     (d / "service").rmdir()
     with pytest.raises(ism.InstallerSmokeError) as exc:
         ism.verify_removed(d)
@@ -163,6 +167,18 @@ def test_wait_or_kill_tree_kills_and_reports_a_process_that_will_not_exit(ism):
             proc.kill()
 
 
+def test_service_lifecycle_runs_the_dedicated_hard_smoke(ism, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ism, "_run", lambda cmd, what, **kwargs: calls.append((cmd, what)))
+
+    ism.run_windows_service_lifecycle(tmp_path)
+
+    cmd, what = calls[0]
+    assert Path(cmd[1]).name == "windows_service_smoke.py"
+    assert cmd[-2:] == ["--install-dir", str(tmp_path)]
+    assert "service lifecycle" in what
+
+
 # ---------------------------------------------------------------------------
 # The .iss contract: whatever [Code] creates, [UninstallDelete] must remove.
 # Runnable anywhere — no Windows needed to catch the regression.
@@ -217,6 +233,13 @@ def test_uninstall_removes_the_runtime_audit_log():
     assert "logs" in _uninstall_directives()
 
 
+def test_uninstall_removes_product_owned_runtime_directories():
+    """The installed backend and service TEMP must leave no residue below {app}."""
+    cleanup = _uninstall_directives()
+    assert r'Name: "{app}\sandbox"' in cleanup
+    assert r'Name: "{app}\tmp"' in cleanup
+
+
 def test_every_code_generated_file_is_covered_by_uninstalldelete():
     """Generalised guard: a new file written from [Code] must also be removed.
 
@@ -231,3 +254,17 @@ def test_every_code_generated_file_is_covered_by_uninstalldelete():
     cleanup = _uninstall_directives()
     uncovered = sorted(name for name in generated if name not in cleanup)
     assert not uncovered, f"files created by [Code] but never uninstalled: {uncovered}"
+
+
+def test_silent_install_never_blocks_on_the_api_key_message():
+    """A /VERYSILENT deployment must not wait forever for an invisible dialog."""
+    code = _iss_section("Code")
+    assert "if not WizardSilent then" in code
+
+
+def test_hanging_installer_is_a_hard_failure_not_a_warning():
+    """Keep the real installer gate fail-closed if Setup stops exiting again."""
+    script = (ISS.parents[2] / "scripts" / "installer_smoke.py").read_text(encoding="utf-8")
+    assert "raise InstallerSmokeError" in script
+    assert "Setup.exe produced the layout but never exited" in script
+    assert "WARNING: Setup.exe" not in script

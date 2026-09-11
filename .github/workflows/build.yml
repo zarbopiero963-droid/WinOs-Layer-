@@ -1,10 +1,8 @@
 name: Build
 
 on:
-  push:
-    tags: ["v*"]
-  # Packaging changes must prove the artifact still runs BEFORE they land.
-  # Scoped with paths so ordinary PRs never pay for a Windows runner.
+  # Artifact + installer smoke are expensive (windows-latest is 2x).
+  # Run automatically only when a PR changes the shippable service/package.
   pull_request:
     paths:
       - ".github/workflows/build.yml"
@@ -12,13 +10,12 @@ on:
       - "scripts/build_installer.py"
       - "scripts/artifact_smoke.py"
       - "scripts/installer_smoke.py"
+      - "scripts/windows_service_smoke.py"
       - "windows_os_api/cli/**"
+      - "windows_os_api/core/runtime/**"
       - "pyproject.toml"
   workflow_dispatch:
 
-# Superseded runs are cancelled: a push that replaces a head makes the previous
-# run's answer irrelevant, and Windows runners bill at 2x. A hung job also stops
-# burning minutes as soon as the next push lands.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -42,12 +39,8 @@ jobs:
       - name: Portable (Linux ELF via PyInstaller)
         run: python scripts/build_installer.py build-portable
       - name: Artifact smoke (run the frozen ELF for real)
-        # Launches dist/winos-api, polls /v1/health over real HTTP, checks the
-        # served backend and that auth is enforced, then verifies teardown.
-        # A binary that builds but cannot start fails HERE, not at the user.
         run: python scripts/artifact_smoke.py --expect-backend linux
       - name: Package Linux portable (shared helper)
-        # Same naming as build-linux.yml: dist/winos-api-portable-linux.zip
         run: python scripts/build_installer.py package-linux
       - name: Upload Linux portable
         uses: actions/upload-artifact@v4
@@ -80,16 +73,26 @@ jobs:
           pip install -e ".[dev,windows]" pyinstaller
       - name: Install Inno Setup
         run: choco install innosetup -y
+      - name: Install NSSM for hard service lifecycle smoke
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nssm.zip'
+          $expanded = Join-Path $env:RUNNER_TEMP 'nssm'
+          Invoke-WebRequest 'https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile $archive
+          $expected = '99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "NSSM archive checksum mismatch: $actual" }
+          Expand-Archive $archive -DestinationPath $expanded -Force
+          $native = Get-ChildItem $expanded -Filter nssm.exe -Recurse -File |
+            Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+          if (-not $native) { throw "Native NSSM win64 binary not found in verified archive" }
+          Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
+          Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - name: Validate packaging
         run: python scripts/build_installer.py validate
       - name: Build portable onefile
         run: python scripts/build_installer.py build-portable
       - name: Artifact smoke (run the frozen EXE for real)
-        # The gap this closes: PyInstaller onefile fails at RUNTIME, not at build
-        # time. A dropped hidden import (comtypes, uiautomation, pywin32) yields
-        # an EXE that builds green and dies on launch. This starts the real
-        # binary, polls /v1/health, asserts the Windows backend is served and
-        # that auth is enforced, then checks nothing is left running.
         run: python scripts/artifact_smoke.py --expect-backend windows
       - name: Zip portable
         shell: pwsh
@@ -101,12 +104,7 @@ jobs:
           Compress-Archive -Path portable\* -DestinationPath dist\winos-api-portable-windows.zip -Force
       - name: Build Setup.exe (Inno)
         run: python scripts/build_installer.py build-installer
-      - name: Installer smoke (install, run the installed EXE, uninstall)
-        # WinOsApi-Setup has been shipped without anyone ever installing it.
-        # This drives the real lifecycle: silent install, check the layout the
-        # .iss promises, run the INSTALLED binary (what the user actually
-        # receives), silent uninstall, verify nothing is left behind.
-        # Installs to a scratch dir, never the default location.
+      - name: Installer and Windows service smoke
         run: python scripts/installer_smoke.py
       - name: Checksums
         shell: pwsh

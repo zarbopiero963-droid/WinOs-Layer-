@@ -11,8 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from windows_os_api import __version__
 from windows_os_api.api.rest.router import api_router
-from windows_os_api.apps.adapters.validation import AppIdRejected
 from windows_os_api.api.websocket.bus import router as ws_router
+from windows_os_api.apps.adapters.validation import AppIdRejected
 from windows_os_api.core.runtime.config import Settings, get_settings
 from windows_os_api.core.security.audit import get_audit_logger
 from windows_os_api.observability.metrics import get_metrics
@@ -53,7 +53,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
         get_metrics().incr("server.starts")
-        yield
+        try:
+            yield
+        finally:
+            # A service stop is only graceful if the ASGI lifespan reaches this
+            # point. The Windows hard smoke reads this durable event after SCM
+            # reports STOPPED, distinguishing CTRL_C_EVENT shutdown from a
+            # supervisor that merely killed the process tree.
+            get_audit_logger().log(
+                "server.shutdown",
+                subject="system",
+                detail={"version": __version__},
+            )
 
     app = FastAPI(
         title=settings.app_name,

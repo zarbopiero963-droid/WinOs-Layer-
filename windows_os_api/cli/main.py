@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
+
+
+def load_api_key_file(path: str | Path) -> str:
+    """Load exactly one non-empty API key without exposing it on the command line."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    if len(lines) != 1 or not lines[0].strip():
+        raise ValueError("API key file must contain exactly one non-empty line")
+    return lines[0].strip()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -14,6 +24,11 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=None)
     serve.add_argument("--backend", choices=["auto", "fake", "windows"], default=None)
     serve.add_argument("--no-auth", action="store_true")
+    serve.add_argument(
+        "--api-key-file",
+        default=None,
+        help="read the sole API key from a one-line UTF-8 file",
+    )
 
     sub.add_parser("version", help="Print version")
     sub.add_parser("audit", help="Run forensic audit script")
@@ -27,7 +42,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "audit":
-        from pathlib import Path
         import runpy
 
         script = Path(__file__).resolve().parents[2] / "scripts" / "forensic_audit.py"
@@ -38,12 +52,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "serve":
         import os
+
         import uvicorn
 
         if args.backend:
             os.environ["WINOS_BACKEND"] = args.backend
         if args.no_auth:
             os.environ["WINOS_REQUIRE_AUTH"] = "false"
+        if args.api_key_file:
+            try:
+                api_key = load_api_key_file(args.api_key_file)
+            except (OSError, UnicodeError, ValueError) as exc:
+                print(f"Unable to load API key file: {exc}", file=sys.stderr)
+                return 2
+            os.environ["WINOS_API_KEYS"] = json.dumps([api_key])
+            os.environ["WINOS_REQUIRE_AUTH"] = "true"
 
         from windows_os_api.core.runtime.config import get_settings
 

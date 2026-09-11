@@ -6,7 +6,8 @@ being installed by anyone. This drives its real lifecycle on Windows:
   1. silent install                 -> the layout the .iss promises appears
   2. the INSTALLED binary runs      -> delegated to artifact_smoke, so what the
                                        user actually receives is what gets tested
-  3. silent uninstall               -> no binary and no install dir left behind
+  3. real Windows service lifecycle -> start, stop, restart, remove; no orphan
+  4. silent uninstall               -> no binary and no install dir left behind
 
 Each step asserts the EFFECT, not the exit of the installer process. Observed
 on GHA: Setup.exe completes the install ("Installation process succeeded" in
@@ -15,11 +16,9 @@ exit therefore hangs on work that is already done. That non-exit is a real
 defect of the installer, reported loudly here and tracked in issue #6 — it is
 not swallowed, it is simply not allowed to block the verification.
 
-Scope note, taken from installer/inno/winos-api.iss rather than assumed:
-the installer does NOT register the Windows service. Service installation is a
-separate manual step (a Start Menu shortcut to service/install_nssm.bat), so
-asserting a registered service here would be testing something the installer
-never claimed to do. Service lifecycle belongs to the PR39 work.
+The installer does not register a service automatically. The smoke invokes the
+same optional ``service/install_nssm.bat`` shortcut a user would run, then the
+matching uninstall script, before uninstalling the product files.
 
 Windows-only by nature. The pure helpers are unit-tested cross-platform in
 tests/unit/test_installer_smoke.py.
@@ -40,7 +39,7 @@ EXE_NAME = "winos-api.exe"
 # Inno writes its uninstaller as unins000.exe in the install directory.
 UNINSTALLER = "unins000.exe"
 # Files the .iss promises: [Files] + the api_key.txt written in [Code] ssPostInstall.
-EXPECTED_AFTER_INSTALL = (EXE_NAME, "api_key.txt", "service")
+EXPECTED_AFTER_INSTALL = (EXE_NAME, "api_key.txt", "service", "service/nssm.exe")
 
 
 class InstallerSmokeError(RuntimeError):
@@ -196,20 +195,7 @@ def wait_or_kill_tree(proc: subprocess.Popen, grace: float = 30.0) -> bool:
 
 
 def silent_install_observed(setup: Path, install_dir: Path, log: Path) -> bool:
-    """Install, then wait for the RESULT rather than for the process to exit.
-
-    Observed on GHA across three runs: Setup.exe completes the installation —
-    the Inno log records "Installation process succeeded" and every file lands
-    on disk — and then never terminates; the runner reaps its
-    WinOsApi-Setup-<v>.tmp helper as an orphan afterwards. Waiting on process
-    exit therefore hangs on a job that has actually finished its work.
-
-    So the assertion moves to what we actually care about and can trust: the
-    layout the .iss promises must appear. It is not relaxed — it must still
-    become true, or this fails. The installer's failure to exit is returned to
-    the caller and reported loudly, because an unattended deploy that waits on
-    Setup.exe would hang on it (tracked in issue #6).
-    """
+    """Require both the installed layout and a normally exiting Setup process."""
     proc = subprocess.Popen(  # noqa: S603
         [
             str(setup),
@@ -230,11 +216,7 @@ def silent_install_observed(setup: Path, install_dir: Path, log: Path) -> bool:
 
 
 def silent_uninstall_observed(install_dir: Path) -> bool:
-    """Uninstall, then wait for the removal rather than for the process to exit.
-
-    Inno's uninstaller relaunches itself from a temp copy, so it has the same
-    non-exiting behaviour as Setup.exe. Same approach: assert the effect.
-    """
+    """Require both complete removal and a normally exiting uninstaller."""
     uninstaller = uninstaller_path(install_dir)
     if not uninstaller.is_file():
         raise InstallerSmokeError(f"uninstaller missing: {uninstaller}")
@@ -269,6 +251,16 @@ def run_installed_binary(install_dir: Path) -> None:
     )
 
 
+def run_windows_service_lifecycle(install_dir: Path) -> None:
+    """Drive the shipped service scripts against the installed frozen EXE."""
+    smoke = ROOT / "scripts" / "windows_service_smoke.py"
+    _run(
+        [sys.executable, str(smoke), "--install-dir", str(install_dir)],
+        "Windows service lifecycle smoke",
+        capture=False,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Smoke-test the Windows installer lifecycle")
     parser.add_argument("--output-dir", default=str(OUTPUT))
@@ -300,19 +292,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  install -> {install_dir}")
         print(f"  layout  -> {', '.join(EXPECTED_AFTER_INSTALL)} present, api_key.txt non-empty")
         if not exited:
-            print(
-                "  WARNING: Setup.exe completed the installation but never exited; "
-                "its process tree was killed. An unattended deploy that waits on "
-                "Setup.exe would hang here. Tracked in issue #6."
+            raise InstallerSmokeError(
+                "Setup.exe produced the layout but never exited; its process tree was killed"
             )
 
         run_installed_binary(install_dir)
         print("  installed binary -> serves and shuts down")
 
+        run_windows_service_lifecycle(install_dir)
+        print("  Windows service -> start, stop, restart and removal verified")
+
         exited = silent_uninstall_observed(install_dir)
         print("  uninstall -> binary and install dir removed")
         if not exited:
-            print("  WARNING: the uninstaller never exited either; process tree killed.")
+            raise InstallerSmokeError(
+                "the uninstaller removed the product but never exited; its process tree was killed"
+            )
     except InstallerSmokeError as exc:
         print(f"\nINSTALLER SMOKE FAILED: {exc}", file=sys.stderr)
         return 1

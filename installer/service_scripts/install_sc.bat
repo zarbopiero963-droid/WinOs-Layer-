@@ -1,5 +1,7 @@
 @echo off
-REM Alternative sc.exe create (requires absolute path to python/exe)
-sc create WindowsOSLayerService binPath= "\"winos-api.exe\" serve --host 127.0.0.1 --port 8765" start= auto DisplayName= "Windows OS API Layer"
-sc description WindowsOSLayerService "FastAPI Windows OS API Layer — localhost only"
-sc start WindowsOSLayerService
+REM winos-api.exe is a console program, not a native ServiceMain executable.
+REM Registering it directly with sc.exe creates WindowsOSLayerService but cannot
+REM complete the SCM handshake (typically error 1053). NSSM is the supported host.
+echo ERROR: direct sc.exe installation is unsupported for winos-api.exe. 1>&2
+echo Run install_nssm.bat as Administrator instead. 1>&2
+exit /b 1

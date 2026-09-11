@@ -49,6 +49,10 @@ Type: files; Name: "{app}\api_key.txt"
 ; The server writes its audit log next to itself when started from {app}; that
 ; log records API key prefixes and executed command lines.
 Type: filesandordirs; Name: "{app}\logs"
+; The configured backend and the service's private TEMP/TMP create these
+; directories at runtime. They contain only product-owned data below {app}.
+Type: filesandordirs; Name: "{app}\sandbox"
+Type: filesandordirs; Name: "{app}\tmp"
 ; Then drop the directory itself, once nothing of ours remains in it.
 Type: dirifempty; Name: "{app}"
 
@@ -76,9 +80,10 @@ begin
     begin
       Key := GenerateApiKey();
       SaveStringToFile(KeyPath, Key + #13#10, False);
-      MsgBox('API key written to api_key.txt (localhost default).' + #13#10 +
-             'Set WINOS_API_KEYS and do not expose the port publicly.' + #13#10 +
-             'Service name: {#MyServiceName}', mbInformation, MB_OK);
+      if not WizardSilent then
+        MsgBox('API key written to api_key.txt (localhost default).' + #13#10 +
+               'Set WINOS_API_KEYS and do not expose the port publicly.' + #13#10 +
+               'Service name: {#MyServiceName}', mbInformation, MB_OK);
     end;
   end;
 end;

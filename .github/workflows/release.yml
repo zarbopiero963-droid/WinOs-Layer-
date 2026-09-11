@@ -23,6 +23,21 @@ jobs:
           python -m pip install -U pip
           pip install -e ".[dev,windows]" pyinstaller
           choco install innosetup -y
+      - name: Stage native NSSM in Windows artifacts
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nssm.zip'
+          $expanded = Join-Path $env:RUNNER_TEMP 'nssm'
+          Invoke-WebRequest 'https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile $archive
+          $expected = '99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "NSSM archive checksum mismatch: $actual" }
+          Expand-Archive $archive -DestinationPath $expanded -Force
+          $native = Get-ChildItem $expanded -Filter nssm.exe -Recurse -File |
+            Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+          if (-not $native) { throw "Native NSSM win64 binary not found in verified archive" }
+          Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
+          Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - run: python scripts/build_installer.py validate
       - run: python scripts/build_installer.py build-portable
       - name: Portable zip
@@ -90,20 +105,16 @@ jobs:
       - name: Stage release files
         run: |
           mkdir -p release-dist
-          # Python packages from this job
           cp -a dist/. release-dist/ || true
-          # Windows: exe, zip, checksums
           find artifacts-windows -type f \( \
             -name '*.exe' -o -name '*.zip' -o -name 'checksums.txt' -o -name 'SHA256SUMS.txt' \
           \) -exec cp -t release-dist {} +
-          # Linux: zip, tar.gz, checksums (skip raw ELF name collisions with care)
           find artifacts-linux -type f \( \
             -name 'winos-api-portable-linux.zip' \
             -o -name 'winos-api-portable-linux.tar.gz' \
             -o -name 'checksums-linux.txt' \
             -o -name 'winos-api' \
           \) -exec cp -t release-dist {} +
-          # Avoid overwriting sdist .tar.gz with linux portable if names collide — rename if needed
           cd release-dist
           sha256sum * > SHA256SUMS.txt || true
           cat SHA256SUMS.txt

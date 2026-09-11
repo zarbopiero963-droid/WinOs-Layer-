@@ -32,7 +32,7 @@ Linux systemd unit: **`winos-api.service`** (see `installer/linux/`)
 installer/
   pyinstaller/winos-api.spec   # one-file EXE/ELF
   inno/winos-api.iss           # Inno Setup script → Setup.exe
-  service_scripts/             # NSSM / sc.exe install+uninstall (Windows)
+  service_scripts/             # NSSM install/uninstall + unsafe sc.exe guard
   linux/                       # systemd unit + install/uninstall (Linux)
     winos-api.service
     install.sh
@@ -82,8 +82,16 @@ hosts. The Windows EXE uses **WindowsBackend** when on Win32.
 
 `Setup.exe` **cannot** be produced on Linux. On Windows (or GHA `windows-latest`):
 
-```bat
+```powershell
 choco install innosetup -y
+$archive = Join-Path $env:TEMP 'nssm.zip'
+Invoke-WebRequest 'https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile $archive
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8') { throw 'NSSM checksum mismatch' }
+Expand-Archive $archive -DestinationPath (Join-Path $env:TEMP 'nssm') -Force
+$nssm = Get-ChildItem (Join-Path $env:TEMP 'nssm') -Filter nssm.exe -Recurse -File |
+  Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+if (-not $nssm) { throw "Native NSSM win64 binary not found" }
+Copy-Item $nssm.FullName installer\service_scripts\nssm.exe -Force
 pip install -e ".[dev,windows]" pyinstaller
 python scripts/build_installer.py build-portable
 python scripts/build_installer.py build-installer
@@ -105,6 +113,33 @@ Artifacts:
 5. Optional: run `service\install_nssm.bat` as Administrator to register
    **WindowsOSLayerService**
 
+## Windows service lifecycle
+
+Official Windows artifacts include the native [NSSM](https://nssm.cc/) 2.24
+binary beside `install_nssm.bat`. A source-tree installation must place the
+real native `nssm.exe` there itself; a package-manager shim from `PATH` is not a
+valid service host. Then run the batch file as Administrator. It:
+
+- resolves both the Setup layout (`service\` below the EXE) and portable layout;
+- requires a one-line `api_key.txt` beside `winos-api.exe`;
+- binds only to `127.0.0.1` and reads the key with `--api-key-file`, so the
+  secret is not stored in the service command line;
+- sends `CTRL_C_EVENT` first on stop, waits up to 15 seconds for graceful
+  uvicorn shutdown, and applies the stop to the complete PyInstaller process
+  tree;
+- fails closed and rolls back a partial service registration.
+
+Console output is written to `logs\service.log` for startup diagnosis. The
+product uninstaller removes that directory with the other runtime logs.
+
+`WINOS_SERVICE_PORT` may select another port (1–65535); the default is `8765`.
+Run `service\uninstall_service.bat` as Administrator to stop, wait for
+`STOPPED`, delete the service, and verify that SCM no longer lists it.
+
+Do not use direct `sc create` with `winos-api.exe`: it is a console executable,
+not a native Windows `ServiceMain` binary. The shipped `install_sc.bat` refuses
+that invalid registration and directs users to NSSM.
+
 ## Firewall / remote access
 
 Default is **localhost only**. Do not open firewall ports unless you deliberately
@@ -117,3 +152,8 @@ See `.github/workflows/`:
 - `build.yml` — `build-linux` (package-linux) + `build-windows` (Setup.exe)
 - `release.yml` — Windows + Linux artifacts attached to GitHub Release
 - `ci.yml` — validate + pytest
+
+The Windows build performs a hard service smoke against the installed frozen
+EXE: real NSSM/SCM start, authenticated loopback HTTP, stop, restart and
+uninstall. It requires a durable `server.shutdown` event, zero surviving
+`winos-api.exe` processes and a released TCP port after every stop.
