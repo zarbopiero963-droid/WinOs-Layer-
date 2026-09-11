@@ -145,13 +145,13 @@ def test_hard_smoke_covers_scm_http_process_port_and_shutdown_evidence():
         assert evidence in script
 
 
-def test_windows_workflows_stage_the_native_nssm_binary_not_the_chocolatey_shim():
+def test_windows_workflows_stage_a_checksum_verified_native_nssm_binary():
     for name in ("build.yml", "release.yml"):
         workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        assert "2.24.101.20180116" in workflow
-        assert r"ChocolateyInstall\lib\nssm*\tools" in workflow
-        assert "Select-Object -First 1" in workflow
+        assert "https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip" in workflow
+        assert "99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8" in workflow
+        assert "Get-FileHash" in workflow
+        assert "checksum mismatch" in workflow
         assert "win64" in workflow
-        assert "-notmatch" in workflow
+        assert "choco install nssm" not in workflow
         assert "service_scripts\\nssm.exe" in workflow
-        assert "refusing Chocolatey shim" in workflow
