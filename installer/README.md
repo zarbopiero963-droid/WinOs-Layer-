@@ -84,10 +84,13 @@ hosts. The Windows EXE uses **WindowsBackend** when on Win32.
 
 ```powershell
 choco install innosetup -y
-choco install nssm --version 2.24.101.20180116 -y
-$nssm = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File |
-  Select-Object -First 1
-if (-not $nssm) { throw "Native NSSM package payload not found" }
+$archive = Join-Path $env:TEMP 'nssm.zip'
+Invoke-WebRequest 'https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile $archive
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8') { throw 'NSSM checksum mismatch' }
+Expand-Archive $archive -DestinationPath (Join-Path $env:TEMP 'nssm') -Force
+$nssm = Get-ChildItem (Join-Path $env:TEMP 'nssm') -Filter nssm.exe -Recurse -File |
+  Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+if (-not $nssm) { throw "Native NSSM win64 binary not found" }
 Copy-Item $nssm.FullName installer\service_scripts\nssm.exe -Force
 pip install -e ".[dev,windows]" pyinstaller
 python scripts/build_installer.py build-portable
