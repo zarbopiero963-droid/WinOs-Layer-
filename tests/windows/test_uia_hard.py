@@ -19,6 +19,23 @@ def _require_live_ui(condition: bool, reason: str) -> None:
     pytest.skip(reason)
 
 
+def _wait_for_new_process_window(backend, pid: int, previous: set[int]) -> int | None:
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        windows = [w for w in backend.list_windows() if w.get("hwnd") not in previous]
+        owned = next((w for w in windows if w.get("pid") == pid), None)
+        if owned is not None:
+            return int(owned["hwnd"])
+        notepad = next(
+            (w for w in windows if "notepad" in (w.get("title") or "").casefold()),
+            None,
+        )
+        if notepad is not None:
+            return int(notepad["hwnd"])
+        time.sleep(0.1)
+    return None
+
+
 def test_uia_module_import_smoke():
     """Compile/import smoke — marked windows so `not windows` on Linux stays green."""
     from windows_os_api.apps.ui_inspector import uia_windows
@@ -55,17 +72,22 @@ def test_uia_notepad_tree_with_children():
     backend = WindowsBackend()
     proc = None
     try:
+        previous = {int(w["hwnd"]) for w in backend.list_windows()}
         proc = subprocess.Popen(["notepad.exe"])  # noqa: S603
-        time.sleep(1.5)
+        hwnd = _wait_for_new_process_window(backend, proc.pid, previous)
+        _require_live_ui(hwnd is not None, "Notepad process exposed no new window")
         tree = None
         last_err = None
         for _ in range(8):
             try:
-                tree = uia_windows.get_notepad_tree()
-                break
+                tree = backend.get_ui_tree(hwnd)
+                if uia_windows.find_first(
+                    tree, control_type="Edit"
+                ) or uia_windows.find_first(tree, control_type="Document"):
+                    break
             except RuntimeError as e:
                 last_err = e
-                time.sleep(0.5)
+            time.sleep(0.5)
         _require_live_ui(
             tree is not None,
             f"Notepad UIA unavailable (no interactive desktop?): {last_err}",
@@ -104,13 +126,6 @@ def test_uia_notepad_tree_with_children():
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        # Also close via backend if hwnd known
-        try:
-            for w in backend.list_windows():
-                if "Notepad" in (w.get("title") or ""):
-                    backend.close_window(w["hwnd"])
-        except Exception:  # noqa: BLE001
-            pass
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows (win32)")
@@ -126,21 +141,26 @@ def test_notepad_type_text_and_adapter():
     backend = WindowsBackend()
     proc = None
     try:
+        previous = {int(w["hwnd"]) for w in backend.list_windows()}
         proc = subprocess.Popen(["notepad.exe"])  # noqa: S603
-        time.sleep(1.5)
-        try:
-            tree = uia_windows.get_notepad_tree()
-        except RuntimeError as e:
-            _require_live_ui(False, str(e))
+        hwnd = _wait_for_new_process_window(backend, proc.pid, previous)
+        _require_live_ui(hwnd is not None, "Notepad process exposed no new window")
+        tree = None
+        edit = None
+        for _ in range(12):
+            tree = backend.get_ui_tree(hwnd)
+            edit = uia_windows.find_first(
+                tree, control_type="Edit"
+            ) or uia_windows.find_first(tree, control_type="Document")
+            if edit is not None:
+                break
+            time.sleep(0.5)
+        _require_live_ui(edit is not None, "Notepad exposed no editable UIA control")
 
-        hwnd = tree.get("hwnd")
         if hwnd:
             backend.focus_window(int(hwnd))
             time.sleep(0.3)
 
-        edit = uia_windows.find_first(tree, control_type="Edit") or uia_windows.find_first(
-            tree, control_type="Document"
-        )
         token = f"winos-{int(time.time())}"
         if edit is not None:
             set_r = uia_windows.set_value(edit, token)
@@ -156,8 +176,7 @@ def test_notepad_type_text_and_adapter():
 
         # Adapter path
         reset_adapters()
-        hwnd_i = int(hwnd) if hwnd else 0
-        adapter = create_adapter("notepad-live", hwnd=hwnd_i or 0)
+        adapter = create_adapter("notepad-live", hwnd=int(hwnd))
         assert adapter.app_id == "notepad-live"
         assert isinstance(adapter.actions, list)
         if edit and edit.get("automation_id"):
@@ -194,35 +213,32 @@ def test_notepad_capability_verification_restores_original(monkeypatch, tmp_path
     get_settings.cache_clear()
     reset_backend()
     reset_adapters()
+    backend = get_backend()
 
+    previous = {int(w["hwnd"]) for w in backend.list_windows()}
     proc = subprocess.Popen(["notepad.exe"])  # noqa: S603
     try:
+        hwnd = _wait_for_new_process_window(backend, proc.pid, previous)
+        _require_live_ui(hwnd is not None, "Notepad process exposed no new window")
         tree = None
         edit = None
-        last_error = None
         for _ in range(12):
-            try:
-                tree = uia_windows.get_notepad_tree()
-                edit = uia_windows.find_first(
-                    tree, control_type="Edit"
-                ) or uia_windows.find_first(tree, control_type="Document")
-                if edit is not None:
-                    break
-            except RuntimeError as exc:
-                last_error = exc
+            tree = backend.get_ui_tree(hwnd)
+            edit = uia_windows.find_first(
+                tree, control_type="Edit"
+            ) or uia_windows.find_first(tree, control_type="Document")
+            if edit is not None:
+                break
             time.sleep(0.5)
         _require_live_ui(
             tree is not None and edit is not None,
-            f"Notepad did not expose an editable UIA control: {last_error}",
+            "Notepad did not expose an editable UIA control",
         )
 
         original = "winos-original-real-notepad"
         prepared = uia_windows.set_value(edit, original)
         assert prepared.get("ok") is True, prepared
-        hwnd = int(tree.get("hwnd") or 0)
-        assert hwnd > 0, tree
-
-        adapter = create_adapter("notepad-live-verify", hwnd=hwnd)
+        adapter = create_adapter("notepad-live-verify", hwnd=int(hwnd))
         edit_actions = [a for a in adapter.actions if a.control_type == "Edit"]
         assert edit_actions, adapter.actions
         action = next(
@@ -235,7 +251,7 @@ def test_notepad_capability_verification_restores_original(monkeypatch, tmp_path
         assert result["verification"]["state"] == "VERIFIED", result
         assert result["verification"]["observed"]["rollback_observed"] is True, result
 
-        fresh = get_backend().get_ui_tree(hwnd)
+        fresh = backend.get_ui_tree(hwnd)
         restored = find_by_automation_id(fresh, action.automation_id)
         assert restored is not None, fresh
         assert restored.get("value") == original, restored

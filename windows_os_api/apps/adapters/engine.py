@@ -70,6 +70,7 @@ def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     def walk(node: dict[str, Any]) -> None:
         ct = node.get("control_type")
         ct_key = str(ct or "").casefold()
+        states = {str(state).casefold() for state in (node.get("states") or [])}
         aid = node.get("automation_id") or ""
         name = node.get("name") or aid or "unknown"
         if ct == "Button" and aid:
@@ -80,7 +81,9 @@ def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
                 control_type=ct,
                 risk="medium" if "delete" in name.lower() or "exit" in name.lower() else "low",
             ))
-        if ct_key in {"edit", "document", "text", "entry", "password text"} and aid:
+        editable = ct_key in {"edit", "document", "entry", "password text"}
+        editable = editable or (ct_key == "text" and "editable" in states)
+        if editable and aid:
             actions.append(AdapterAction(
                 name=f"set_{action_id(aid)}",
                 description=f"Set field {name}",

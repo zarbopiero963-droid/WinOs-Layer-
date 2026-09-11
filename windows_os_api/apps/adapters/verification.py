@@ -79,6 +79,25 @@ def _node(tree: dict[str, Any], automation_id: str) -> dict[str, Any] | None:
     return find_by_automation_id(tree, automation_id)
 
 
+def _wait_for_value(
+    backend: Any,
+    hwnd: int | None,
+    automation_id: str,
+    expected: str,
+    *,
+    timeout: float = 3.0,
+) -> bool:
+    """Poll a live accessibility tree until the requested value is observable."""
+    deadline = time.monotonic() + timeout
+    while True:
+        observed = _node(backend.get_ui_tree(hwnd), automation_id)
+        if observed is not None and observed.get("value") == expected:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def _verdict(state: str, evidence: str, **extra: Any) -> dict[str, Any]:
     return {
         "state": state,
@@ -188,12 +207,11 @@ def _verify_action_locked(adapter: Any, action_name: str) -> dict[str, Any]:
                     invoke_ok=False,
                 )
             else:
-                observed_node = _node(
-                    backend.get_ui_tree(adapter.hwnd), action.automation_id
-                )
-                probe_observed = bool(
-                    observed_node is not None
-                    and observed_node.get("value") == probe
+                probe_observed = _wait_for_value(
+                    backend,
+                    adapter.hwnd,
+                    action.automation_id,
+                    probe,
                 )
                 if probe_observed:
                     candidate = _verdict(
@@ -228,13 +246,14 @@ def _verify_action_locked(adapter: Any, action_name: str) -> dict[str, Any]:
                     rollback = invoke_action(
                         app_id, action_name, {"value": original}
                     )
-                    restored_node = _node(
-                        backend.get_ui_tree(adapter.hwnd), action.automation_id
-                    )
                     rollback_ok = bool(
                         rollback.get("ok")
-                        and restored_node is not None
-                        and str(restored_node.get("value")) == original
+                        and _wait_for_value(
+                            backend,
+                            adapter.hwnd,
+                            action.automation_id,
+                            original,
+                        )
                     )
                 except Exception as exc:  # noqa: BLE001
                     rollback_error_type = type(exc).__name__

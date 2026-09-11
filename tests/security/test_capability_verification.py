@@ -40,6 +40,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -121,6 +122,29 @@ def test_a_field_is_verified_by_reading_it_back(adapter):
         backend.get_ui_tree(1001), action.automation_id
     )["value"]
     assert restored == original, "la verifica ha lasciato la sonda nel campo"
+
+
+def test_readback_waits_for_an_accessibility_tree_that_lags(adapter, monkeypatch):
+    """AT-SPI/UIA may publish the changed value a few reads after the write."""
+    backend = get_backend()
+    real_get_tree = backend.get_ui_tree
+    stale = deque(maxlen=2)
+
+    def lagged_tree(hwnd=None):
+        fresh = real_get_tree(hwnd)
+        if len(stale) < stale.maxlen:
+            stale.append(fresh)
+            return fresh
+        observed = stale.popleft()
+        stale.append(fresh)
+        return observed
+
+    monkeypatch.setattr(backend, "get_ui_tree", lagged_tree)
+
+    verdict = verif.verify_action(APP, _edit_action(adapter))
+
+    assert verdict["state"] == verif.VERIFIED, verdict
+    assert verdict["observed"]["rollback_observed"] is True, verdict
 
 
 def test_the_evidence_says_what_was_observed(adapter):

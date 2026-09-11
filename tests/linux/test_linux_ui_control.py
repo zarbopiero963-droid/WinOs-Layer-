@@ -1,6 +1,7 @@
 """Hard Linux UI control tests — clipboard, wmctrl, mss, AT-SPI, mousepad automation."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -270,14 +271,15 @@ def test_mousepad_capability_verification_restores_original(
             if "mousepad" not in action.automation_id.casefold():
                 continue
             node = find_by_automation_id(current_tree, action.automation_id)
-            if node is not None and node.get("value") is not None:
+            states = {str(state).casefold() for state in (node or {}).get("states", [])}
+            if node is not None and node.get("value") is not None and "editable" in states:
                 candidates.append((action, node))
         assert candidates, adapter.actions
         action, original_node = candidates[0]
         original = str(original_node.get("value"))
 
         result = verify_and_record(adapter.app_id, action.name, times=2)
-        assert result["ok"] is True, result
+        assert result["ok"] is True, json.dumps(result, indent=2, ensure_ascii=False)
         assert result["verification"]["state"] == "VERIFIED", result
         assert result["verification"]["observed"]["rollback_observed"] is True, result
 
