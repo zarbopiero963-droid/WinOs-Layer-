@@ -35,6 +35,14 @@ impedire che quella combinazione torni.
 """
 from __future__ import annotations
 
+import json
+import os
+import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import pytest
 
 from windows_os_api.apps.adapters import verification as verif
@@ -76,20 +84,51 @@ def _button_action(adapter) -> str:
     return next(a.name for a in adapter.actions if a.control_type == "Button")
 
 
+def test_unsafe_platform_ids_become_unique_route_safe_action_names():
+    from windows_os_api.apps.adapters.engine import _default_actions_from_tree
+
+    tree = {
+        "children": [
+            {"control_type": "Edit", "automation_id": "/a:b", "name": "first"},
+            {"control_type": "Edit", "automation_id": "/a/b", "name": "second"},
+        ]
+    }
+    names = [action.name for action in _default_actions_from_tree(tree)]
+
+    assert len(names) == 2
+    assert len(set(names)) == 2, names
+    assert all(re.fullmatch(r"[a-zA-Z0-9_-]+", name) for name in names)
+
+
 # ---------------------------------------------------------------------------
 # VERIFIED: solo con l'effetto riletto dal sistema
 # ---------------------------------------------------------------------------
 def test_a_field_is_verified_by_reading_it_back(adapter):
+    backend = get_backend()
+    action = next(a for a in adapter.actions if a.control_type == "Edit")
+    from windows_os_api.apps.ui_inspector.service import find_by_automation_id
+
+    original = find_by_automation_id(
+        backend.get_ui_tree(1001), action.automation_id
+    )["value"]
     verdict = verif.verify_action(APP, _edit_action(adapter))
     assert verdict["state"] == verif.VERIFIED, verdict
-    assert verdict["observed"]["after"] != verdict["observed"]["before"], verdict
+    assert verdict["observed"] == {
+        "probe_observed": True,
+        "rollback_observed": True,
+    }, verdict
+    restored = find_by_automation_id(
+        backend.get_ui_tree(1001), action.automation_id
+    )["value"]
+    assert restored == original, "la verifica ha lasciato la sonda nel campo"
 
 
 def test_the_evidence_says_what_was_observed(adapter):
     """Un verdetto senza evidenza e' un'opinione con un nome tecnico."""
     verdict = verif.verify_action(APP, _edit_action(adapter))
     assert verdict["evidence"], verdict
-    assert str(verdict["observed"]["after"]) in verdict["evidence"], verdict
+    assert "riletta" in verdict["evidence"], verdict
+    assert verdict["observed"]["rollback_observed"] is True, verdict
 
 
 def test_the_observation_is_not_the_verifier_looking_at_its_own_writing(adapter):
@@ -182,10 +221,109 @@ def test_a_button_with_no_observable_effect_is_unsupported_not_verified(adapter)
     «verificata» perche' non ha sollevato eccezioni sarebbe tornare al problema
     che questo modulo esiste per risolvere.
     """
+    backend = get_backend()
+    before = list(backend._input_log)
     verdict = verif.verify_action(APP, _button_action(adapter))
-    assert verdict["state"] in (verif.UNSUPPORTED, verif.VERIFIED), verdict
-    if verdict["state"] == verif.UNSUPPORTED:
-        assert "non e' cambiato" in verdict["evidence"], verdict
+    assert verdict["state"] == verif.UNSUPPORTED, verdict
+    assert verdict["code"] == "EXPECTED_EFFECT_UNDEFINED", verdict
+    assert verdict["attempted"] is False, verdict
+    assert backend._input_log == before, "un bottone senza contratto e' stato premuto"
+
+
+def test_an_invoke_failure_can_never_be_verified(adapter, monkeypatch):
+    from windows_os_api.apps.adapters import engine
+
+    real_invoke = engine.invoke_action
+    calls = 0
+
+    def fail_probe_then_allow_rollback(app_id, action_name, params=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"ok": False, "error": "injected failure"}
+        return real_invoke(app_id, action_name, params)
+
+    monkeypatch.setattr(engine, "invoke_action", fail_probe_then_allow_rollback)
+    verdict = verif.verify_action(APP, _edit_action(adapter))
+
+    assert verdict["state"] == verif.FAILED, verdict
+    assert verdict["code"] == "INVOKE_FAILED", verdict
+    assert verdict["observed"]["rollback_observed"] is True, verdict
+
+
+def test_a_failed_rollback_invalidates_an_observed_probe(adapter, monkeypatch):
+    from windows_os_api.apps.adapters import engine
+
+    real_invoke = engine.invoke_action
+    calls = 0
+
+    def allow_probe_but_fail_rollback(app_id, action_name, params=None):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return {"ok": False, "error": "injected rollback failure"}
+        return real_invoke(app_id, action_name, params)
+
+    monkeypatch.setattr(engine, "invoke_action", allow_probe_but_fail_rollback)
+    verdict = verif.verify_action(APP, _edit_action(adapter))
+
+    assert verdict["state"] == verif.FAILED, verdict
+    assert verdict["code"] == "ROLLBACK_FAILED", verdict
+    assert verdict["observed"]["rollback_observed"] is False, verdict
+
+
+def test_an_observation_exception_still_rolls_back(adapter, monkeypatch):
+    backend = get_backend()
+    real_get_tree = backend.get_ui_tree
+    calls = 0
+
+    def fail_only_probe_readback(hwnd=None):
+        nonlocal calls
+        calls += 1
+        # 1 original read, 2 invoke lookup, 3 probe readback.
+        if calls == 3:
+            raise RuntimeError("injected observation failure")
+        return real_get_tree(hwnd)
+
+    monkeypatch.setattr(backend, "get_ui_tree", fail_only_probe_readback)
+    verdict = verif.verify_action(APP, _edit_action(adapter))
+
+    assert verdict["state"] == verif.FAILED, verdict
+    assert verdict["code"] == "VERIFICATION_EXCEPTION", verdict
+    assert verdict["observed"]["rollback_observed"] is True, verdict
+
+
+def test_concurrent_verifications_are_serialized_per_adapter(adapter, monkeypatch):
+    from windows_os_api.apps.adapters import engine
+
+    real_invoke = engine.invoke_action
+    state_lock = threading.Lock()
+    start = threading.Barrier(2)
+    active = 0
+    maximum = 0
+
+    def slow_invoke(app_id, action_name, params=None):
+        nonlocal active, maximum
+        with state_lock:
+            active += 1
+            maximum = max(maximum, active)
+        try:
+            time.sleep(0.02)
+            return real_invoke(app_id, action_name, params)
+        finally:
+            with state_lock:
+                active -= 1
+
+    def run_verification():
+        start.wait(timeout=2)
+        return verif.verify_action(APP, _edit_action(adapter))
+
+    monkeypatch.setattr(engine, "invoke_action", slow_invoke)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        verdicts = list(pool.map(lambda _index: run_verification(), range(2)))
+
+    assert all(v["state"] == verif.VERIFIED for v in verdicts), verdicts
+    assert maximum == 1, "two probes modified the same adapter concurrently"
 
 
 def test_an_unbound_adapter_is_blocked(adapter):
@@ -232,16 +370,47 @@ def test_disagreeing_attempts_are_unstable(adapter, monkeypatch):
     assert sorted(verdict["states"]) == [verif.FAILED, verif.VERIFIED], verdict
 
 
+def test_direct_call_cannot_request_unbounded_repetitions(adapter):
+    action = _edit_action(adapter)
+    before = next(a for a in get_adapter(APP).actions if a.name == action).verification
+
+    result = verify_and_record(APP, action, times=11)
+
+    assert result["ok"] is False, result
+    assert result["recorded"] is False, result
+    assert "between 1 and 10" in result["error"], result
+    after = next(a for a in get_adapter(APP).actions if a.name == action).verification
+    assert after is before, "an invalid request changed the persisted verdict"
+
+
 # ---------------------------------------------------------------------------
 # Il verdetto vive con l'adapter, e sopravvive al riavvio
 # ---------------------------------------------------------------------------
 def test_the_verdict_is_recorded_on_the_action(adapter):
     action = _edit_action(adapter)
-    assert get_adapter(APP).actions[0].verification is None or True
+    target = next(a for a in get_adapter(APP).actions if a.name == action)
+    assert target.verification is None
 
-    verify_and_record(APP, action)
+    result = verify_and_record(APP, action)
+    assert result["ok"] is True, result
+    assert result["persisted"] is True, result
     recorded = next(a for a in get_adapter(APP).actions if a.name == action)
     assert recorded.verification["state"] == verif.VERIFIED, recorded.verification
+
+
+def test_persisted_verdict_does_not_copy_the_original_field_value(adapter):
+    secret = "customer-secret@example.invalid"
+    action = _edit_action(adapter)
+    changed = invoke_action(APP, action, {"value": secret})
+    assert changed["ok"] is True, changed
+
+    result = verify_and_record(APP, action)
+    assert result["ok"] is True, result
+    manifest = next(Path(os.environ["WINOS_ADAPTER_STORE"]).glob("*.json"))
+    persisted = manifest.read_text(encoding="utf-8")
+
+    assert secret not in json.dumps(result), "il risultato espone il valore originale"
+    assert secret not in persisted, "il manifest persiste dati letti dall'app"
 
 
 def test_the_verdict_survives_a_restart(adapter):

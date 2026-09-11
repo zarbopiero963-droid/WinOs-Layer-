@@ -48,6 +48,7 @@ esiste per risolvere.
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 
 DISCOVERED = "DISCOVERED"
@@ -56,6 +57,7 @@ FAILED = "FAILED"
 BLOCKED = "BLOCKED"
 UNSUPPORTED = "UNSUPPORTED"
 UNSTABLE = "UNSTABLE"
+MAX_VERIFICATION_ATTEMPTS = 10
 
 VERIFICATION_STATES = frozenset(
     {DISCOVERED, VERIFIED, FAILED, BLOCKED, UNSUPPORTED, UNSTABLE}
@@ -68,14 +70,13 @@ _PROBE_PREFIX = "winos-verify-"
 
 
 def _probe_value() -> str:
-    return f"{_PROBE_PREFIX}{int(time.time() * 1000) % 1_000_000}"
+    return f"{_PROBE_PREFIX}{uuid.uuid4().hex}"
 
 
-def _node_value(tree: dict[str, Any], automation_id: str) -> Any:
+def _node(tree: dict[str, Any], automation_id: str) -> dict[str, Any] | None:
     from windows_os_api.apps.ui_inspector.service import find_by_automation_id
 
-    node = find_by_automation_id(tree, automation_id)
-    return None if node is None else node.get("value")
+    return find_by_automation_id(tree, automation_id)
 
 
 def _verdict(state: str, evidence: str, **extra: Any) -> dict[str, Any]:
@@ -93,17 +94,22 @@ def verify_action(app_id: str, action_name: str) -> dict[str, Any]:
     L'evidenza e' testo leggibile: chi legge il verdetto deve poter capire *cosa*
     e' stato osservato, non solo che qualcuno ha deciso.
     """
-    from windows_os_api.apps.adapters.engine import (
-        ADAPTER_NOT_BOUND,
-        get_adapter,
-        invoke_action,
-    )
-    from windows_os_api.apps.sandbox.permissions import check_action
-    from windows_os_api.backends.factory import get_backend
+    from windows_os_api.apps.adapters.engine import get_adapter
 
     adapter = get_adapter(app_id)
     if adapter is None:
         return _verdict(FAILED, f"nessun adapter registrato per {app_id!r}")
+
+    with adapter._verification_lock:
+        return _verify_action_locked(adapter, action_name)
+
+
+def _verify_action_locked(adapter: Any, action_name: str) -> dict[str, Any]:
+    from windows_os_api.apps.adapters.engine import ADAPTER_NOT_BOUND, invoke_action
+    from windows_os_api.apps.sandbox.permissions import check_action
+    from windows_os_api.backends.factory import get_backend
+
+    app_id = adapter.app_id
 
     action = next((a for a in adapter.actions if a.name == action_name), None)
     if action is None:
@@ -131,43 +137,132 @@ def verify_action(app_id: str, action_name: str) -> dict[str, Any]:
     backend = get_backend()
 
     if action.control_type == "Edit":
-        probe = _probe_value()
-        before = _node_value(backend.get_ui_tree(adapter.hwnd), action.automation_id)
-        result = invoke_action(app_id, action_name, {"value": probe})
-        after = _node_value(backend.get_ui_tree(adapter.hwnd), action.automation_id)
-
-        if after == probe:
-            return _verdict(
-                VERIFIED,
-                f"scritto {probe!r} in {action.automation_id!r} e riletto dal "
-                f"sistema: il campo conteneva {before!r}, adesso contiene {after!r}",
-                observed={"before": before, "after": after},
+        try:
+            original_node = _node(
+                backend.get_ui_tree(adapter.hwnd), action.automation_id
             )
-        return _verdict(
+        except Exception as exc:  # noqa: BLE001
+            return _verdict(
+                FAILED,
+                "impossibile leggere il valore originale prima della prova",
+                code="OBSERVATION_FAILED",
+                error_type=type(exc).__name__,
+            )
+        if original_node is None:
+            return _verdict(
+                FAILED,
+                "il controllo da verificare non e' presente nell'albero UI corrente",
+                code="ELEMENT_NOT_FOUND",
+            )
+        if "value" not in original_node or original_node.get("value") is None:
+            # Senza una fotografia ripristinabile non si scrive: una verifica
+            # non deve trasformarsi in una modifica irreversibile dell'app.
+            return _verdict(
+                UNSUPPORTED,
+                "il backend non espone un valore originale ripristinabile per il campo",
+                code="ORIGINAL_VALUE_UNAVAILABLE",
+            )
+
+        original = str(original_node["value"])
+        probe = _probe_value()
+        # UUID4 rende gia' la collisione trascurabile; il confronto esplicito
+        # impedisce comunque che una no-op possa mai sembrare una scrittura.
+        while probe == original:
+            probe = _probe_value()
+
+        candidate = _verdict(
             FAILED,
-            f"scritto {probe!r} in {action.automation_id!r}, ma rileggendo il "
-            f"campo contiene {after!r}: l'effetto atteso non e' comparso",
-            observed={"before": before, "after": after},
-            invoke_ok=result.get("ok"),
+            "la prova non ha prodotto un effetto osservabile",
+            code="EFFECT_NOT_OBSERVED",
+            invoke_ok=False,
         )
+        attempted = False
+        try:
+            attempted = True
+            result = invoke_action(app_id, action_name, {"value": probe})
+            if not result.get("ok"):
+                candidate = _verdict(
+                    FAILED,
+                    "l'invocazione della sonda e' fallita",
+                    code="INVOKE_FAILED",
+                    invoke_ok=False,
+                )
+            else:
+                observed_node = _node(
+                    backend.get_ui_tree(adapter.hwnd), action.automation_id
+                )
+                probe_observed = bool(
+                    observed_node is not None
+                    and observed_node.get("value") == probe
+                )
+                if probe_observed:
+                    candidate = _verdict(
+                        VERIFIED,
+                        "la sonda univoca e' stata riletta dal sistema; il valore "
+                        "originale e' stato poi ripristinato e riletto",
+                        observed={"probe_observed": True},
+                        invoke_ok=True,
+                    )
+                else:
+                    candidate = _verdict(
+                        FAILED,
+                        "l'invocazione ha risposto ok, ma la sonda non e' stata "
+                        "riletta dal sistema",
+                        code="EFFECT_NOT_OBSERVED",
+                        observed={"probe_observed": False},
+                        invoke_ok=True,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            candidate = _verdict(
+                FAILED,
+                "la prova ha sollevato un'eccezione; e' stato tentato il ripristino",
+                code="VERIFICATION_EXCEPTION",
+                error_type=type(exc).__name__,
+                invoke_ok=False,
+            )
+        finally:
+            if attempted:
+                rollback_ok = False
+                rollback_error_type = None
+                try:
+                    rollback = invoke_action(
+                        app_id, action_name, {"value": original}
+                    )
+                    restored_node = _node(
+                        backend.get_ui_tree(adapter.hwnd), action.automation_id
+                    )
+                    rollback_ok = bool(
+                        rollback.get("ok")
+                        and restored_node is not None
+                        and str(restored_node.get("value")) == original
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    rollback_error_type = type(exc).__name__
+
+                if not rollback_ok:
+                    return _verdict(
+                        FAILED,
+                        "il valore originale non e' stato ripristinato e riletto; "
+                        "la capability non puo' essere dichiarata verificata",
+                        code="ROLLBACK_FAILED",
+                        observed={"rollback_observed": False},
+                        error_type=rollback_error_type,
+                    )
+
+        candidate.setdefault("observed", {})["rollback_observed"] = True
+        return candidate
 
     if action.control_type in ("Button", "MenuItem"):
-        before = backend.get_ui_tree(adapter.hwnd)
-        invoke_action(app_id, action_name, {})
-        after = backend.get_ui_tree(adapter.hwnd)
-        if after != before:
-            return _verdict(
-                VERIFIED,
-                f"dopo {action_name!r} l'albero UI e' cambiato: l'effetto e' "
-                f"osservabile dal sistema",
-            )
-        # L'albero identico non prova che il click non abbia fatto niente: prova
-        # che, se ha fatto qualcosa, quel qualcosa non si vede da qui.
+        # Un cambiamento qualunque dell'intero albero non e' un contratto di
+        # effetto: potrebbe essere un orologio, una notifica o un'altra finestra.
+        # Finche' l'action non dichiara quale stato preciso osservare, non la si
+        # invoca neppure: un click esplorativo puo' essere irreversibile.
         return _verdict(
             UNSUPPORTED,
-            f"{action_name!r} e' stata eseguita, ma l'albero UI non e' cambiato: "
-            f"non esiste un effetto osservabile da questo backend, quindi non si "
-            f"puo' dire che funzioni",
+            f"{action_name!r} non dichiara un effetto specifico e osservabile; "
+            "un cambiamento generico dell'albero UI non prova questa azione",
+            code="EXPECTED_EFFECT_UNDEFINED",
+            attempted=False,
         )
 
     return _verdict(
@@ -183,8 +278,12 @@ def verify_action_repeatedly(app_id: str, action_name: str, times: int = 2) -> d
     Una capability che funziona a volte non e' una capability su cui costruire,
     e un solo tentativo riuscito non distingue le due cose.
     """
-    if times < 1:
-        return _verdict(FAILED, "numero di ripetizioni non valido")
+    if times < 1 or times > MAX_VERIFICATION_ATTEMPTS:
+        return _verdict(
+            FAILED,
+            f"il numero di tentativi deve essere fra 1 e {MAX_VERIFICATION_ATTEMPTS}",
+            code="INVALID_ATTEMPTS",
+        )
 
     verdicts = [verify_action(app_id, action_name) for _ in range(times)]
     states = {v["state"] for v in verdicts}

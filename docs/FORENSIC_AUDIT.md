@@ -679,7 +679,14 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   definito: non lo sappiamo, e lo diciamo), `UNSTABLE` (esiti diversi fra
   tentativi), `DISCOVERED` (nessuno ha guardato). Il verdetto vive con l'adapter
   e sopravvive al riavvio; un test statico vieta che una `confidence` rientri
-  nel giudizio.
+  nel giudizio. Per i campi editabili la prova usa una sonda UUID, controlla
+  l'esito dell'invocazione e **ripristina sempre il valore originale**: anche il
+  rollback viene riletto dal sistema e un suo fallimento produce
+  `ROLLBACK_FAILED`, mai `VERIFIED`. Valori originali e dati dell'app non
+  finiscono nel verdetto persistito. Le prove concorrenti sullo stesso adapter
+  sono serializzate, così una sonda non può diventare il "valore originale"
+  dell'altra. Button e MenuItem senza un contratto di effetto specifico restano
+  `UNSUPPORTED` e non vengono premuti esplorativamente.
   **Due difetti trovati costruendolo**, entrambi tali da far concludere
   «verificata» per il motivo sbagliato: `FakeBackend.get_ui_tree` restituiva una
   copia **superficiale** della costante di modulo (i figli erano gli stessi
@@ -688,6 +695,12 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   esattamente quello — `node["value"] = value` su una copia, non
   sull'applicazione. L'effetto passa ora dal backend (`set_ui_value`), la copia
   è profonda, e il fake modella un effetto vero invece di uno screenshot.
+  La capability verification è raggiungibile anche da REST
+  (`POST /v1/apps/{app_id}/actions/{action_name}/verify`) e dal tool MCP
+  `verify_action`, con permesso `adapter.manage`, audit e massimo 10 tentativi.
+  I test hard guidano Notepad tramite UIA reale su Windows e Mousepad tramite
+  AT-SPI reale sotto Xvfb/DBus su Linux; l'assenza delle dipendenze UI è un
+  fallimento del job dedicato, non uno skip verde.
 - **Cosa manca ancora (Gate 4, vedi #6):** Virtual API generata dalla capability
   verificata, e la pipeline completa su un **EXE sconosciuto**.
 

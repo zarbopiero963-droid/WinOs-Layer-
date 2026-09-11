@@ -1,6 +1,9 @@
 """Universal Adapter engine — turns EXE UI into virtual API actions."""
 from __future__ import annotations
+import hashlib
+import re
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any, Callable
 from windows_os_api.apps.ui_inspector.service import find_by_automation_id, get_tree
 from windows_os_api.apps.sandbox.permissions import check_action
@@ -40,6 +43,10 @@ class Adapter:
     # sparisce e nessuno sa perche'.
     persisted: bool = False
     persist_error: str | None = None
+    # Verifica e rollback formano una transazione sull'applicazione. Due probe
+    # concorrenti sullo stesso adapter potrebbero scambiarsi i valori originali
+    # e ripristinare la sonda dell'altro; il lock resta solo in memoria.
+    _verification_lock: RLock = field(default_factory=RLock, repr=False, compare=False)
 
     @property
     def bound(self) -> bool:
@@ -51,30 +58,42 @@ ADAPTER_NOT_BOUND = "ADAPTER_NOT_BOUND"
 
 def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     actions: list[AdapterAction] = []
+
+    def action_id(automation_id: str) -> str:
+        legacy = automation_id.replace(".", "_")
+        if re.fullmatch(r"[a-zA-Z0-9_-]+", legacy):
+            return legacy
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", automation_id).strip("_")
+        digest = hashlib.sha256(automation_id.encode("utf-8")).hexdigest()[:10]
+        return f"{(safe or 'control')[:80]}_{digest}"
+
     def walk(node: dict[str, Any]) -> None:
         ct = node.get("control_type")
+        ct_key = str(ct or "").casefold()
         aid = node.get("automation_id") or ""
         name = node.get("name") or aid or "unknown"
         if ct == "Button" and aid:
             actions.append(AdapterAction(
-                name=f"click_{aid.replace('.', '_')}",
+                name=f"click_{action_id(aid)}",
                 description=f"Click button {name}",
                 automation_id=aid,
                 control_type=ct,
                 risk="medium" if "delete" in name.lower() or "exit" in name.lower() else "low",
             ))
-        if ct == "Edit" and aid:
+        if ct_key in {"edit", "document", "text", "entry", "password text"} and aid:
             actions.append(AdapterAction(
-                name=f"set_{aid.replace('.', '_')}",
+                name=f"set_{action_id(aid)}",
                 description=f"Set field {name}",
                 automation_id=aid,
-                control_type=ct,
+                # Canonical type: Windows UIA calls it Edit/Document, AT-SPI
+                # commonly calls the same editable control text/entry.
+                control_type="Edit",
                 params=["value"],
                 risk="low",
             ))
         if ct == "MenuItem" and aid and not node.get("children"):
             actions.append(AdapterAction(
-                name=f"menu_{aid.replace('.', '_')}",
+                name=f"menu_{action_id(aid)}",
                 description=f"Invoke menu {name}",
                 automation_id=aid,
                 control_type=ct,
@@ -177,9 +196,17 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
     stato dimostrato, senza rifare tutte le prove.
     """
     from windows_os_api.apps.adapters.verification import (
+        MAX_VERIFICATION_ATTEMPTS,
         verify_action,
         verify_action_repeatedly,
     )
+
+    if times < 1 or times > MAX_VERIFICATION_ATTEMPTS:
+        return {
+            "ok": False,
+            "recorded": False,
+            "error": f"times must be between 1 and {MAX_VERIFICATION_ATTEMPTS}",
+        }
 
     adapter = _adapters.get(app_id)
     if adapter is None:
@@ -188,17 +215,30 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
     if action is None:
         return {"ok": False, "error": f"azione non trovata: {action_name}"}
 
-    verdict = (
-        verify_action(app_id, action_name)
-        if times <= 1
-        else verify_action_repeatedly(app_id, action_name, times=times)
-    )
-    action.verification = verdict
-    try:
-        store.save(adapter)
-    except OSError as exc:
-        adapter.persist_error = str(exc)
-    return {"ok": True, "app_id": app_id, "action": action_name, "verification": verdict}
+    with adapter._verification_lock:
+        verdict = (
+            verify_action(app_id, action_name)
+            if times <= 1
+            else verify_action_repeatedly(app_id, action_name, times=times)
+        )
+        action.verification = verdict
+        persisted = True
+        try:
+            store.save(adapter)
+            adapter.persisted = True
+            adapter.persist_error = None
+        except OSError as exc:
+            persisted = False
+            adapter.persist_error = str(exc)
+        verified = verdict.get("state") == "VERIFIED"
+        return {
+            "ok": bool(verified and persisted),
+            "recorded": True,
+            "persisted": persisted,
+            "app_id": app_id,
+            "action": action_name,
+            "verification": verdict,
+        }
 
 
 def get_adapter(app_id: str) -> Adapter | None:

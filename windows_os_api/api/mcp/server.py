@@ -5,7 +5,13 @@ import json
 import sys
 from typing import Any
 
-from windows_os_api.apps.adapters.engine import create_adapter, get_adapter, invoke_action, list_adapters
+from windows_os_api.apps.adapters.engine import (
+    create_adapter,
+    get_adapter,
+    invoke_action,
+    list_adapters,
+    verify_and_record,
+)
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.agent.computer import ComputerAgent
 from windows_os_api.backends.factory import get_backend
@@ -34,6 +40,19 @@ TOOLS = [
                 "app_id": {"type": "string"},
                 "action": {"type": "string"},
                 "params": {"type": "object"},
+            },
+            "required": ["app_id", "action"],
+        },
+    },
+    {
+        "name": "verify_action",
+        "description": "Verify an adapter action by observing and rolling back its effect",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app_id": {"type": "string"},
+                "action": {"type": "string"},
+                "times": {"type": "integer", "minimum": 1, "maximum": 10},
             },
             "required": ["app_id", "action"],
         },
@@ -122,6 +141,11 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         if not get_adapter(arguments["app_id"]):
             create_adapter(arguments["app_id"])
         return invoke_action(arguments["app_id"], arguments["action"], arguments.get("params"))
+    if name == "verify_action":
+        times = int(arguments.get("times", 1))
+        if times < 1 or times > 10:
+            raise ValueError("verify_action: times must be between 1 and 10")
+        return verify_and_record(arguments["app_id"], arguments["action"], times=times)
     if name == "agent_run":
         return ComputerAgent(arguments["app_id"]).run(arguments["goal"])
     if name == "ui_tree":

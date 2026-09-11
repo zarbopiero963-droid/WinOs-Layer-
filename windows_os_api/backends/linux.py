@@ -866,15 +866,9 @@ class LinuxBackend:
     def _atspi_path(self, path_parts: list[str]) -> str:
         return "/" + "/".join(path_parts) if path_parts else "/"
 
-    def _atspi_node(
-        self,
-        acc: Any,
-        pyatspi: Any,
-        depth: int = 0,
-        max_depth: int = 6,
-        path_parts: list[str] | None = None,
-    ) -> dict[str, Any]:
-        path_parts = list(path_parts or [])
+    def _atspi_identity(
+        self, acc: Any, path_parts: list[str]
+    ) -> tuple[str, str, str, str]:
         try:
             name = acc.name or ""
         except Exception:  # noqa: BLE001
@@ -884,8 +878,19 @@ class LinuxBackend:
         except Exception:  # noqa: BLE001
             role = ""
         part = f"{role}:{name}" if name else role or f"node{len(path_parts)}"
+        return name, role, part, self._atspi_path(path_parts + [part])
+
+    def _atspi_node(
+        self,
+        acc: Any,
+        pyatspi: Any,
+        depth: int = 0,
+        max_depth: int = 6,
+        path_parts: list[str] | None = None,
+    ) -> dict[str, Any]:
+        path_parts = list(path_parts or [])
+        name, role, part, automation_id = self._atspi_identity(acc, path_parts)
         cur_path = path_parts + [part]
-        automation_id = self._atspi_path(cur_path)
         states = self._atspi_states(acc, pyatspi)
         bounds = self._atspi_bounds(acc)
         value = None
@@ -924,6 +929,68 @@ class LinuxBackend:
             "value": value,
             "children": kids,
         }
+
+    def _find_atspi_acc_by_path(self, pyatspi: Any, automation_id: str) -> Any | None:
+        desktop = pyatspi.Registry.getDesktop(0)
+
+        def walk(acc: Any, path_parts: list[str]) -> Any | None:
+            _name, _role, part, current_id = self._atspi_identity(acc, path_parts)
+            if current_id == automation_id:
+                return acc
+            current_parts = path_parts + [part]
+            try:
+                count = acc.childCount
+            except Exception:  # noqa: BLE001
+                count = 0
+            for index in range(min(count, 80)):
+                try:
+                    found = walk(acc.getChildAtIndex(index), current_parts)
+                except Exception:  # noqa: BLE001
+                    continue
+                if found is not None:
+                    return found
+            return None
+
+        try:
+            for index in range(min(desktop.childCount, 40)):
+                found = walk(desktop.getChildAtIndex(index), [])
+                if found is not None:
+                    return found
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    def set_ui_value(self, automation_id: str, value: str) -> dict[str, Any]:
+        """Set one exact AT-SPI node and report only a real EditableText write."""
+        try:
+            pyatspi = _ensure_pyatspi()
+            acc = self._find_atspi_acc_by_path(pyatspi, automation_id)
+            if acc is None:
+                return {
+                    "ok": False,
+                    "error": "AT-SPI element not found",
+                    "automation_id": automation_id,
+                }
+            editable = acc.queryEditableText()
+            try:
+                text = acc.queryText()
+                if text.characterCount > 0:
+                    editable.deleteText(0, text.characterCount)
+            except Exception:  # noqa: BLE001
+                pass
+            editable.insertText(0, value, len(value))
+            return {
+                "ok": True,
+                "method": "atspi_editable_text",
+                "automation_id": automation_id,
+                "length": len(value),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": str(exc),
+                "automation_id": automation_id,
+            }
 
     def get_ui_tree(self, hwnd: int | None = None) -> dict[str, Any]:
         try:

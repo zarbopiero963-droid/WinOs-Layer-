@@ -8,7 +8,8 @@ def discover_actions(app_id: str, hwnd: int = 1001) -> list[dict[str, Any]]:
     adapter = get_adapter(app_id) or create_adapter(app_id, hwnd)
     return [
         {"name": a.name, "description": a.description, "automation_id": a.automation_id,
-         "control_type": a.control_type, "params": a.params, "risk": a.risk}
+         "control_type": a.control_type, "params": a.params, "risk": a.risk,
+         "verification": a.verification}
         for a in adapter.actions
     ]
 

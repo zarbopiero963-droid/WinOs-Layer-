@@ -23,10 +23,26 @@ def _have(bin_name: str) -> bool:
     return bool(shutil.which(bin_name))
 
 
+def _walk(tree: dict):
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.get("children") or [])
+
+
 def _env() -> dict[str, str]:
     env = dict(os.environ)
     env["DISPLAY"] = DISPLAY
     return env
+
+
+def _require_atspi(condition: bool, reason: str) -> None:
+    if condition:
+        return
+    if os.environ.get("WINOS_REQUIRE_ATSPI") == "1":
+        pytest.fail(reason + " (WINOS_REQUIRE_ATSPI=1)")
+    pytest.skip(reason)
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +110,7 @@ def test_atspi_tree_or_skip_with_reason(linux_backend):
         tree = linux_backend.get_ui_tree()
         if tree.get("supported") is False or tree.get("error"):
             reason = tree.get("detail") or tree.get("error") or "AT-SPI unavailable"
-            pytest.skip(f"AT-SPI unavailable: {reason}")
+            _require_atspi(False, f"AT-SPI unavailable: {reason}")
         children = tree.get("children") or []
         assert isinstance(children, list)
         # Prefer non-empty tree when mousepad launched
@@ -119,8 +135,9 @@ def test_atspi_tree_or_skip_with_reason(linux_backend):
 
 
 def test_auto_control_mousepad(linux_backend):
-    if not Path(MOUSEPAD).is_file():
-        pytest.skip("mousepad not installed at /usr/bin/mousepad")
+    _require_atspi(
+        Path(MOUSEPAD).is_file(), "mousepad not installed at /usr/bin/mousepad"
+    )
     if not (_have("xdotool") or linux_backend.capability_flags().get("atspi")):
         pytest.skip("need xdotool or AT-SPI for control")
 
@@ -144,6 +161,7 @@ def test_auto_control_mousepad(linux_backend):
         # Prefer AT-SPI set text on the frame / text widget
         tree = linux_backend.get_ui_tree()
         atspi_ok = tree.get("supported") is not False and not tree.get("error")
+        _require_atspi(atspi_ok, "AT-SPI tree unavailable for Mousepad readback")
         if atspi_ok and hasattr(linux_backend, "accessible_set_text"):
             r = linux_backend.accessible_set_text("Mousepad", token)
             if r.get("ok"):
@@ -161,13 +179,9 @@ def test_auto_control_mousepad(linux_backend):
                     assert typed.get("ok") is True, typed
                     method = "xdotool"
             assert r.get("ok") is True or method == "xdotool"
-        else:
-            assert _have("xdotool")
-            typed = linux_backend.type_text(token)
-            assert typed.get("ok") is True, typed
-            method = "xdotool"
 
-        # Verify somehow: accessible text value or window still present / title
+        # Read the value back from the application. A window that merely stayed
+        # open does not prove that the write happened.
         verified = False
         if atspi_ok:
             tree2 = linux_backend.get_ui_tree()
@@ -179,13 +193,8 @@ def test_auto_control_mousepad(linux_backend):
                     verified = True
                     break
                 stack.extend(n.get("children") or [])
-        if not verified:
-            # Window still listed (control path executed without crash)
-            wins2 = linux_backend.list_windows()
-            assert any("Mousepad" in (w.get("title") or "") for w in wins2)
-            verified = True
-        assert verified
-        assert method in ("atspi", "editable_text", "xdotool", "xdotool_fallback") or True
+        assert verified, "Mousepad did not expose the text that was written"
+        assert method in ("atspi", "editable_text", "xdotool", "xdotool_fallback")
     finally:
         if proc.poll() is None:
             # Prefer close via wmctrl
@@ -203,6 +212,88 @@ def test_auto_control_mousepad(linux_backend):
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+
+
+def test_mousepad_capability_verification_restores_original(
+    monkeypatch, tmp_path, window_manager
+):
+    """Real Mousepad/AT-SPI -> adapter -> readback -> rollback readback."""
+    _require_atspi(Path(MOUSEPAD).is_file(), "mousepad is not installed")
+    from windows_os_api.apps.adapters.engine import (
+        create_adapter,
+        reset_adapters,
+        verify_and_record,
+    )
+    from windows_os_api.apps.ui_inspector.service import find_by_automation_id
+    from windows_os_api.backends.factory import get_backend, reset_backend
+    from windows_os_api.core.runtime.config import get_settings
+
+    monkeypatch.setenv("WINOS_BACKEND", "linux")
+    monkeypatch.setenv("WINOS_ADAPTER_STORE", str(tmp_path / "adapters"))
+    get_settings.cache_clear()
+    reset_backend()
+    reset_adapters()
+    backend = get_backend()
+    _require_atspi(
+        bool(backend.capability_flags().get("atspi")),
+        "LinuxBackend reports AT-SPI unavailable",
+    )
+
+    proc = subprocess.Popen(  # noqa: S603
+        [MOUSEPAD],
+        env=_env(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        tree = None
+        for _ in range(40):
+            candidate = backend.get_ui_tree()
+            if candidate.get("supported") and any(
+                (node.get("control_type") or "").casefold()
+                in {"text", "entry", "document", "edit"}
+                and node.get("value") is not None
+                for node in _walk(candidate)
+            ):
+                tree = candidate
+                break
+            time.sleep(0.25)
+        _require_atspi(tree is not None, "Mousepad exposed no editable AT-SPI node")
+
+        adapter = create_adapter("mousepad-live-verify", hwnd=1)
+        current_tree = backend.get_ui_tree()
+        candidates = []
+        for action in adapter.actions:
+            if action.control_type != "Edit":
+                continue
+            if "mousepad" not in action.automation_id.casefold():
+                continue
+            node = find_by_automation_id(current_tree, action.automation_id)
+            if node is not None and node.get("value") is not None:
+                candidates.append((action, node))
+        assert candidates, adapter.actions
+        action, original_node = candidates[0]
+        original = str(original_node.get("value"))
+
+        result = verify_and_record(adapter.app_id, action.name, times=2)
+        assert result["ok"] is True, result
+        assert result["verification"]["state"] == "VERIFIED", result
+        assert result["verification"]["observed"]["rollback_observed"] is True, result
+
+        restored = find_by_automation_id(backend.get_ui_tree(), action.automation_id)
+        assert restored is not None, action.automation_id
+        assert str(restored.get("value")) == original, restored
+    finally:
+        reset_adapters()
+        reset_backend()
+        get_settings.cache_clear()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def test_audio_devices_or_skip(linux_backend):
