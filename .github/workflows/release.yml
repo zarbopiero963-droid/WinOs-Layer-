@@ -23,22 +23,19 @@ jobs:
           python -m pip install -U pip
           pip install -e ".[dev,windows]" pyinstaller
           choco install innosetup -y
-          choco install nssm --version 2.24.101.20180116 --allow-downgrade --force -y --no-progress
       - name: Stage native NSSM in Windows artifacts
         shell: pwsh
         run: |
-          # Official payload lives under ChocolateyInstall\lib\nssm*\tools
-          # (often tools\nssm-2.24\win64\nssm.exe). Never take ChocolateyInstall\bin:
-          # that nssm.exe is a shim and cannot host an SCM service.
-          $lib = Join-Path $env:ChocolateyInstall 'lib'
-          $found = @(Get-ChildItem -Path $lib -Filter nssm.exe -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\bin\\' })
-          $native = $found | Where-Object { $_.FullName -match '\\win64\\' } | Select-Object -First 1
-          if (-not $native) { $native = $found | Select-Object -First 1 }
-          if (-not $native) {
-            throw "Native NSSM package payload not found; refusing Chocolatey shim"
-          }
-          Write-Host "Staging native NSSM from $($native.FullName)"
+          $archive = Join-Path $env:RUNNER_TEMP 'nssm.zip'
+          $expanded = Join-Path $env:RUNNER_TEMP 'nssm'
+          Invoke-WebRequest 'https://www.nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile $archive
+          $expected = '99F5045FFFBFFB745D67FE3A065A953C4A3D9C253B868892D9B685B0EE7D07B8'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "NSSM archive checksum mismatch: $actual" }
+          Expand-Archive $archive -DestinationPath $expanded -Force
+          $native = Get-ChildItem $expanded -Filter nssm.exe -Recurse -File |
+            Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+          if (-not $native) { throw "Native NSSM win64 binary not found in verified archive" }
           Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
           Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - run: python scripts/build_installer.py validate
