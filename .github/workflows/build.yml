@@ -2,7 +2,18 @@ name: Build
 
 on:
   # Artifact + installer smoke are expensive (windows-latest is 2x).
-  # Start from Actions → Build → Run workflow when you want a shippable build.
+  # Run automatically only when a PR changes the shippable service/package.
+  pull_request:
+    paths:
+      - ".github/workflows/build.yml"
+      - "installer/**"
+      - "scripts/build_installer.py"
+      - "scripts/artifact_smoke.py"
+      - "scripts/installer_smoke.py"
+      - "scripts/windows_service_smoke.py"
+      - "windows_os_api/cli/**"
+      - "windows_os_api/core/runtime/**"
+      - "pyproject.toml"
   workflow_dispatch:
 
 concurrency:
