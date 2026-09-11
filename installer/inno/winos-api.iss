@@ -80,9 +80,10 @@ begin
     begin
       Key := GenerateApiKey();
       SaveStringToFile(KeyPath, Key + #13#10, False);
-      MsgBox('API key written to api_key.txt (localhost default).' + #13#10 +
-             'Set WINOS_API_KEYS and do not expose the port publicly.' + #13#10 +
-             'Service name: {#MyServiceName}', mbInformation, MB_OK);
+      if not WizardSilent then
+        MsgBox('API key written to api_key.txt (localhost default).' + #13#10 +
+               'Set WINOS_API_KEYS and do not expose the port publicly.' + #13#10 +
+               'Service name: {#MyServiceName}', mbInformation, MB_OK);
     end;
   end;
 end;
