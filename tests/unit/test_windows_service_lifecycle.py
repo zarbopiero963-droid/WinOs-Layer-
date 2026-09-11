@@ -28,10 +28,13 @@ def test_nssm_installer_uses_the_real_packaged_layout_and_key_file():
 def test_nssm_installer_fails_closed_and_configures_tree_shutdown():
     script = _script("install_nssm.bat")
 
-    assert "where nssm.exe" in script.lower()
+    assert "where nssm.exe" not in script.lower()
+    assert r"%SCRIPT_DIR%nssm.exe" in script
     assert "AppStopMethodSkip" in script
     assert "AppStopMethodConsole" in script
     assert "AppKillProcessTree" in script
+    assert "AppStdout" in script
+    assert "AppStderr" in script
     assert "Invoke-RestMethod" in script
     assert "goto :rollback" in script
     assert "exit /b 1" in script
@@ -72,7 +75,9 @@ def test_api_key_file_loader_accepts_one_nonempty_line(tmp_path):
     from windows_os_api.cli.main import load_api_key_file
 
     key_file = tmp_path / "api_key.txt"
-    key_file.write_text("service-secret\r\n", encoding="utf-8")
+    # Bytes preserve one literal CRLF on every host. Text-mode write would turn
+    # this into CRCRLF on Windows and test Python's newline translation instead.
+    key_file.write_bytes(b"service-secret\r\n")
     assert load_api_key_file(key_file) == "service-secret"
 
 
@@ -138,3 +143,12 @@ def test_hard_smoke_covers_scm_http_process_port_and_shutdown_evidence():
         '"server.shutdown"',
     ):
         assert evidence in script
+
+
+def test_windows_workflows_stage_the_native_nssm_binary_not_the_chocolatey_shim():
+    for name in ("build.yml", "release.yml"):
+        workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        assert "2.24.101.20180116" in workflow
+        assert "win64" in workflow
+        assert "service_scripts\\nssm.exe" in workflow
+        assert "refusing Chocolatey shim" in workflow

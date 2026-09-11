@@ -39,7 +39,7 @@ EXE_NAME = "winos-api.exe"
 # Inno writes its uninstaller as unins000.exe in the install directory.
 UNINSTALLER = "unins000.exe"
 # Files the .iss promises: [Files] + the api_key.txt written in [Code] ssPostInstall.
-EXPECTED_AFTER_INSTALL = (EXE_NAME, "api_key.txt", "service")
+EXPECTED_AFTER_INSTALL = (EXE_NAME, "api_key.txt", "service", "service/nssm.exe")
 
 
 class InstallerSmokeError(RuntimeError):

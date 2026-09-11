@@ -48,11 +48,13 @@ if errorlevel 1 (
 )
 
 set "NSSM=%SCRIPT_DIR%nssm.exe"
-if exist "%NSSM%" goto :nssm_found
-where nssm.exe >nul 2>&1 || goto :missing_nssm
-for /f "delims=" %%I in ('where nssm.exe') do if not defined NSSM_FROM_PATH set "NSSM_FROM_PATH=%%I"
-set "NSSM=%NSSM_FROM_PATH%"
-:nssm_found
+if not exist "%NSSM%" goto :missing_nssm
+
+if not exist "%APP_DIR%logs" mkdir "%APP_DIR%logs"
+if errorlevel 1 (
+  echo ERROR: unable to create the service log directory. 1>&2
+  exit /b 1
+)
 
 sc.exe query "%SERVICE%" >nul 2>&1
 if not errorlevel 1 (
@@ -71,6 +73,9 @@ REM messages, retain TerminateProcess only as a last-resort safety fallback.
 "%NSSM%" set "%SERVICE%" AppStopMethodSkip 6 || goto :rollback
 "%NSSM%" set "%SERVICE%" AppStopMethodConsole 15000 || goto :rollback
 "%NSSM%" set "%SERVICE%" AppKillProcessTree 1 || goto :rollback
+"%NSSM%" set "%SERVICE%" AppStdout "%APP_DIR%logs\service.log" || goto :rollback
+"%NSSM%" set "%SERVICE%" AppStderr "%APP_DIR%logs\service.log" || goto :rollback
+"%NSSM%" set "%SERVICE%" AppRotateFiles 1 || goto :rollback
 "%NSSM%" start "%SERVICE%" || goto :rollback
 powershell.exe -NoProfile -NonInteractive -Command "$deadline = (Get-Date).AddSeconds(45); do { try { $health = Invoke-RestMethod -UseBasicParsing -Uri ('http://127.0.0.1:' + $env:WINOS_SERVICE_HEALTH_PORT + '/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
 if errorlevel 1 goto :rollback
@@ -83,12 +88,13 @@ echo ERROR: WINOS_SERVICE_PORT must be an integer from 1 through 65535. 1>&2
 exit /b 1
 
 :missing_nssm
-echo ERROR: nssm.exe was not found beside this script or on PATH. 1>&2
-echo Install NSSM, then run this script again as Administrator. 1>&2
+echo ERROR: the native nssm.exe was not found beside this script. 1>&2
+echo Use an official artifact or copy the real NSSM binary beside this file. 1>&2
 exit /b 1
 
 :rollback
 echo ERROR: service installation failed; rolling back %SERVICE%. 1>&2
+if exist "%APP_DIR%logs\service.log" type "%APP_DIR%logs\service.log" 1>&2
 call "%SCRIPT_DIR%uninstall_service.bat" >nul 2>&1
 if errorlevel 1 (
   "%NSSM%" stop "%SERVICE%" >nul 2>&1

@@ -616,7 +616,9 @@
       "installer/service_scripts/uninstall_service.bat",
       "windows_os_api/cli/main.py",
       "windows_os_api/core/runtime/app.py",
-      "scripts/windows_service_smoke.py"
+      "scripts/windows_service_smoke.py",
+      ".github/workflows/build.yml",
+      ".github/workflows/release.yml"
     ],
     "tests": [
       "tests/unit/test_windows_backend_guard.py",

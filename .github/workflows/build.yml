@@ -82,7 +82,14 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y
       - name: Install NSSM for hard service lifecycle smoke
-        run: choco install nssm -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nssm --version 2.24.101.20180116 --allow-downgrade -y --no-progress
+          $candidates = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File
+          $native = $candidates | Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+          if (-not $native) { throw "Native NSSM win64 binary not found; refusing Chocolatey shim" }
+          Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
+          Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - name: Validate packaging
         run: python scripts/build_installer.py validate
       - name: Build portable onefile

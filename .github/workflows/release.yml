@@ -23,6 +23,15 @@ jobs:
           python -m pip install -U pip
           pip install -e ".[dev,windows]" pyinstaller
           choco install innosetup -y
+          choco install nssm --version 2.24.101.20180116 --allow-downgrade -y --no-progress
+      - name: Stage native NSSM in Windows artifacts
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File
+          $native = $candidates | Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+          if (-not $native) { throw "Native NSSM win64 binary not found; refusing Chocolatey shim" }
+          Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
+          Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - run: python scripts/build_installer.py validate
       - run: python scripts/build_installer.py build-portable
       - name: Portable zip

@@ -518,6 +518,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `windows_os_api/cli/main.py`
   - `windows_os_api/core/runtime/app.py`
   - `scripts/windows_service_smoke.py`
+  - `.github/workflows/build.yml`
+  - `.github/workflows/release.yml`
 - **Tests:**
   - `tests/unit/test_windows_backend_guard.py`
   - `tests/unit/test_windows_service_lifecycle.py`

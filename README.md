@@ -811,7 +811,8 @@ python scripts/installer_smoke.py     # Windows only
 
 Silent install of `WinOsApi-Setup-<version>.exe` into a scratch directory, check
 of the layout the `.iss` promises (`winos-api.exe`, `service/`, a non-empty
-`api_key.txt`), and `artifact_smoke` against the installed binary. It then runs
+`api_key.txt`, and native `service/nssm.exe`), and `artifact_smoke` against the
+installed binary. It then runs
 the same optional `service/install_nssm.bat` shipped to users and proves a real
 SCM start → stop → restart → uninstall cycle: authenticated loopback HTTP,
 graceful lifespan shutdown evidence, zero surviving PyInstaller processes and

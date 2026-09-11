@@ -82,9 +82,13 @@ hosts. The Windows EXE uses **WindowsBackend** when on Win32.
 
 `Setup.exe` **cannot** be produced on Linux. On Windows (or GHA `windows-latest`):
 
-```bat
+```powershell
 choco install innosetup -y
-choco install nssm -y
+choco install nssm --version 2.24.101.20180116 -y
+$nssm = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File |
+  Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
+if (-not $nssm) { throw "Native NSSM win64 binary not found" }
+Copy-Item $nssm.FullName installer\service_scripts\nssm.exe -Force
 pip install -e ".[dev,windows]" pyinstaller
 python scripts/build_installer.py build-portable
 python scripts/build_installer.py build-installer
@@ -108,8 +112,10 @@ Artifacts:
 
 ## Windows service lifecycle
 
-Install [NSSM](https://nssm.cc/) and make `nssm.exe` available either beside
-`install_nssm.bat` or on `PATH`. Then run the batch file as Administrator. It:
+Official Windows artifacts include the native [NSSM](https://nssm.cc/) 2.24
+binary beside `install_nssm.bat`. A source-tree installation must place the
+real native `nssm.exe` there itself; a package-manager shim from `PATH` is not a
+valid service host. Then run the batch file as Administrator. It:
 
 - resolves both the Setup layout (`service\` below the EXE) and portable layout;
 - requires a one-line `api_key.txt` beside `winos-api.exe`;
@@ -119,6 +125,9 @@ Install [NSSM](https://nssm.cc/) and make `nssm.exe` available either beside
   uvicorn shutdown, and applies the stop to the complete PyInstaller process
   tree;
 - fails closed and rolls back a partial service registration.
+
+Console output is written to `logs\service.log` for startup diagnosis. The
+product uninstaller removes that directory with the other runtime logs.
 
 `WINOS_SERVICE_PORT` may select another port (1–65535); the default is `8765`.
 Run `service\uninstall_service.bat` as Administrator to stop, wait for

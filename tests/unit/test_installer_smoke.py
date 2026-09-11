@@ -31,7 +31,9 @@ def _install(tmp_path: Path, *, key: str = "deadbeef") -> Path:
     d.mkdir()
     (d / "winos-api.exe").write_bytes(b"MZ")
     (d / "api_key.txt").write_text(key, encoding="utf-8")
-    (d / "service").mkdir()
+    service = d / "service"
+    service.mkdir()
+    (service / "nssm.exe").write_bytes(b"MZ")
     return d
 
 
@@ -67,6 +69,7 @@ def test_installed_layout_rejects_missing_binary(ism, tmp_path):
 
 def test_installed_layout_rejects_missing_service_scripts(ism, tmp_path):
     d = _install(tmp_path)
+    (d / "service" / "nssm.exe").unlink()
     (d / "service").rmdir()
     with pytest.raises(ism.InstallerSmokeError):
         ism.verify_installed_layout(d)
@@ -88,7 +91,7 @@ def test_installed_layout_rejects_absent_install_dir(ism, tmp_path):
 
 def test_removal_accepts_a_clean_uninstall(ism, tmp_path):
     d = _install(tmp_path)
-    for child in sorted(d.iterdir(), reverse=True):
+    for child in sorted(d.rglob("*"), reverse=True):
         child.rmdir() if child.is_dir() else child.unlink()
     d.rmdir()
     ism.verify_removed(d)
@@ -105,6 +108,7 @@ def test_removal_rejects_a_leftover_binary(ism, tmp_path):
 def test_removal_rejects_leftover_files(ism, tmp_path):
     d = _install(tmp_path)
     (d / "winos-api.exe").unlink()
+    (d / "service" / "nssm.exe").unlink()
     (d / "service").rmdir()
     with pytest.raises(ism.InstallerSmokeError) as exc:
         ism.verify_removed(d)
