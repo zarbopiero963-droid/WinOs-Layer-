@@ -86,8 +86,8 @@ hosts. The Windows EXE uses **WindowsBackend** when on Win32.
 choco install innosetup -y
 choco install nssm --version 2.24.101.20180116 -y
 $nssm = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File |
-  Where-Object { $_.FullName -match '[\\/]win64[\\/]' } | Select-Object -First 1
-if (-not $nssm) { throw "Native NSSM win64 binary not found" }
+  Select-Object -First 1
+if (-not $nssm) { throw "Native NSSM package payload not found" }
 Copy-Item $nssm.FullName installer\service_scripts\nssm.exe -Force
 pip install -e ".[dev,windows]" pyinstaller
 python scripts/build_installer.py build-portable
