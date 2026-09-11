@@ -811,18 +811,19 @@ python scripts/installer_smoke.py     # Windows only
 
 Silent install of `WinOsApi-Setup-<version>.exe` into a scratch directory, check
 of the layout the `.iss` promises (`winos-api.exe`, `service/`, a non-empty
-`api_key.txt`), `artifact_smoke` against the installed binary, then silent
-uninstall with a check that nothing is left behind — including `api_key.txt`,
-which `[Code]` generates outside `[Files]` and which the uninstaller therefore
-had to be told explicitly to remove. It does **not** assert a
-registered Windows service: the installer does not register one — that is a
-separate manual step (`service/install_nssm.bat`).
+`api_key.txt`), and `artifact_smoke` against the installed binary. It then runs
+the same optional `service/install_nssm.bat` shipped to users and proves a real
+SCM start → stop → restart → uninstall cycle: authenticated loopback HTTP,
+graceful lifespan shutdown evidence, zero surviving PyInstaller processes and
+a released port. Finally it silently uninstalls the product and checks that
+nothing is left behind — including the generated `api_key.txt`.
 
 Wired into both `Build` and `Build Linux` right after `build-portable`. The
 `Build` workflow also runs on pull requests that touch packaging (`build.yml`,
-`installer/`, `build_installer.py`, `artifact_smoke.py`, `windows_os_api/cli/`,
-`pyproject.toml`), so a packaging change proves the artifact still runs before
-it merges — without making every unrelated PR pay for a Windows runner.
+`installer/`, `build_installer.py`, `artifact_smoke.py`, `installer_smoke.py`,
+`windows_service_smoke.py`, `windows_os_api/cli/`, `pyproject.toml`), so a
+packaging change proves the artifact still runs before it merges — without
+making every unrelated PR pay for a Windows runner.
 
 Service name: `WindowsOSLayerService`. Default bind: `127.0.0.1:8765`.
 Linux systemd: `installer/linux/winos-api.service` (LinuxBackend / auto).

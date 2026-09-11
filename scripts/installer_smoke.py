@@ -6,7 +6,8 @@ being installed by anyone. This drives its real lifecycle on Windows:
   1. silent install                 -> the layout the .iss promises appears
   2. the INSTALLED binary runs      -> delegated to artifact_smoke, so what the
                                        user actually receives is what gets tested
-  3. silent uninstall               -> no binary and no install dir left behind
+  3. real Windows service lifecycle -> start, stop, restart, remove; no orphan
+  4. silent uninstall               -> no binary and no install dir left behind
 
 Each step asserts the EFFECT, not the exit of the installer process. Observed
 on GHA: Setup.exe completes the install ("Installation process succeeded" in
@@ -15,11 +16,9 @@ exit therefore hangs on work that is already done. That non-exit is a real
 defect of the installer, reported loudly here and tracked in issue #6 — it is
 not swallowed, it is simply not allowed to block the verification.
 
-Scope note, taken from installer/inno/winos-api.iss rather than assumed:
-the installer does NOT register the Windows service. Service installation is a
-separate manual step (a Start Menu shortcut to service/install_nssm.bat), so
-asserting a registered service here would be testing something the installer
-never claimed to do. Service lifecycle belongs to the PR39 work.
+The installer does not register a service automatically. The smoke invokes the
+same optional ``service/install_nssm.bat`` shortcut a user would run, then the
+matching uninstall script, before uninstalling the product files.
 
 Windows-only by nature. The pure helpers are unit-tested cross-platform in
 tests/unit/test_installer_smoke.py.
@@ -269,6 +268,16 @@ def run_installed_binary(install_dir: Path) -> None:
     )
 
 
+def run_windows_service_lifecycle(install_dir: Path) -> None:
+    """Drive the shipped service scripts against the installed frozen EXE."""
+    smoke = ROOT / "scripts" / "windows_service_smoke.py"
+    _run(
+        [sys.executable, str(smoke), "--install-dir", str(install_dir)],
+        "Windows service lifecycle smoke",
+        capture=False,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Smoke-test the Windows installer lifecycle")
     parser.add_argument("--output-dir", default=str(OUTPUT))
@@ -308,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
 
         run_installed_binary(install_dir)
         print("  installed binary -> serves and shuts down")
+
+        run_windows_service_lifecycle(install_dir)
+        print("  Windows service -> start, stop, restart and removal verified")
 
         exited = silent_uninstall_observed(install_dir)
         print("  uninstall -> binary and install dir removed")

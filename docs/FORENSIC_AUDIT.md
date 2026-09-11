@@ -513,9 +513,19 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Files:**
   - `windows_os_api/installer/service.py`
   - `installer/service_scripts/install_nssm.bat`
+  - `installer/service_scripts/install_sc.bat`
+  - `installer/service_scripts/uninstall_service.bat`
+  - `windows_os_api/cli/main.py`
+  - `windows_os_api/core/runtime/app.py`
+  - `scripts/windows_service_smoke.py`
 - **Tests:**
   - `tests/unit/test_windows_backend_guard.py`
-- **How to run:** `pytest tests/unit/test_windows_backend_guard.py -q`
+  - `tests/unit/test_windows_service_lifecycle.py`
+- **Hard evidence:** the Windows Build installs the real Setup artifact, invokes
+  the shipped NSSM script, observes SCM `RUNNING`/`STOPPED`, authenticated HTTP,
+  graceful `server.shutdown`, restart recovery, zero surviving onefile
+  processes, released port, and removal from SCM before product uninstall.
+- **How to run:** `pytest tests/unit/test_windows_backend_guard.py tests/unit/test_windows_service_lifecycle.py -q`; Windows artifact gate: `python scripts/installer_smoke.py`
 
 ## PR40: Control Center HTML dashboard
 - **Status:** DONE

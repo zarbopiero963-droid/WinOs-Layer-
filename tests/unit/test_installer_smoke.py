@@ -163,6 +163,18 @@ def test_wait_or_kill_tree_kills_and_reports_a_process_that_will_not_exit(ism):
             proc.kill()
 
 
+def test_service_lifecycle_runs_the_dedicated_hard_smoke(ism, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ism, "_run", lambda cmd, what, **kwargs: calls.append((cmd, what)))
+
+    ism.run_windows_service_lifecycle(tmp_path)
+
+    cmd, what = calls[0]
+    assert Path(cmd[1]).name == "windows_service_smoke.py"
+    assert cmd[-2:] == ["--install-dir", str(tmp_path)]
+    assert "service lifecycle" in what
+
+
 # ---------------------------------------------------------------------------
 # The .iss contract: whatever [Code] creates, [UninstallDelete] must remove.
 # Runnable anywhere — no Windows needed to catch the regression.

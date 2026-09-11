@@ -6,39 +6,162 @@ from typing import Any
 
 SERVICE_NAME = "WindowsOSLayerService"
 SERVICE_DISPLAY = "Windows OS API Layer"
-NSSM_TEMPLATE = '''@echo off
-REM Install WindowsOSLayerService as a Windows service via NSSM (run as Administrator)
-set NSSM=%~dp0nssm.exe
-set APP=%~dp0winos-api.exe
-"%NSSM%" install {name} "%APP%" serve --host 127.0.0.1 --port 8765
-"%NSSM%" set {name} AppDirectory "%~dp0"
-"%NSSM%" set {name} DisplayName "{display}"
-"%NSSM%" set {name} Start SERVICE_AUTO_START
-"%NSSM%" start {name}
-echo Installed {name}
+NSSM_SCRIPT = r'''@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+REM Install WindowsOSLayerService through NSSM. Run this script as Administrator.
+set "SERVICE=WindowsOSLayerService"
+set "SCRIPT_DIR=%~dp0"
+
+REM Setup.exe installs scripts under service\ and the EXE one directory above.
+REM The fallback supports the portable ZIP, where scripts and EXE are siblings.
+set "APP=%SCRIPT_DIR%..\winos-api.exe"
+if not exist "%APP%" set "APP=%SCRIPT_DIR%winos-api.exe"
+if not exist "%APP%" (
+  echo ERROR: winos-api.exe not found beside or above this script. 1>&2
+  exit /b 1
+)
+for %%I in ("%APP%") do set "APP=%%~fI"
+for %%I in ("%APP%") do set "APP_DIR=%%~dpI"
+
+REM Never put the secret in the service command line or registry. The CLI reads
+REM the installer-generated file at startup from the service working directory.
+if not exist "%APP_DIR%api_key.txt" (
+  echo ERROR: api_key.txt is missing beside winos-api.exe. 1>&2
+  exit /b 1
+)
+set "WINOS_SERVICE_KEY_FILE=%APP_DIR%api_key.txt"
+powershell.exe -NoProfile -NonInteractive -Command "$lines = @(Get-Content -LiteralPath $env:WINOS_SERVICE_KEY_FILE); if ($lines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($lines[0])) { exit 1 }"
+if errorlevel 1 (
+  echo ERROR: api_key.txt must contain exactly one non-empty line. 1>&2
+  exit /b 1
+)
+set "WINOS_SERVICE_KEY_FILE="
+
+set "PORT_NUMBER="
+for /f "delims=" %%P in ('powershell.exe -NoProfile -NonInteractive -Command "$port = 8765; $raw = $env:WINOS_SERVICE_PORT; if (-not [string]::IsNullOrWhiteSpace($raw) -and (-not [int]::TryParse($raw, [ref]$port) -or $port -lt 1 -or $port -gt 65535)) { exit 1 }; Write-Output $port"') do set "PORT_NUMBER=%%P"
+if not defined PORT_NUMBER goto :bad_port
+set "WINOS_SERVICE_HEALTH_PORT=%PORT_NUMBER%"
+powershell.exe -NoProfile -NonInteractive -Command "$client = New-Object Net.Sockets.TcpClient; try { $client.Connect('127.0.0.1', [int]$env:WINOS_SERVICE_HEALTH_PORT); exit 1 } catch { exit 0 } finally { $client.Dispose() }"
+if errorlevel 1 (
+  echo ERROR: 127.0.0.1:%PORT_NUMBER% is already accepting connections. 1>&2
+  exit /b 1
+)
+
+set "NSSM=%SCRIPT_DIR%nssm.exe"
+if exist "%NSSM%" goto :nssm_found
+where nssm.exe >nul 2>&1 || goto :missing_nssm
+for /f "delims=" %%I in ('where nssm.exe') do if not defined NSSM_FROM_PATH set "NSSM_FROM_PATH=%%I"
+set "NSSM=%NSSM_FROM_PATH%"
+:nssm_found
+
+sc.exe query "%SERVICE%" >nul 2>&1
+if not errorlevel 1 (
+  echo ERROR: %SERVICE% already exists; refusing to replace it. 1>&2
+  exit /b 1
+)
+
+"%NSSM%" install "%SERVICE%" "%APP%" || goto :rollback
+"%NSSM%" set "%SERVICE%" AppDirectory "%APP_DIR%" || goto :rollback
+"%NSSM%" set "%SERVICE%" AppParameters "serve --host 127.0.0.1 --port %PORT_NUMBER% --api-key-file api_key.txt" || goto :rollback
+"%NSSM%" set "%SERVICE%" DisplayName "Windows OS API Layer" || goto :rollback
+"%NSSM%" set "%SERVICE%" Description "FastAPI Windows OS API Layer - localhost only" || goto :rollback
+"%NSSM%" set "%SERVICE%" Start SERVICE_AUTO_START || goto :rollback
+REM Try CTRL_C_EVENT first so uvicorn executes its lifespan shutdown. Skip GUI
+REM messages, retain TerminateProcess only as a last-resort safety fallback.
+"%NSSM%" set "%SERVICE%" AppStopMethodSkip 6 || goto :rollback
+"%NSSM%" set "%SERVICE%" AppStopMethodConsole 15000 || goto :rollback
+"%NSSM%" set "%SERVICE%" AppKillProcessTree 1 || goto :rollback
+"%NSSM%" start "%SERVICE%" || goto :rollback
+powershell.exe -NoProfile -NonInteractive -Command "$deadline = (Get-Date).AddSeconds(45); do { try { $health = Invoke-RestMethod -UseBasicParsing -Uri ('http://127.0.0.1:' + $env:WINOS_SERVICE_HEALTH_PORT + '/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
+if errorlevel 1 goto :rollback
+set "WINOS_SERVICE_HEALTH_PORT="
+echo Installed and started %SERVICE% on 127.0.0.1:%PORT_NUMBER%.
+exit /b 0
+
+:bad_port
+echo ERROR: WINOS_SERVICE_PORT must be an integer from 1 through 65535. 1>&2
+exit /b 1
+
+:missing_nssm
+echo ERROR: nssm.exe was not found beside this script or on PATH. 1>&2
+echo Install NSSM, then run this script again as Administrator. 1>&2
+exit /b 1
+
+:rollback
+echo ERROR: service installation failed; rolling back %SERVICE%. 1>&2
+call "%SCRIPT_DIR%uninstall_service.bat" >nul 2>&1
+if errorlevel 1 (
+  "%NSSM%" stop "%SERVICE%" >nul 2>&1
+  "%NSSM%" remove "%SERVICE%" confirm >nul 2>&1
+)
+exit /b 1
 '''
 
-SC_TEMPLATE = '''@echo off
-REM Alternative sc.exe create (requires absolute path to python/exe)
-sc create {name} binPath= "\\"{bin}\\" serve --host 127.0.0.1 --port 8765" start= auto DisplayName= "{display}"
-sc description {name} "FastAPI Windows OS API Layer — localhost only"
-sc start {name}
+SC_SCRIPT = r'''@echo off
+REM winos-api.exe is a console program, not a native ServiceMain executable.
+REM Registering it directly with sc.exe creates WindowsOSLayerService but cannot
+REM complete the SCM handshake (typically error 1053). NSSM is the supported host.
+echo ERROR: direct sc.exe installation is unsupported for winos-api.exe. 1>&2
+echo Run install_nssm.bat as Administrator instead. 1>&2
+exit /b 1
 '''
+
+UNINSTALL_SCRIPT = r'''@echo off
+setlocal EnableExtensions
+set "SERVICE=WindowsOSLayerService"
+
+sc.exe query "%SERVICE%" >nul 2>&1
+if errorlevel 1 (
+  echo %SERVICE% is not installed.
+  exit /b 0
+)
+
+sc.exe stop "%SERVICE%" >nul 2>&1
+for /L %%I in (1,1,30) do (
+  powershell.exe -NoProfile -NonInteractive -Command "$service = Get-Service -Name '%SERVICE%' -ErrorAction SilentlyContinue; if ($null -ne $service -and $service.Status -eq [ServiceProcess.ServiceControllerStatus]::Stopped) { exit 0 }; exit 1"
+  if not errorlevel 1 goto :stopped
+  powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 1"
+)
+echo ERROR: %SERVICE% did not reach STOPPED within 30 seconds. 1>&2
+exit /b 1
+
+:stopped
+sc.exe delete "%SERVICE%" >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: sc.exe could not delete %SERVICE%. 1>&2
+  exit /b 1
+)
+for /L %%I in (1,1,30) do (
+  sc.exe query "%SERVICE%" >nul 2>&1 || goto :removed
+  powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 1"
+)
+echo ERROR: %SERVICE% is still registered after delete. 1>&2
+exit /b 1
+
+:removed
+echo Removed %SERVICE%.
+exit /b 0
+'''
+
+SCRIPTS = {
+    "install_nssm.bat": NSSM_SCRIPT,
+    "install_sc.bat": SC_SCRIPT,
+    "uninstall_service.bat": UNINSTALL_SCRIPT,
+}
 
 
 def generate_install_scripts(output_dir: str | Path, binary_path: str = "winos-api.exe") -> dict[str, str]:
+    """Copy the canonical, fail-closed service scripts to *output_dir*.
+
+    ``binary_path`` remains for API compatibility. The packaged scripts resolve
+    the installed and portable layouts themselves, so an alternate value is no
+    longer safe to interpolate into a privileged batch command.
+    """
+    del binary_path
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    nssm = NSSM_TEMPLATE.format(name=SERVICE_NAME, display=SERVICE_DISPLAY)
-    sc = SC_TEMPLATE.format(name=SERVICE_NAME, display=SERVICE_DISPLAY, bin=binary_path)
-    uninstall = f'@echo off\nsc stop {SERVICE_NAME}\nsc delete {SERVICE_NAME}\necho Removed {SERVICE_NAME}\n'
-    paths = {
-        "install_nssm.bat": nssm,
-        "install_sc.bat": sc,
-        "uninstall_service.bat": uninstall,
-    }
     written = {}
-    for name, content in paths.items():
+    for name, content in SCRIPTS.items():
         p = out / name
         p.write_text(content, encoding="utf-8")
         written[name] = str(p)
