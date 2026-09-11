@@ -12,6 +12,12 @@ def test_uia_windows_module_importable():
     assert uia_windows.uia_available() in (True, False)
 
 
+def test_uiautomation_control_names_are_canonicalized():
+    assert uia_windows._control_type_name("DocumentControl") == "Document"
+    assert uia_windows._control_type_name("EditControl") == "Edit"
+    assert uia_windows._control_type_name("ButtonControl") == "Button"
+
+
 def test_build_tree_falls_back_from_an_incomplete_provider(monkeypatch):
     incomplete = {"name": "Notepad", "children": [], "source": "uiautomation"}
     complete = {

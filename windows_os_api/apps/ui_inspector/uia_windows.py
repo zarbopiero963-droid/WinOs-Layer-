@@ -66,6 +66,11 @@ def _control_type_name(raw: Any) -> str:
         s = raw.replace("ControlType.", "").replace("UIA_", "").replace("ControlTypeId", "")
         if s.endswith("ControlTypeId"):
             s = s[: -len("ControlTypeId")]
+        # uiautomation exposes names such as ``DocumentControl`` and
+        # ``ButtonControl``; the rest of the adapter contract uses the UIA
+        # canonical names (Document, Button, Edit, ...).
+        if s.endswith("Control") and len(s) > len("Control"):
+            s = s[: -len("Control")]
         return s or "Unknown"
     try:
         return str(int(raw))

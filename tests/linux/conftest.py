@@ -361,14 +361,11 @@ def event_recorder(window_manager, tmp_path):
             proc.kill()
             pytest.fail(f"xev window {title!r} never appeared")
 
-        # Nothing is asked of the window manager before it has adopted the
-        # window: a move or a resize aimed at one it does not manage yet is a
-        # request nobody answers, and `--sync` waits for that answer.
-        if not wait_until_managed(title):
-            proc.kill()
-            pytest.fail(
-                f"window manager never took the xev window {title!r} into _NET_CLIENT_LIST"
-            )
+        # Openbox normally adopts xev.  A loaded runner can leave it mapped but
+        # absent from _NET_CLIENT_LIST; event delivery is still testable there
+        # because X exposes the real geometry and direct input focus.  Only WM
+        # operations are conditional -- the event assertions remain identical.
+        managed = wait_until_managed(title)
 
         # Put it somewhere known and make it big. xev's default window is
         # 178x178 wherever the WM decides to place it — measured at (552,450) —
@@ -376,15 +373,19 @@ def event_recorder(window_manager, tmp_path):
         # instead, and the recorder sees nothing while the event was delivered
         # perfectly well somewhere else.
         #
-        # These three are REQUESTS, not facts. `xdo` bounds each one so a
+        # These are REQUESTS, not facts. `xdo` bounds each one so a
         # `--sync` that never gets its answer cannot raise out of the fixture,
         # and what actually happened is established below by measuring.
-        for args in (
-            ["windowmove", "--sync", str(found), "40", "40"],
-            ["windowsize", "--sync", str(found), "900", "700"],
-            # Focus, or keystrokes go to whatever window has it.
-            ["windowactivate", "--sync", str(found)],
-        ):
+        requests = (
+            (
+                ["windowmove", "--sync", str(found), "40", "40"],
+                ["windowsize", "--sync", str(found), "900", "700"],
+                ["windowactivate", "--sync", str(found)],
+            )
+            if managed
+            else (["windowfocus", "--sync", str(found)],)
+        )
+        for args in requests:
             xdo(args)
 
         # Wait for a usable rectangle rather than sleeping a guessed amount. If
@@ -414,7 +415,8 @@ def event_recorder(window_manager, tmp_path):
         # without focus the recorder receives no keystroke, and the test would
         # report that the input layer delivered nothing.
         if not wait_for_focus(found, timeout=3.0):
-            xdo(["windowactivate", str(found)], timeout=5)
+            focus_command = "windowactivate" if managed else "windowfocus"
+            xdo([focus_command, str(found)], timeout=5)
             if not wait_for_focus(found, timeout=5.0):
                 proc.kill()
                 pytest.fail(f"the xev window {title!r} never took the input focus")
