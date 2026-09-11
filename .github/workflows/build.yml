@@ -17,9 +17,6 @@ on:
       - "pyproject.toml"
   workflow_dispatch:
 
-# Superseded runs are cancelled: a push that replaces a head makes the previous
-# run's answer irrelevant, and Windows runners bill at 2x. A hung job also stops
-# burning minutes as soon as the next push lands.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -43,12 +40,8 @@ jobs:
       - name: Portable (Linux ELF via PyInstaller)
         run: python scripts/build_installer.py build-portable
       - name: Artifact smoke (run the frozen ELF for real)
-        # Launches dist/winos-api, polls /v1/health over real HTTP, checks the
-        # served backend and that auth is enforced, then verifies teardown.
-        # A binary that builds but cannot start fails HERE, not at the user.
         run: python scripts/artifact_smoke.py --expect-backend linux
       - name: Package Linux portable (shared helper)
-        # Same naming as build-linux.yml: dist/winos-api-portable-linux.zip
         run: python scripts/build_installer.py package-linux
       - name: Upload Linux portable
         uses: actions/upload-artifact@v4
@@ -84,13 +77,22 @@ jobs:
       - name: Install NSSM for hard service lifecycle smoke
         shell: pwsh
         run: |
-          choco install nssm --version 2.24.101.20180116 --allow-downgrade -y --no-progress
-          # The pinned Chocolatey package flattens its selected architecture to
-          # lib\nssm\tools\nssm.exe.  Read the package payload directly: the
-          # similarly named executable under Chocolatey's bin directory is a shim.
-          $native = Get-ChildItem "$env:ChocolateyInstall\lib\nssm*\tools" -Filter nssm.exe -Recurse -File |
-            Select-Object -First 1
-          if (-not $native) { throw "Native NSSM package payload not found; refusing Chocolatey shim" }
+          choco install nssm --version 2.24.101.20180116 --allow-downgrade --force -y --no-progress
+          # Official payload lives under ChocolateyInstall\lib\nssm*\tools
+          # (often tools\nssm-2.24\win64\nssm.exe). Never take ChocolateyInstall\bin:
+          # that nssm.exe is a shim and cannot host an SCM service.
+          $lib = Join-Path $env:ChocolateyInstall 'lib'
+          $found = @(Get-ChildItem -Path $lib -Filter nssm.exe -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\bin\\' })
+          $native = $found | Where-Object { $_.FullName -match '\\win64\\' } | Select-Object -First 1
+          if (-not $native) { $native = $found | Select-Object -First 1 }
+          if (-not $native) {
+            Get-ChildItem -Path $lib -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like 'nssm*' } |
+              ForEach-Object { Write-Host $_.FullName; Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 30 FullName }
+            throw "Native NSSM package payload not found; refusing Chocolatey shim"
+          }
+          Write-Host "Staging native NSSM from $($native.FullName)"
           Copy-Item $native.FullName installer\service_scripts\nssm.exe -Force
           Get-FileHash installer\service_scripts\nssm.exe -Algorithm SHA256
       - name: Validate packaging
@@ -98,11 +100,6 @@ jobs:
       - name: Build portable onefile
         run: python scripts/build_installer.py build-portable
       - name: Artifact smoke (run the frozen EXE for real)
-        # The gap this closes: PyInstaller onefile fails at RUNTIME, not at build
-        # time. A dropped hidden import (comtypes, uiautomation, pywin32) yields
-        # an EXE that builds green and dies on launch. This starts the real
-        # binary, polls /v1/health, asserts the Windows backend is served and
-        # that auth is enforced, then checks nothing is left running.
         run: python scripts/artifact_smoke.py --expect-backend windows
       - name: Zip portable
         shell: pwsh
@@ -115,12 +112,6 @@ jobs:
       - name: Build Setup.exe (Inno)
         run: python scripts/build_installer.py build-installer
       - name: Installer and Windows service smoke
-        # WinOsApi-Setup has been shipped without anyone ever installing it.
-        # This drives the real lifecycle: silent install, run the INSTALLED
-        # binary, invoke its shipped NSSM service installer, prove SCM/API/
-        # process/port/graceful-shutdown behavior, remove the service, then
-        # silently uninstall and verify nothing is left behind.
-        # Installs to a scratch dir, never the default location.
         run: python scripts/installer_smoke.py
       - name: Checksums
         shell: pwsh
