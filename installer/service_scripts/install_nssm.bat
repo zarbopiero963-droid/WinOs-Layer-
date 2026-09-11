@@ -14,14 +14,18 @@ if not exist "%APP%" (
 )
 for %%I in ("%APP%") do set "APP=%%~fI"
 for %%I in ("%APP%") do set "APP_DIR=%%~dpI"
+REM %%~dpI always has a trailing backslash. NSSM AppDirectory + AppEnvironmentExtra
+REM mis-parse paths that end in \ (the next token is eaten). Strip it.
+set "APP_DIR_RAW=%APP_DIR%"
+if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
 
 REM Never put the secret in the service command line or registry. The CLI reads
 REM the installer-generated file at startup from the service working directory.
-if not exist "%APP_DIR%api_key.txt" (
+if not exist "%APP_DIR%\api_key.txt" (
   echo ERROR: api_key.txt is missing beside winos-api.exe. 1>&2
   exit /b 1
 )
-set "WINOS_SERVICE_KEY_FILE=%APP_DIR%api_key.txt"
+set "WINOS_SERVICE_KEY_FILE=%APP_DIR%\api_key.txt"
 powershell.exe -NoProfile -NonInteractive -Command "$lines = @(Get-Content -LiteralPath $env:WINOS_SERVICE_KEY_FILE); if ($lines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($lines[0])) { exit 1 }"
 if errorlevel 1 (
   echo ERROR: api_key.txt must contain exactly one non-empty line. 1>&2
@@ -42,9 +46,14 @@ if errorlevel 1 (
 set "NSSM=%SCRIPT_DIR%nssm.exe"
 if not exist "%NSSM%" goto :missing_nssm
 
-if not exist "%APP_DIR%logs" mkdir "%APP_DIR%logs"
+if not exist "%APP_DIR%\logs" mkdir "%APP_DIR%\logs"
 if errorlevel 1 (
   echo ERROR: unable to create the service log directory. 1>&2
+  exit /b 1
+)
+if not exist "%APP_DIR%\tmp" mkdir "%APP_DIR%\tmp"
+if errorlevel 1 (
+  echo ERROR: unable to create the service temp directory. 1>&2
   exit /b 1
 )
 
@@ -65,9 +74,16 @@ REM messages, retain TerminateProcess only as a last-resort safety fallback.
 "%NSSM%" set "%SERVICE%" AppStopMethodSkip 6 || goto :rollback
 "%NSSM%" set "%SERVICE%" AppStopMethodConsole 15000 || goto :rollback
 "%NSSM%" set "%SERVICE%" AppKillProcessTree 1 || goto :rollback
-"%NSSM%" set "%SERVICE%" AppStdout "%APP_DIR%logs\service.log" || goto :rollback
-"%NSSM%" set "%SERVICE%" AppStderr "%APP_DIR%logs\service.log" || goto :rollback
+REM Separate handles: two streams on the same file can make NSSM fail the start
+REM on Windows before the child even runs.
+"%NSSM%" set "%SERVICE%" AppStdout "%APP_DIR%\logs\service.out.log" || goto :rollback
+"%NSSM%" set "%SERVICE%" AppStderr "%APP_DIR%\logs\service.err.log" || goto :rollback
 "%NSSM%" set "%SERVICE%" AppRotateFiles 1 || goto :rollback
+REM PyInstaller onefile unpacks under %%TEMP%%. LocalSystem's default temp is
+REM cleaned and locked on GHA; keep the unpack dir next to the installed EXE.
+"%NSSM%" set "%SERVICE%" AppEnvironmentExtra "TMP=%APP_DIR%\tmp" "TEMP=%APP_DIR%\tmp" "WINOS_BACKEND=windows" || goto :rollback
+REM Bootloader unpack + import of uiautomation can exceed the 1500ms default.
+"%NSSM%" set "%SERVICE%" AppThrottle 15000 || goto :rollback
 "%NSSM%" start "%SERVICE%" || goto :rollback
 powershell.exe -NoProfile -NonInteractive -Command "$deadline = (Get-Date).AddSeconds(45); do { try { $health = Invoke-RestMethod -UseBasicParsing -Uri ('http://127.0.0.1:' + $env:WINOS_SERVICE_HEALTH_PORT + '/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
 if errorlevel 1 goto :rollback
@@ -86,7 +102,14 @@ exit /b 1
 
 :rollback
 echo ERROR: service installation failed; rolling back %SERVICE%. 1>&2
-if exist "%APP_DIR%logs\service.log" type "%APP_DIR%logs\service.log" 1>&2
+echo --- service.out.log --- 1>&2
+if exist "%APP_DIR%\logs\service.out.log" type "%APP_DIR%\logs\service.out.log" 1>&2
+echo --- service.err.log --- 1>&2
+if exist "%APP_DIR%\logs\service.err.log" type "%APP_DIR%\logs\service.err.log" 1>&2
+echo --- nssm dump --- 1>&2
+"%NSSM%" dump "%SERVICE%" 1>&2
+echo --- sc qc --- 1>&2
+sc.exe qc "%SERVICE%" 1>&2
 call "%SCRIPT_DIR%uninstall_service.bat" >nul 2>&1
 if errorlevel 1 (
   "%NSSM%" stop "%SERVICE%" >nul 2>&1
