@@ -151,6 +151,7 @@ def test_windows_workflows_stage_the_native_nssm_binary_not_the_chocolatey_shim(
         assert "2.24.101.20180116" in workflow
         assert r"ChocolateyInstall\lib\nssm*\tools" in workflow
         assert "Select-Object -First 1" in workflow
-        assert "ChocolateyInstall\bin" not in workflow
+        assert "win64" in workflow
+        assert "-notmatch" in workflow
         assert "service_scripts\\nssm.exe" in workflow
         assert "refusing Chocolatey shim" in workflow
