@@ -107,8 +107,15 @@ def test_atspi_tree_or_skip_with_reason(linux_backend):
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            time.sleep(1.5)
-        tree = linux_backend.get_ui_tree()
+        tree = None
+        for _ in range(40):
+            candidate = linux_backend.get_ui_tree()
+            if candidate.get("children"):
+                tree = candidate
+                break
+            tree = candidate
+            time.sleep(0.25)
+        assert tree is not None
         if tree.get("supported") is False or tree.get("error"):
             reason = tree.get("detail") or tree.get("error") or "AT-SPI unavailable"
             _require_atspi(False, f"AT-SPI unavailable: {reason}")
@@ -150,9 +157,16 @@ def test_auto_control_mousepad(linux_backend):
         start_new_session=True,
     )
     try:
-        time.sleep(1.5)
-        wins = linux_backend.list_windows()
-        mp = next((w for w in wins if "Mousepad" in (w.get("title") or "")), None)
+        wins = []
+        mp = None
+        for _ in range(40):
+            wins = linux_backend.list_windows()
+            mp = next(
+                (w for w in wins if "Mousepad" in (w.get("title") or "")), None
+            )
+            if mp is not None:
+                break
+            time.sleep(0.25)
         assert mp is not None, f"mousepad window missing: {wins}"
         focus = linux_backend.focus_window(mp["hwnd"])
         assert focus.get("ok") is True, focus

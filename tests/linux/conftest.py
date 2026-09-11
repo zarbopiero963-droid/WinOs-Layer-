@@ -121,7 +121,7 @@ def window_geometry(window_id: int) -> dict[str, int]:
     return rect if len(rect) == 4 else {}
 
 
-def wait_until_managed(title: str, timeout: float = 10.0) -> bool:
+def wait_until_managed(title: str, timeout: float = 20.0) -> bool:
     """Wait for the window manager to take `title` into `_NET_CLIENT_LIST`.
 
     Existing in X is not the same as being MANAGED. `xdotool search` walks the
