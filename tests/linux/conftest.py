@@ -154,7 +154,17 @@ def wait_until_managed(title: str, timeout: float = 20.0) -> bool:
     return False
 
 
-def wait_for_focus(window_id: int, timeout: float = 5.0) -> bool:
+def focused_window_id() -> int | None:
+    result = xdo(["getwindowfocus"], timeout=5)
+    if result is None:
+        return None
+    out = (result.stdout or "").strip()
+    return int(out) if out.isdigit() else None
+
+
+def wait_for_focus(
+    window_id: int, timeout: float = 5.0, *, title: str | None = None
+) -> bool:
     """Wait until the X input focus is on `window_id`.
 
     Focus is not decoration for the recorder: keystrokes go to whichever window
@@ -163,10 +173,15 @@ def wait_for_focus(window_id: int, timeout: float = 5.0) -> bool:
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        result = xdo(["getwindowfocus"], timeout=5)
-        if result is not None:
-            out = (result.stdout or "").strip()
-            if out.isdigit() and int(out) == window_id:
+        focused = focused_window_id()
+        if focused == window_id:
+            return True
+        # A reparenting WM can expose the frame in `search` while X assigns
+        # focus to its client child.  Confirm that child by the unique xev
+        # title instead of mistaking two handles for two different windows.
+        if focused is not None and title:
+            named = xdo(["getwindowname", str(focused)], timeout=5)
+            if named is not None and title in (named.stdout or ""):
                 return True
         time.sleep(0.05)
     return False
@@ -414,17 +429,17 @@ def event_recorder(window_manager, tmp_path):
         # back instead of trusting it, and ask once more if it went elsewhere:
         # without focus the recorder receives no keystroke, and the test would
         # report that the input layer delivered nothing.
-        if not wait_for_focus(found, timeout=3.0):
+        if not wait_for_focus(found, timeout=3.0, title=title):
             focus_command = "windowactivate" if managed else "windowfocus"
             xdo([focus_command, str(found)], timeout=5)
-            if not wait_for_focus(found, timeout=5.0):
+            if not wait_for_focus(found, timeout=5.0, title=title):
                 proc.kill()
                 pytest.fail(f"the xev window {title!r} never took the input focus")
 
         time.sleep(0.6)  # let the map/expose/focus/configure burst finish
 
         recorder = EventRecorder(log, log.stat().st_size)
-        recorder.hwnd = found
+        recorder.hwnd = focused_window_id() or found
         recorder.title = title
         recorder.rect = rect
         # Where a test should aim so the event lands INSIDE the recorder.
