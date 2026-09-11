@@ -497,6 +497,34 @@ class WindowsBackend:
     # ------------------------------------------------------------------
     def discover_apps(self) -> list[dict[str, Any]]:
         apps: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+
+        def add(exe: Path, source: str) -> None:
+            path_key = str(exe).casefold()
+            if path_key in seen_paths or len(apps) >= 200:
+                return
+            seen_paths.add(path_key)
+            apps.append({
+                "id": exe.stem.lower().replace(" ", "-"),
+                "name": exe.stem,
+                "path": str(exe),
+                "version": "",
+                "publisher": "",
+                "source": source,
+            })
+
+        # A portable or freshly generated application need not be installed in
+        # Program Files. A running process is direct evidence that it exists and
+        # gives us its exact executable without an app-specific registry entry.
+        if self._psutil:
+            for process in self._psutil.process_iter(["exe"]):
+                try:
+                    raw_path = process.info.get("exe")
+                    if raw_path and Path(raw_path).suffix.casefold() == ".exe":
+                        add(Path(raw_path), "running-process")
+                except self._psutil.Error:
+                    continue
+
         candidates = [
             Path(r"C:\Program Files"),
             Path(r"C:\Program Files (x86)"),
@@ -508,14 +536,7 @@ class WindowsBackend:
             for exe in root.rglob("*.exe"):
                 if len(apps) >= 200:
                     break
-                apps.append({
-                    "id": exe.stem.lower().replace(" ", "-"),
-                    "name": exe.stem,
-                    "path": str(exe),
-                    "version": "",
-                    "publisher": "",
-                    "source": "filesystem",
-                })
+                add(exe, "filesystem")
         if self._winreg:
             apps.extend(self._discover_from_registry())
         return apps

@@ -269,6 +269,12 @@ Il body dichiarato nel documento coincide con la rotta reale:
 `/actions/{action_name}` resta la superficie di gestione protetta da RBAC e
 sandbox; l'OpenAPI per-app e' la superficie affidabile derivata dalle prove.
 
+Il Gate 4 include inoltre un E2E Windows senza applicazioni o selector noti:
+il test compila a runtime un EXE WinForms con identificatori UUID, lo trova fra
+i processi in esecuzione e attraversa UIA, mapping semantico, adapter, workflow,
+verifica con readback/rollback, persistenza e invocazione HTTP della Virtual API.
+In questo modo il percorso universale non dipende dalla fixture Contoso CRM.
+
 ## Finestre — focus e chiusura: `ok` significa «e' successo davvero»
 
 `POST /v1/windows/{hwnd}/focus` e `DELETE /v1/windows/{hwnd}`.

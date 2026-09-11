@@ -643,19 +643,25 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   - `tests/integration/test_api_adapter_automation.py`
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
-## PR50: E2E universal adapter path on FakeBackend CRM
-- **Status:** PARTIAL — *era* DONE, e non lo era
+## PR50: E2E universal adapter path, incluso EXE sconosciuto reale
+- **Status:** DONE
 - **Files:**
   - `windows_os_api/backends/fake.py`
   - `tests/fixtures/crm_ui_tree.json`
   - `windows_os_api/apps/adapters/store.py` — manifest versionato, persistenza
   - `windows_os_api/apps/adapters/engine.py` — reload all'avvio, aggancio finestra
   - `windows_os_api/apps/schema/generator.py` — OpenAPI dinamica dai verdetti
+  - `windows_os_api/backends/windows.py` — discovery degli EXE in esecuzione
+  - `windows_os_api/apps/semantic/mapper.py` — mapping generico non preconfigurato
+  - `windows_os_api/apps/workflows/generator.py` — parametri richiesti dalle azioni
 - **Tests:**
   - `tests/e2e/test_universal_adapter_e2e.py`
   - `tests/security/test_adapter_persistence.py`
   - `tests/security/test_verified_virtual_api.py`
-- **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q`
+  - `tests/unit/test_generic_semantic_pipeline.py`
+  - `tests/windows/test_unknown_exe_e2e.py`
+- **How to run:** `pytest tests/e2e/test_universal_adapter_e2e.py -q` e, su
+  Windows, `pytest tests/windows/test_unknown_exe_e2e.py -q`
 - **Perché non era DONE:** il test end-to-end gira interamente su una **fixture
   inventata** (`Contoso CRM`, `hwnd: 1001`, `crm_ui_tree.json`). Prova
   l'idraulica dell'API — discover, albero, azione, workflow — non che l'adapter
@@ -714,8 +720,15 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   rotta reale (`{"params": {"value": ...}}`) invece del vecchio body piatto.
   Test hard aggiuntivi dimostrano che la capability verificata su Notepad/UIA
   reale e Mousepad/AT-SPI reale entra effettivamente nella Virtual API.
-- **Cosa manca ancora (Gate 4, vedi #6):** la pipeline completa su un **EXE
-  sconosciuto**.
+- **Chiusura del Gate 4:** `test_unknown_exe_e2e.py` compila durante il test un
+  programma WinForms in una directory temporanea. Nome dell'EXE, titolo,
+  `AccessibleName` e `Name` del campo contengono un UUID appena creato: non
+  possono quindi provenire da fixture, sinonimi o selector preconfezionati.
+  Il test trova l'EXE fra i processi realmente in esecuzione, legge il suo
+  albero UIA, genera mapping/azione/workflow, verifica due volte una scrittura
+  con readback e rollback reali, persiste il verdetto, pubblica esclusivamente
+  quel path nella Virtual API, invoca il path HTTP e rilegge il valore finale
+  dall'applicazione. Ogni passaggio e' un'asserzione bloccante nel job Windows.
 
 ## Summary
 - DONE: 50 (+ Linux gaps closed)
