@@ -132,11 +132,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {{
     if completed.returncode != 0 or not installation:
         _dependency_or_skip("Visual C++ Build Tools were not found")
     vcvars = Path(installation) / "VC/Auxiliary/Build/vcvars64.bat"
-    command = (
+    command = _write(
+        root / "compile-native.cmd",
         f'call "{vcvars}" >nul && cl.exe /nologo /EHsc /DUNICODE /D_UNICODE '
-        f'"{source}" /Fe:"{exe}" user32.lib gdi32.lib'
+        f'"{source}" /Fe:"{exe}" user32.lib gdi32.lib\n'
     )
-    _run(["cmd.exe", "/d", "/s", "/c", command], cwd=root)
+    # A batch file avoids cmd.exe /S quote rewriting when vcvars lives below
+    # "Program Files". The first farm run proved the direct /C string path is
+    # otherwise parsed as a quoted command name on the hosted Windows image.
+    _run(["cmd.exe", "/d", "/c", str(command)], cwd=root)
     assert exe.is_file()
     return exe
 
@@ -314,7 +318,7 @@ app.on('window-all-closed', () => app.quit());
 <!doctype html>
 <html lang="en">
   <body>
-    <label for="runtime_control_{token}">runtime-field-{token}</label>
+    <div>Electron test field</div>
     <input id="runtime_control_{token}" aria-label="runtime-field-{token}"
            value="original-{token}" style="width:580px;height:30px">
   </body>
