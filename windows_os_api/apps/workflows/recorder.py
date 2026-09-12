@@ -51,14 +51,62 @@ def list_workflows() -> list[dict[str, Any]]:
     return [{"id": w.id, "name": w.name, "steps": len(w.steps), "app_id": w.app_id,
              "confidence": w.confidence, "risk": w.risk} for w in _workflows.values()]
 
+
+def _step_succeeded(result: Any) -> bool:
+    if isinstance(result, dict):
+        if "ok" in result:
+            return bool(result["ok"])
+        if result.get("error") or result.get("denied"):
+            return False
+    return result is not None
+
+
 def play(wf_id: str, invoke) -> dict[str, Any]:
+    """Esegue gli step; ok è True solo se tutti hanno successo.
+
+    Al primo fallimento si interrompe (fail-closed) e, se il workflow ha
+    `rollback`, prova quella sequenza. Non si continua a premere pulsanti
+    dopo uno step già fallito.
+    """
     wf = _workflows.get(wf_id)
     if not wf:
         return {"ok": False, "error": "workflow not found"}
-    results = []
-    for step in wf.steps:
-        results.append(invoke(wf.app_id, step.action, step.params))
-    return {"ok": True, "workflow_id": wf_id, "results": results}
+    results: list[Any] = []
+    failed_at: int | None = None
+    for index, step in enumerate(wf.steps):
+        try:
+            result = invoke(wf.app_id, step.action, step.params)
+        except Exception as exc:  # noqa: BLE001 — player must not crash the API
+            result = {"ok": False, "error": str(exc), "action": step.action}
+        results.append(result)
+        if not _step_succeeded(result):
+            failed_at = index
+            break
+    payload: dict[str, Any] = {
+        "ok": failed_at is None,
+        "workflow_id": wf_id,
+        "results": results,
+    }
+    if failed_at is None:
+        return payload
+    payload["failed_step"] = failed_at
+    payload["failed_action"] = wf.steps[failed_at].action
+    if not wf.rollback:
+        return payload
+    recovery: list[Any] = []
+    recovered = True
+    for step in wf.rollback:
+        try:
+            recovered_result = invoke(wf.app_id, step.action, step.params)
+        except Exception as exc:  # noqa: BLE001
+            recovered_result = {"ok": False, "error": str(exc), "action": step.action}
+        recovery.append(recovered_result)
+        if not _step_succeeded(recovered_result):
+            recovered = False
+            break
+    payload["recovery"] = recovery
+    payload["recovered"] = recovered
+    return payload
 
 def to_dict(wf: Workflow) -> dict[str, Any]:
     return {
