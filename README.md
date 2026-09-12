@@ -182,12 +182,20 @@ pytest -q -m windows
 # UI Automation / screenshot tests need an interactive desktop
 pytest -q -m "windows and requires_display"
 
+# Gate 7 Universal Test Farm (fail-closed; requires the toolchains installed
+# by .github/workflows/test-farm.yml)
+$env:WINOS_REQUIRE_TEST_FARM="1"
+pytest tests/windows/test_universal_test_farm.py -vv
+
 # Live smoke (Notepad + tree + type + screenshot; skips UI if session 0)
 python scripts/live_windows_smoke.py
 ```
 
 On Linux, `pytest -m windows` collects import/smoke tests; runtime Win32 tests skip with clear reasons.
 Without a real Windows **interactive desktop**, UIA tree / mouse click / screenshot may skip (`requires_display`); process, FS, registry, clipboard, and SendInput API calls still run.
+The dedicated **Universal Test Farm** check does not accept those skips: it
+builds or stages real Win32, WinForms, WPF, Electron and Qt applications and
+certifies the complete unknown-app pipeline for each one.
 
 ## ComputerAgent — puo' eseguire, ma solo dietro un gate dichiarato
 

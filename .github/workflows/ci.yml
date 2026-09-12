@@ -106,7 +106,10 @@ jobs:
           WINOS_REQUIRE_WM: "1"
           WINOS_REQUIRE_PING: "1"
           WINOS_REQUIRE_UI: "1"
-        run: pytest -q --tb=short -m windows
+        # The multi-framework farm has its own fail-closed workflow with its
+        # heavier Electron/Qt toolchains. Keep this job focused on the core
+        # Windows contract instead of silently skipping optional runtimes.
+        run: pytest -q --tb=short -m "windows and not test_farm"
       - name: Live Windows smoke
         env:
           WINOS_BACKEND: windows
