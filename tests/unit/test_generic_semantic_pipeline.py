@@ -48,3 +48,22 @@ def test_unknown_actionable_controls_receive_a_generic_semantic_mapping():
         and item["semantic"] == label
         for item in suggestions
     ), suggestions
+
+
+def test_actionable_control_wins_over_an_identically_named_static_label():
+    label = "campo-win32-81ac7e-non-preconfigurato"
+    tree = _unknown_tree(label)
+    tree["children"].insert(
+        1,
+        {
+            "name": label,
+            "automation_id": "etichetta-statica-generata",
+            "control_type": "Text",
+            "children": [],
+        },
+    )
+
+    matched = map_intent_to_element(tree, f"imposta {label}")
+
+    assert matched is not None
+    assert matched["automation_id"] == "id-generato-a-runtime"

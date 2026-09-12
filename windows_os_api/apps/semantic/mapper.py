@@ -64,7 +64,7 @@ def map_intent_to_element(tree: dict[str, Any], intent: str) -> dict[str, Any] |
                     return n
     # Generic fallback for controls whose labels are unknown at development
     # time. Empty names must never match ("" is a substring of every query).
-    best: tuple[int, int, dict[str, Any]] | None = None
+    best: tuple[int, int, int, dict[str, Any]] | None = None
     for n in nodes:
         for candidate in (_normalise(n.get("name")), _normalise(n.get("automation_id"))):
             if not candidate:
@@ -74,10 +74,15 @@ def map_intent_to_element(tree: dict[str, Any], intent: str) -> dict[str, Any] |
                 score = 2
             if not score and intent_l in candidate:
                 score = 1
-            ranked = (score, len(candidate), n)
-            if score and (best is None or ranked[:2] > best[:2]):
+            # Native Win32 and web accessibility trees commonly expose both a
+            # static label and its editable control with the same accessible
+            # name. At equal textual quality the control that can fulfil the
+            # intent must win; otherwise reasoning returns a decorative Text
+            # node and no executable workflow can be generated.
+            ranked = (score, int(_is_actionable(n)), len(candidate), n)
+            if score and (best is None or ranked[:3] > best[:3]):
                 best = ranked
-    return best[2] if best is not None else None
+    return best[3] if best is not None else None
 
 def suggest_mappings(tree: dict[str, Any]) -> list[dict[str, Any]]:
     nodes = flatten(tree)
