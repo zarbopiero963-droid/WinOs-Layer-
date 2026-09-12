@@ -742,6 +742,29 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   quel path nella Virtual API, invoca il path HTTP e rilegge il valore finale
   dall'applicazione. Ogni passaggio e' un'asserzione bloccante nel job Windows.
 
+## Gate 7: Universal Test Farm multi-framework
+
+- **Status:** DONE
+- **Files:**
+  - `tests/windows/test_universal_test_farm.py`
+  - `.github/workflows/test-farm.yml`
+- **How to run:** su Windows, con le dipendenze fissate dal workflow,
+  `WINOS_REQUIRE_TEST_FARM=1 pytest tests/windows/test_universal_test_farm.py -vv`
+- **Evidenza richiesta:** cinque casi indipendenti costruiscono o mettono in
+  scena applicazioni reali Win32 nativa, WinForms, WPF, Electron e Qt. Ogni
+  caso usa un UUID nuovo per EXE, titolo, identita' del controllo e label;
+  individua l'EXE fra i processi in esecuzione; legge il campo dal provider UIA
+  della tecnologia; genera semantic mapping, azione e workflow; esegue due
+  prove con readback e rollback; persiste il verdetto `VERIFIED`; pubblica e
+  invoca il path HTTP autenticato; infine rilegge il valore nell'app reale.
+- **Fail-closed:** Electron e Qt sono esclusi dal job Windows ordinario per non
+  spacciare l'assenza delle toolchain opzionali per una certificazione. Il job
+  `Universal Test Farm` installa versioni fissate, imposta
+  `WINOS_REQUIRE_TEST_FARM=1` e trasforma dipendenza mancante, build fallita,
+  finestra assente, controllo non scrivibile o effetto non osservato in un
+  errore bloccante. Il report JUnit viene conservato come artifact anche in
+  caso di fallimento.
+
 ## Summary
 - DONE: 50 (+ Linux gaps closed)
 - PARTIAL: 0

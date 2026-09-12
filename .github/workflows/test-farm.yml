@@ -1,0 +1,57 @@
+name: Universal Test Farm
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-farm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify-windows-frameworks:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install WinOs-Layer and Qt packaging toolchain
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev,windows]"
+          pip install PySide6==6.8.3 PyInstaller==6.12.0
+      - name: Install pinned Electron runtime
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "winos-electron"
+          npm install --prefix $root --no-save --no-audit --no-fund electron@35.0.2
+          $exe = Join-Path $root "node_modules\electron\dist\electron.exe"
+          if (-not (Test-Path $exe)) { throw "Electron runtime was not installed" }
+          "WINOS_ELECTRON_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Certify Win32, WinForms, WPF, Electron and Qt
+        env:
+          WINOS_BACKEND: windows
+          WINOS_REQUIRE_AUTH: "true"
+          WINOS_REQUIRE_UI: "1"
+          WINOS_REQUIRE_TEST_FARM: "1"
+        run: >-
+          pytest tests/windows/test_universal_test_farm.py
+          -vv --tb=short --junitxml=test-farm-results.xml
+      - name: Preserve certification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: universal-test-farm-${{ github.run_id }}
+          path: test-farm-results.xml
+          if-no-files-found: error
+          retention-days: 14
