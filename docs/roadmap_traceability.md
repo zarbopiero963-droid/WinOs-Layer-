@@ -270,3 +270,13 @@ pytest tests/security/test_security_hard.py -q
 ```
 
 Full installed W/L H63-N012 not claimed PASS here (MANUAL / #21).
+
+## N013 — Rate limit, quote, body cap e confine remoto HTTP
+
+Contratto (#67 / H63-N013, B-AUTH): wire process-wide rate limit + concurrency gate + Content-Length body cap; localhost default; remote opt-in with **explicit** CORS origins (never implicit `*`); peer-only remote guard — `X-Forwarded-For` / `Forwarded` never grant loopback. TLS termination remains operator concern (opt-in remote).
+
+```bash
+pytest tests/unit/test_remote_rate_n013.py tests/unit/test_security_core.py -q
+```
+
+Full installed W/L H63-N013 not claimed PASS here (MANUAL / #21).

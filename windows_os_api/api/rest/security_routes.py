@@ -155,6 +155,11 @@ def remote_policy(auth: AuthContext = Depends(require_permission(Permission.SYST
         "host": s.effective_host(),
         "allowed_hosts": s.allowed_hosts,
         "default": "localhost-only",
+        "rate_limit_per_minute": s.rate_limit_per_minute,
+        "max_body_bytes": s.max_body_bytes,
+        "max_concurrent_requests": s.max_concurrent_requests,
+        "cors_allowed_origins": s.cors_allowed_origins,
+        "forwarded_headers_trusted_for_loopback": False,
     }
 
 @router.post("/trust/sign")

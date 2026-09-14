@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     admin_api_keys: list[str] = Field(default_factory=list)
     require_auth: bool = True
     rate_limit_per_minute: int = 120
+    # N013 — request / concurrency / body / CORS confines
+    max_body_bytes: int = 1_048_576  # 1 MiB default body cap
+    max_concurrent_requests: int = 32
+    # When remote_access_enabled: explicit Origin allowlist (never implicit "*").
+    cors_allowed_origins: list[str] = Field(default_factory=list)
     audit_log_path: str = "logs/audit.jsonl"
     sandbox_root: str = "sandbox"
     # Extra filesystem roots allowed by LinuxBackend (still blocks ..)

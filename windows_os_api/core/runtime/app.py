@@ -86,25 +86,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     origins = [f"http://{h}:{settings.port}" for h in settings.allowed_hosts]
     origins += [f"http://{h}" for h in settings.allowed_hosts]
+    if settings.remote_access_enabled:
+        # N013: remoto opt-in uses explicit Origin allowlist — never implicit "*".
+        cors_origins = list(settings.cors_allowed_origins) or list(origins)
+    else:
+        cors_origins = origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins if not settings.remote_access_enabled else ["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
+    # N013 process-wide limiter/gate (shared with deps.reset_limiter for tests).
+    from windows_os_api.api.rest.deps import get_concurrency_gate, get_limiter
+
+    _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+
+    def _peer_host(request: Request) -> str:
+        """TCP peer only. X-Forwarded-For / Forwarded must never invent loopback."""
+        return request.client.host if request.client else ""
+
     @app.middleware("http")
     async def metrics_and_remote_guard(request: Request, call_next):
+        # --- body cap (Content-Length) ---
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > settings.max_body_bytes:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large"},
+                    )
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+
+        peer = _peer_host(request)
+        # Forwarded headers are observed only to refuse spoof-as-loopback claims
+        # from a non-loopback peer (never used to *grant* access).
+        forwarded = (
+            request.headers.get("x-forwarded-for")
+            or request.headers.get("forwarded")
+            or ""
+        ).lower()
+        claims_loopback = any(
+            token in forwarded
+            for token in ("127.0.0.1", "::1", "localhost", "for=127.", "for=\"[::1]\"")
+        )
+
         if not settings.remote_access_enabled:
-            client = request.client.host if request.client else ""
-            if client not in ("127.0.0.1", "::1", "localhost", "testclient"):
-                if client and client not in settings.allowed_hosts:
-                    return Response("Remote access disabled", status_code=403)
+            if peer and peer not in _LOOPBACK and peer not in settings.allowed_hosts:
+                return Response("Remote access disabled", status_code=403)
+            # Non-loopback peer claiming forwarded loopback → still denied (and explicit).
+            if peer and peer not in _LOOPBACK and claims_loopback:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Forwarded loopback claim rejected"},
+                )
+        else:
+            # Remoto opt-in: still never treat forwarded loopback as identity.
+            if peer and peer not in _LOOPBACK and claims_loopback:
+                # Ignore claim; continue with peer-based policy (allowed via remote flag).
+                pass
+
+        # --- rate limit (peer + key prefix) ---
+        limiter = get_limiter(settings)
+        api_key = request.headers.get("x-api-key") or ""
+        rate_key = f"peer:{peer}|k:{api_key[:8] if api_key else '-'}"
+        if not limiter.allow(rate_key):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"},
+            )
+
+        # --- concurrency quota ---
+        gate = get_concurrency_gate(settings)
+        if not gate.try_acquire():
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Concurrency limit exceeded"},
+            )
+
         metrics = get_metrics()
         metrics.incr("http.requests")
         start = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            gate.release()
         elapsed = (time.perf_counter() - start) * 1000
         metrics.timing("http.latency_ms", elapsed)
         response.headers["X-WinOs-Version"] = __version__
