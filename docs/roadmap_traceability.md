@@ -177,3 +177,20 @@ pytest tests/integration/test_service_control_api.py -q -k registry
 
 **Migration:** callers that wrote under generic `HKCU\\Software\\<Other>` must
 set `WINOS_REGISTRY_ALLOWLIST`. Full installed W/L H63-N006 not claimed PASS here.
+
+## N007 — SCM Windows: query/start/stop dietro D1
+
+Contratto (#67 / H63-N007): real Windows SCM start/stop/status via pywin32
+(`OpenService` / `StartService` / `ControlService` / `QueryServiceStatus`) when
+`win32service` is available; `service_control=True` accordingly. Default
+allowlist remains **empty** (D1-B default-deny). Ambiguous transitional state
+is not success. Restart/timeout/recovery → N008.
+
+```bash
+pytest tests/unit/test_windows_scm_control_n007.py -q
+pytest tests/security/test_windows_scm_n007.py tests/security/test_service_control_unsupported.py tests/security/test_service_allowlist.py -q
+```
+
+Full installed W/L H63-N007 not claimed PASS here. Do not stop CI runner
+system services in tests.
+
