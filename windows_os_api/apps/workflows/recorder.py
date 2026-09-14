@@ -53,12 +53,14 @@ def list_workflows() -> list[dict[str, Any]]:
 
 
 def _step_succeeded(result: Any) -> bool:
+    """Fail-closed: only True or dict with ok is True (bool) and not denied/error."""
+    if result is True:
+        return True
     if isinstance(result, dict):
-        if "ok" in result:
-            return bool(result["ok"])
-        if result.get("error") or result.get("denied"):
+        if result.get("denied") or result.get("error"):
             return False
-    return result is not None
+        return result.get("ok") is True
+    return False
 
 
 def play(wf_id: str, invoke) -> dict[str, Any]:

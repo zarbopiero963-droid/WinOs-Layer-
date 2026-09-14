@@ -12,6 +12,7 @@ from windows_os_api.apps.workflows.recorder import (
     list_workflows,
     play,
     WorkflowStep,
+    _step_succeeded,
 )
 from windows_os_api.apps.workflows.generator import generate_workflow
 from windows_os_api.apps.intent.engine import parse_intent, execute_intent
@@ -92,6 +93,40 @@ def test_play_missing_workflow():
     out = play("missing", lambda *a: {"ok": True})
     assert out["ok"] is False
     assert out["error"] == "workflow not found"
+
+
+def test_step_succeeded_false_is_failure():
+    assert _step_succeeded(False) is False
+
+
+def test_step_succeeded_empty_dict_is_failure():
+    assert _step_succeeded({}) is False
+
+
+def test_step_succeeded_string_ok_false_is_failure():
+    assert _step_succeeded({"ok": "false"}) is False
+
+
+def test_step_succeeded_ok_true_but_denied_is_failure():
+    assert _step_succeeded({"ok": True, "denied": True}) is False
+
+
+def test_play_callback_false_stops_and_reports_failure():
+    wf = start_recording("false-callback", "app")
+    record_step("one")
+    record_step("two")
+    stop_recording()
+    seen: list[str] = []
+
+    def invoke(app_id, action, params):
+        seen.append(action)
+        return False
+
+    out = play(wf.id, invoke)
+    assert out["ok"] is False
+    assert seen == ["one"]
+    assert out["failed_step"] == 0
+    assert out["failed_action"] == "one"
 
 def test_generate_new_customer_workflow():
     create_adapter("contoso-crm")
