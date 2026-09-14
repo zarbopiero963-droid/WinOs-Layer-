@@ -107,7 +107,7 @@ Helpers: `reset_event_bus`, `reset_metrics`, `reset_limiter`,
 `tests/linux/conftest.py` (`linux_backend`).
 
 ```bash
-pytest tests/unit/test_fixture_isolation.py -q
+pytest tests/unit/test_fixture_isolation_n002.py -q
 ```
 
 Out of scope: harness prodotto installato (N003), farm matrix completa.

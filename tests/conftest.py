@@ -33,7 +33,7 @@ from windows_os_api.apps.adapters.engine import reset_adapters
 from windows_os_api.apps.adapters.store import clear_adapter_store
 from windows_os_api.apps.workflows.recorder import reset_workflows
 from windows_os_api.apps.sandbox.permissions import reset_policies
-from windows_os_api.core.security.audit import reset_audit_logger, AuditLogger
+from windows_os_api.core.security.audit import reset_audit_logger
 from windows_os_api.core.runtime.app import create_app
 from windows_os_api.apps.ai.settings_store import reset_ai_settings, set_config_path_override
 from windows_os_api.apps.ai.provider import reset_ai_client

@@ -20,6 +20,7 @@ def reset_limiter() -> None:
     global _limiter
     _limiter = None
 
+
 def rate_limited(
     request: Request,
     auth: AuthContext = Depends(authenticate),

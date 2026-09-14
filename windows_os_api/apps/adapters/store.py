@@ -199,6 +199,7 @@ def load_all() -> tuple[list[dict[str, Any]], list[SkippedManifest]]:
             loaded.append(manifest)
     return loaded, skipped
 
+
 def clear_adapter_store() -> None:
     """Remove manifest files under ``store_dir()``.
 
