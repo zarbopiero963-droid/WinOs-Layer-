@@ -269,7 +269,15 @@ Una nuova PR deve partire dal "main" aggiornato dopo che la precedente è stata 
 
 ---
 
-CURRENT HEAD
+ROADMAP TRACEABILITY (N001)
+
+Stati lotto / esito test / capability sono famiglie distinte.
+`DONE` forense richiede evidence; esistenza file ≠ CLOSED.
+Contratto: `docs/roadmap_traceability.md`. Audit: `python scripts/forensic_audit.py`.
+
+---
+
+## CURRENT HEAD
 
 Lavorare esclusivamente sul current head della PR.
 
