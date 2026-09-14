@@ -354,3 +354,13 @@ pytest tests/unit/test_mcp_n020.py tests/unit/test_mcp.py -q
 
 Full installed W/L H63-N020 not claimed PASS here (MANUAL / #21).
 
+
+## N021 — MCP risorse, eventi e parità REST
+
+Contratto (#67 / H63-N021, B-MCP, Q09/Q10): ``resources/list`` + ``resources/read`` from **VERIFIED** registry (``winos://api/{id}``); secret redaction; ``resources.listChanged`` + pending ``notifications/resources/list_changed`` (tools twin); ``params._meta.app_scopes`` cross-user parity with REST catalog; ``handle_message`` → ``-32700`` on malformed JSON; same capability via gateway (REST) and ``tools/call`` (MCP) shares effect/deny identity. Coverage: R36 W074-W075 L074-L075 S61-09 S61-24 G29. Control Center → N022.
+
+```bash
+pytest tests/unit/test_mcp_n021.py tests/unit/test_mcp_n020.py tests/unit/test_mcp.py -q
+```
+
+Full installed W/L H63-N021 not claimed PASS here (MANUAL / #21).
