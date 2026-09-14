@@ -37,12 +37,44 @@ def volume() -> dict[str, Any]:
     return result
 
 def set_volume(percent: int) -> dict[str, Any]:
+    """N010: validate 0–100 before backend; backend owns restore-on-failure."""
+    if isinstance(percent, bool) or not isinstance(percent, int):
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_volume",
+            "error": f"volume must be an int in 0..100 inclusive, got {percent!r}",
+        }
+    if percent < 0 or percent > 100:
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_volume",
+            "error": f"volume must be in 0..100 inclusive, got {percent}",
+        }
     b = get_backend()
     if hasattr(b, "audio_set_volume"):
         return b.audio_set_volume(percent)
     return {"ok": False, "error": "set_volume not supported by backend", "supported": False}
 
 def set_mute(muted: bool) -> dict[str, Any]:
+    """N010: require bool; backend owns restore-on-failure."""
+    if not isinstance(muted, bool):
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_mute",
+            "error": f"muted must be bool, got {type(muted).__name__}",
+        }
     b = get_backend()
     if hasattr(b, "audio_set_mute"):
         return b.audio_set_mute(muted)

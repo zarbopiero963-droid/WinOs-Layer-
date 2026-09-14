@@ -1,16 +1,20 @@
-"""Windows Core Audio (WASAPI) read path — devices / default / volume / mute (N009).
+"""Windows Core Audio (WASAPI) — devices / volume / mute (N009 read + N010 mutate).
 
-Mutations (set volume/mute + restore) are **N010** and are not implemented here.
+N009: list endpoints, read volume/mute.
+N010: gated ``set_volume`` / ``set_mute`` with readback and restore-on-failure.
 
 No ``pycaw`` (owner D4-B). Production uses ``comtypes`` (already a windows extra)
 to talk to ``IMMDeviceEnumerator`` / ``IAudioEndpointVolume``. Tests inject a
 session object so Linux CI never opens COM.
 
 Honest outcomes:
-- session/API missing → caller sees ``CAPABILITY_UNAVAILABLE`` (implemented, not
-  present on this machine) rather than ``CAPABILITY_NOT_SUPPORTED``;
+- session/API missing → ``CAPABILITY_UNAVAILABLE`` / ``session_unavailable``
+  (implemented, not present on this machine) rather than ``NOT_SUPPORTED``;
 - enumerator works but no endpoints → ``supported: true`` + empty list;
-- default/device missing → ``code=device_absent`` (not a fake null volume).
+- default/device missing → ``code=device_absent`` (not a fake null volume);
+- invalid volume (not int 0–100) rejected without mutating;
+- after a failed set/verify, prior volume+mute are restored when possible;
+- ambiguous / unverified ≠ success.
 """
 from __future__ import annotations
 
@@ -42,6 +46,8 @@ class AudioSessionUnavailable(RuntimeError):
 class AudioSession(Protocol):
     def list_endpoints(self) -> list[dict[str, Any]]: ...
     def read_volume(self, device_id: str | None = None) -> dict[str, Any]: ...
+    def set_volume(self, percent: int, device_id: str | None = None) -> None: ...
+    def set_mute(self, muted: bool, device_id: str | None = None) -> None: ...
 
 
 def try_open_session() -> AudioSession | None:
@@ -76,6 +82,277 @@ def get_volume(*, session: AudioSession | None, device_id: str | None = None) ->
         raise
     except Exception as exc:
         raise DiscoveryFailed(f"WASAPI volume read failed: {exc}") from exc
+
+
+def _validate_volume_percent(percent: Any) -> int | dict[str, Any]:
+    """Return int 0–100 or an honest invalid envelope (no device touch).
+
+    Rejects bool (subclass of int), floats, strings, and out-of-range values
+    without touching the session/device.
+    """
+    if isinstance(percent, bool) or not isinstance(percent, int):
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_volume",
+            "error": f"volume must be an int in 0..100 inclusive, got {percent!r}",
+            "backend": "wasapi",
+        }
+    if percent < 0 or percent > 100:
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_volume",
+            "error": f"volume must be in 0..100 inclusive, got {percent}",
+            "backend": "wasapi",
+        }
+    return percent
+
+
+def _capture_prior(session: AudioSession, device_id: str | None) -> dict[str, Any]:
+    prior = dict(session.read_volume(device_id))
+    return prior
+
+
+def _attempt_restore(
+    session: AudioSession,
+    prior: dict[str, Any],
+    device_id: str | None,
+) -> bool:
+    """Best-effort restore of prior volume+mute. Returns True if both applied."""
+    if not prior.get("ok"):
+        return False
+    vol = prior.get("volume")
+    muted = prior.get("muted")
+    try:
+        if vol is not None:
+            session.set_volume(int(vol), device_id)
+        if muted is not None:
+            session.set_mute(bool(muted), device_id)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def set_volume(
+    *,
+    session: AudioSession | None,
+    percent: Any,
+    device_id: str | None = None,
+) -> dict[str, Any]:
+    """Set master volume (0–100) with readback; restore prior on failure (N010)."""
+    validated = _validate_volume_percent(percent)
+    if isinstance(validated, dict):
+        return validated
+    percent = validated
+
+    if session is None:
+        raise AudioSessionUnavailable(
+            "WASAPI session is not available on this machine (comtypes/COM)"
+        )
+
+    try:
+        prior = _capture_prior(session, device_id)
+    except AudioSessionUnavailable:
+        raise
+    except Exception as exc:
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "read_failed",
+            "error": f"failed to capture prior volume: {exc}",
+            "backend": "wasapi",
+        }
+
+    if not prior.get("ok"):
+        out = {
+            "ok": False,
+            "supported": True,
+            "volume": prior.get("volume"),
+            "muted": prior.get("muted"),
+            "verified": False,
+            "code": prior.get("code") or "device_absent",
+            "error": prior.get("error") or "cannot set volume: prior read failed",
+            "backend": prior.get("backend") or "wasapi",
+        }
+        return out
+
+    try:
+        session.set_volume(percent, device_id)
+    except Exception as exc:  # noqa: BLE001
+        # Restore even on set failure (partial COM write / deny after touch).
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": prior.get("volume"),
+            "muted": prior.get("muted"),
+            "verified": False,
+            "restored": restored,
+            "code": "set_failed",
+            "error": str(exc),
+            "backend": "wasapi",
+        }
+
+    try:
+        after = dict(session.read_volume(device_id))
+    except Exception as exc:  # noqa: BLE001
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "restored": restored,
+            "code": "verify_failed",
+            "error": f"set applied but readback failed: {exc}",
+            "backend": "wasapi",
+        }
+
+    if not after.get("ok") or after.get("volume") != percent:
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": after.get("volume"),
+            "muted": after.get("muted"),
+            "verified": False,
+            "restored": restored,
+            "code": "verify_mismatch",
+            "error": (
+                f"readback volume {after.get('volume')!r} != requested {percent}"
+            ),
+            "backend": after.get("backend") or "wasapi",
+        }
+
+    return {
+        "ok": True,
+        "supported": True,
+        "volume": after.get("volume"),
+        "muted": after.get("muted"),
+        "verified": True,
+        "device_id": after.get("device_id"),
+        "backend": after.get("backend") or "wasapi",
+    }
+
+
+def set_mute(
+    *,
+    session: AudioSession | None,
+    muted: Any,
+    device_id: str | None = None,
+) -> dict[str, Any]:
+    """Set mute with readback; restore prior volume+mute on failure (N010)."""
+    if not isinstance(muted, bool):
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "invalid_mute",
+            "error": f"muted must be bool, got {type(muted).__name__}",
+            "backend": "wasapi",
+        }
+
+    if session is None:
+        raise AudioSessionUnavailable(
+            "WASAPI session is not available on this machine (comtypes/COM)"
+        )
+
+    try:
+        prior = _capture_prior(session, device_id)
+    except AudioSessionUnavailable:
+        raise
+    except Exception as exc:
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "code": "read_failed",
+            "error": f"failed to capture prior mute: {exc}",
+            "backend": "wasapi",
+        }
+
+    if not prior.get("ok"):
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": prior.get("volume"),
+            "muted": prior.get("muted"),
+            "verified": False,
+            "code": prior.get("code") or "device_absent",
+            "error": prior.get("error") or "cannot set mute: prior read failed",
+            "backend": prior.get("backend") or "wasapi",
+        }
+
+    try:
+        session.set_mute(muted, device_id)
+    except Exception as exc:  # noqa: BLE001
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": prior.get("volume"),
+            "muted": prior.get("muted"),
+            "verified": False,
+            "restored": restored,
+            "code": "set_failed",
+            "error": str(exc),
+            "backend": "wasapi",
+        }
+
+    try:
+        after = dict(session.read_volume(device_id))
+    except Exception as exc:  # noqa: BLE001
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": None,
+            "muted": None,
+            "verified": False,
+            "restored": restored,
+            "code": "verify_failed",
+            "error": f"set applied but readback failed: {exc}",
+            "backend": "wasapi",
+        }
+
+    if not after.get("ok") or bool(after.get("muted")) != muted:
+        restored = _attempt_restore(session, prior, device_id)
+        return {
+            "ok": False,
+            "supported": True,
+            "volume": after.get("volume"),
+            "muted": after.get("muted"),
+            "verified": False,
+            "restored": restored,
+            "code": "verify_mismatch",
+            "error": f"readback muted {after.get('muted')!r} != requested {muted}",
+            "backend": after.get("backend") or "wasapi",
+        }
+
+    return {
+        "ok": True,
+        "supported": True,
+        "volume": after.get("volume"),
+        "muted": after.get("muted"),
+        "verified": True,
+        "device_id": after.get("device_id"),
+        "backend": after.get("backend") or "wasapi",
+    }
 
 
 class _FakeLike:
@@ -203,6 +480,37 @@ class _ComtypesSession:
             "backend": "wasapi",
             "verified": True,
         }
+
+    def set_volume(self, percent: int, device_id: str | None = None) -> None:
+        endpoint = self._endpoint_volume(device_id)
+        # IAudioEndpointVolume::SetMasterVolumeLevelScalar(float, GUID*)
+        endpoint.SetMasterVolumeLevelScalar(float(percent) / 100.0, None)
+
+    def set_mute(self, muted: bool, device_id: str | None = None) -> None:
+        endpoint = self._endpoint_volume(device_id)
+        endpoint.SetMute(1 if muted else 0, None)
+
+    def _endpoint_volume(self, device_id: str | None = None) -> Any:
+        if device_id:
+            try:
+                dev = self._enumerator.GetDevice(device_id)
+            except Exception as exc:  # noqa: BLE001
+                raise AudioSessionUnavailable(
+                    f"GetDevice({device_id!r}) failed: {exc}"
+                ) from exc
+        else:
+            try:
+                dev = self._enumerator.GetDefaultAudioEndpoint(E_RENDER, E_CONSOLE)
+            except Exception as exc:  # noqa: BLE001
+                raise AudioSessionUnavailable(
+                    f"no default render endpoint: {exc}"
+                ) from exc
+        endpoint = _activate_volume(dev)
+        if endpoint is None:
+            raise AudioSessionUnavailable(
+                "IAudioEndpointVolume not available on this endpoint"
+            )
+        return endpoint
 
     def _default_id(self, flow: int) -> str | None:
         try:

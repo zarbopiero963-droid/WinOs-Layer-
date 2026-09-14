@@ -1784,7 +1784,7 @@ class WindowsBackend:
         not "audio is unimplemented". If the session cannot be opened this
         raises ``AudioSessionUnavailable``; ``discover()`` then reports
         UNAVAILABLE because ``audio`` is not in ``NOT_IMPLEMENTED``.
-        Mutations (set volume/mute) are N010.
+        Mutations (set volume/mute + restore) are implemented in N010.
         """
         from windows_os_api.backends import windows_audio as _waudio
 
@@ -1806,6 +1806,40 @@ class WindowsBackend:
                 "supported": False,
                 "volume": None,
                 "muted": None,
+                "code": "session_unavailable",
+                "error": str(exc),
+            }
+
+    def audio_set_volume(self, percent: int) -> dict[str, Any]:
+        """Set default-render volume with readback + restore-on-failure (N010)."""
+        from windows_os_api.backends import windows_audio as _waudio
+
+        try:
+            return _waudio.set_volume(session=self._audio_session, percent=percent)
+        except _waudio.AudioSessionUnavailable as exc:
+            return {
+                "ok": False,
+                "supported": False,
+                "volume": None,
+                "muted": None,
+                "verified": False,
+                "code": "session_unavailable",
+                "error": str(exc),
+            }
+
+    def audio_set_mute(self, muted: bool) -> dict[str, Any]:
+        """Set default-render mute with readback + restore-on-failure (N010)."""
+        from windows_os_api.backends import windows_audio as _waudio
+
+        try:
+            return _waudio.set_mute(session=self._audio_session, muted=muted)
+        except _waudio.AudioSessionUnavailable as exc:
+            return {
+                "ok": False,
+                "supported": False,
+                "volume": None,
+                "muted": None,
+                "verified": False,
                 "code": "session_unavailable",
                 "error": str(exc),
             }

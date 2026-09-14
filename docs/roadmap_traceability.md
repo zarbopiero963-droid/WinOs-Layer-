@@ -224,3 +224,20 @@ pytest tests/security/test_service_control_unsupported.py tests/security/test_po
 ```
 
 Full installed W/L H63-N009 not claimed PASS here (needs dedicated audio device).
+
+## N010 — Audio Windows: volume/mute con ripristino
+
+Contratto (#67 / H63-N010, D4): gated ``set_volume`` / ``set_mute`` via
+``comtypes``/WASAPI (no ``pycaw``) with readback; restore prior volume+mute
+even on set/verify failure; invalid percent (not int 0–100) rejected without
+mutating; session missing → ``session_unavailable`` (not forever unsupported);
+deny/failure leaves prior state restored when possible. Ambiguous ≠ success.
+N009 owns read-only honesty.
+
+```bash
+pytest tests/unit/test_windows_audio_n010.py tests/unit/test_windows_audio_n009.py -q
+pytest tests/unit/test_capability_flags_contract.py -q
+```
+
+Full installed W/L H63-N010 not claimed PASS here (needs dedicated audio device / MANUAL).
+
