@@ -152,9 +152,11 @@ def test_try_open_session_does_not_raise_on_linux():
     assert session is None or hasattr(session, "list_endpoints")
 
 
-def test_n009_does_not_publish_windows_mutations():
-    """Set volume/mute + restore belong to N010."""
+def test_n009_read_path_still_present_alongside_n010_mutations():
+    """N009 read stays; N010 publishes set_volume/set_mute on WindowsBackend."""
     from windows_os_api.backends.windows import WindowsBackend
 
-    assert not hasattr(WindowsBackend, "audio_set_volume")
-    assert not hasattr(WindowsBackend, "audio_set_mute")
+    assert hasattr(WindowsBackend, "audio_volume")
+    assert hasattr(WindowsBackend, "audio_devices")
+    assert hasattr(WindowsBackend, "audio_set_volume")
+    assert hasattr(WindowsBackend, "audio_set_mute")
