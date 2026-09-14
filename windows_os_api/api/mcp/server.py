@@ -1,4 +1,10 @@
-"""MCP-style JSON-RPC server (stdio + in-process handler)."""
+"""MCP-style JSON-RPC server (stdio + in-process handler).
+
+N020: ``tools/list`` merges stable platform tools with VERIFIED registry tools;
+runtime revoke (DISABLED / demoted) removes tools and fails ``tools/call``;
+``invoke_action`` never implicitly ``create_adapter`` (N017); protocol
+negotiation accepts known versions only.
+"""
 from __future__ import annotations
 
 import json
@@ -8,23 +14,31 @@ from typing import Any
 from windows_os_api.apps.adapters.engine import (
     create_adapter,
     get_adapter,
-    invoke_action,
     list_adapters,
     verify_and_record,
+)
+from windows_os_api.apps.api_registry.gateway import execute_via_gateway
+from windows_os_api.apps.api_registry.mcp_tools import (
+    REGISTRY_TOOL_PREFIX,
+    call_registry_mcp_tool,
+    list_registry_mcp_tools,
 )
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.agent.computer import ComputerAgent
 from windows_os_api.backends.factory import get_backend
 from windows_os_api.os.system import service as system
 
+SUPPORTED_PROTOCOL_VERSIONS = frozenset({"2024-11-05", "2025-03-26"})
+DEFAULT_PROTOCOL_VERSION = "2024-11-05"
 
-TOOLS = [
+# Platform baseline tools (not invented from unverified registry rows).
+PLATFORM_TOOLS: list[dict[str, Any]] = [
     {"name": "system_info", "description": "Get OS system info", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_apps", "description": "Discover installed apps", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_adapters", "description": "List virtual adapters", "inputSchema": {"type": "object", "properties": {}}},
     {
         "name": "create_adapter",
-        "description": "Create adapter for an app",
+        "description": "Create adapter for an app (explicit only)",
         "inputSchema": {
             "type": "object",
             "properties": {"app_id": {"type": "string"}, "hwnd": {"type": "integer"}},
@@ -33,7 +47,7 @@ TOOLS = [
     },
     {
         "name": "invoke_action",
-        "description": "Invoke adapter action",
+        "description": "Invoke adapter action via shared gateway (no implicit create)",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -63,9 +77,6 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"goal": {"type": "string"}, "app_id": {"type": "string"}},
-            # `app_id` is required here for the same reason it already was on
-            # create_adapter and invoke_action above: agent_run drives those two.
-            # It was the one tool on this server that let the caller omit it.
             "required": ["goal", "app_id"],
         },
     },
@@ -73,6 +84,18 @@ TOOLS = [
         "type": "object", "properties": {"hwnd": {"type": "integer"}}
     }},
 ]
+
+# Back-compat alias for tests that import TOOLS (platform baseline only).
+TOOLS = PLATFORM_TOOLS
+
+
+def list_all_tools() -> list[dict[str, Any]]:
+    """Platform tools + VERIFIED registry tools (stable order)."""
+    dyn = list_registry_mcp_tools()
+    # Drop registry tools whose names collide with platform names (fail-closed skip).
+    platform_names = {t["name"] for t in PLATFORM_TOOLS}
+    dyn = [t for t in dyn if t["name"] not in platform_names]
+    return list(PLATFORM_TOOLS) + dyn
 
 
 def handle_request(req: dict[str, Any]) -> dict[str, Any]:
@@ -87,18 +110,31 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
     if method == "initialize":
+        client_ver = ""
+        if isinstance(params, dict):
+            client_ver = str(params.get("protocolVersion") or params.get("protocol_version") or "").strip()
+        if client_ver and client_ver not in SUPPORTED_PROTOCOL_VERSIONS:
+            return err(
+                -32602,
+                f"Unsupported MCP protocolVersion {client_ver!r}; "
+                f"supported={sorted(SUPPORTED_PROTOCOL_VERSIONS)}",
+            )
+        negotiated = client_ver or DEFAULT_PROTOCOL_VERSION
         return ok({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
+            "protocolVersion": negotiated,
+            "capabilities": {"tools": {"listChanged": True}},
             "serverInfo": {"name": "winos-mcp", "version": "1.0.0"},
         })
     if method == "tools/list":
-        return ok({"tools": TOOLS})
+        return ok({"tools": list_all_tools()})
     if method == "tools/call":
         name = params.get("name")
         arguments = params.get("arguments") or {}
         try:
             result = call_tool(name, arguments)
+            # Security denials from gateway / revoke → JSON-RPC error (not fake success).
+            if isinstance(result, dict) and result.get("ok") is False and result.get("denied"):
+                return err(-32001, result.get("error") or result.get("message") or "denied")
             return ok({"content": [{"type": "text", "text": json.dumps(result)}]})
         except Exception as e:  # noqa: BLE001
             return err(-32000, str(e))
@@ -108,15 +144,12 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
 
 
 def _require_declared_arguments(name: str, arguments: dict[str, Any]) -> None:
-    """Enforce each tool's own `required` list before dispatching.
-
-    Without this a missing argument surfaced as `KeyError` and reached the
-    client as the message `'app_id'` — a bare quoted key, which says a field is
-    involved but not that it is missing or that it was required. The schema
-    already declares what is required; this reads it rather than repeating it,
-    so a tool cannot declare one contract and enforce another.
-    """
-    schema = next((t["inputSchema"] for t in TOOLS if t["name"] == name), None)
+    """Enforce each tool's own `required` list before dispatching."""
+    schema = None
+    for t in list_all_tools():
+        if t["name"] == name:
+            schema = t.get("inputSchema")
+            break
     if not schema:
         return
     missing = [k for k in schema.get("required", []) if k not in arguments]
@@ -127,6 +160,12 @@ def _require_declared_arguments(name: str, arguments: dict[str, Any]) -> None:
 
 
 def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+    if not name:
+        raise ValueError("tools/call: name is required")
+    # Registry-backed dynamic tools — re-check publishability at call time.
+    if name.startswith(REGISTRY_TOOL_PREFIX):
+        return call_registry_mcp_tool(name, arguments)
+
     _require_declared_arguments(name, arguments)
     if name == "system_info":
         return system.system_info()
@@ -138,9 +177,13 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         a = create_adapter(arguments["app_id"], hwnd=int(arguments.get("hwnd", 1001)))
         return {"app_id": a.app_id, "actions": [x.name for x in a.actions]}
     if name == "invoke_action":
-        if not get_adapter(arguments["app_id"]):
-            create_adapter(arguments["app_id"])
-        return invoke_action(arguments["app_id"], arguments["action"], arguments.get("params"))
+        # N017/N020: never create adapters implicitly — shared gateway only.
+        outcome = execute_via_gateway(
+            app_id=arguments["app_id"],
+            action_name=arguments["action"],
+            params=arguments.get("params") or {},
+        )
+        return outcome
     if name == "verify_action":
         times = int(arguments.get("times", 1))
         if times < 1 or times > 10:

@@ -343,3 +343,14 @@ pytest tests/unit/test_api_registry_n019.py tests/unit/test_api_registry_n018.py
 ```
 
 Full installed W/L H63-N019 not claimed PASS here (MANUAL / #21).
+
+## N020 — MCP dinamico: protocollo, tool e revoca
+
+Contratto (#67 / H63-N020, B-MCP, Q09): ``tools/list`` from **VERIFIED** registry (+ platform baseline); stable tool names/schemas; **runtime revoke** (DISABLED omitted + ``tools/call`` denied); protocol negotiation (supported versions only); ``invoke_action`` uses gateway **without** implicit ``create_adapter``. Coverage: R36 W071-W073 W075 L071-L073 L075 S61-09 S61-24 G20 G29. MCP resources → N021.
+
+```bash
+pytest tests/unit/test_mcp_n020.py tests/unit/test_mcp.py -q
+```
+
+Full installed W/L H63-N020 not claimed PASS here (MANUAL / #21).
+
