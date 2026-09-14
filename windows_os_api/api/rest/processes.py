@@ -15,7 +15,7 @@ class StartProcess(BaseModel):
 
 @router.get("")
 def list_processes(auth: AuthContext = Depends(require_permission(Permission.PROCESS_READ))):
-    return {"processes": procs.list_processes()}
+    return procs.list_processes()
 
 @router.get("/{pid}")
 def get_process(pid: int, auth: AuthContext = Depends(require_permission(Permission.PROCESS_READ))):

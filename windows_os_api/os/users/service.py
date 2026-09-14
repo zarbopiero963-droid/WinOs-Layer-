@@ -4,8 +4,14 @@ from typing import Any
 from windows_os_api.backends.factory import get_backend
 from windows_os_api.os.capability import discover
 
-def list_users() -> list[dict[str, Any]]:
-    return get_backend().list_users()
+def list_users() -> dict[str, Any]:
+    """Utenti locali, col contratto `supported` (D3 / N004).
+
+    Prima restituiva una lista bare: `[]` era indistinguibile da unsupported
+    o discovery fallita. La chiave `users` resta dov'era — additivo.
+    """
+    b = get_backend()
+    return discover(b, "users", "users", b.list_users)
 
 def list_sessions() -> dict[str, Any]:
     """Sessioni, col contratto `supported`.

@@ -221,7 +221,7 @@ def clipboard_set(body: ClipboardSet, auth: AuthContext = Depends(require_permis
 
 @router.get("/displays")
 def displays(auth: AuthContext = Depends(require_permission(Permission.UI_READ))):
-    return {"displays": disp.list_displays()}
+    return disp.list_displays()
 
 
 @router.get("/displays/screenshot")

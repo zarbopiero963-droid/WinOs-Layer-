@@ -141,3 +141,25 @@ Copertura dichiarata dalla scheda #67: R01 R42 T04 T05 T08 T10 T11 T12
 W001 L001 G01 G02 G03 G19 G25 — tracciati nella matrice #67; questo documento
 ne fissa il contratto di **stato/evidenza/scope**, non ne certifica gli effetti
 OS (quelli restano in #21 H63-N001 W/L quando eseguiti).
+
+## N004 — Contratti runtime, capability ed errori
+
+Contratto (#67 / H63-N004, famiglie Q01/Q04) — **health honesty + D3 bare lists**:
+
+1. `GET /v1/health` (and additive `GET /v1/ready`) via `windows_os_api/os/runtime_health.py` must **not** report
+   `status: ok` / `ready: true` when the backend is unavailable or config is
+   invalid (`BACKEND_UNAVAILABLE` / `CONFIG_INVALID`). Recovery restores `ok`.
+   Additive fields: `ready`, `backend`, `error_code`, `reason`. `version` kept.
+   HTTP 503 when not ready.
+2. Bare lists wrapped via `discover()` (D3): `users.list_users`,
+   `display.list_displays`, `processes.list_processes`, `storage.list_drives`.
+   REST routes return the envelope directly (same pattern as printers/devices).
+
+```bash
+pytest tests/unit/test_n004_health_and_d3_lists.py -q
+pytest tests/integration/test_capability_envelope_api.py -q
+```
+
+**Out of scope (deferred):** Windows `terminate_process` ownership (N047/N048);
+full installed W/L H63-N004; MANUAL_ONLY desktop. Phase 0:
+https://github.com/zarbopiero963-droid/WinOs-Layer-/issues/67#issuecomment-5668178895
