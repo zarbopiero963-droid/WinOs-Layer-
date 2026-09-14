@@ -360,6 +360,10 @@ class WindowsBackend:
             "printers": self._win32print is not None,
             "devices": self._win32api is not None,
             "sessions": self._win32ts is not None,
+            # N004 D3: bare-list surfaces need explicit flags (empty ≠ unsupported).
+            "users": True,
+            "displays": self._win32api is not None,
+            "drives": True,
             # D4-B: l'audio su Windows richiederebbe Core Audio COM (pycaw), che
             # l'owner ha deciso di non aggiungere adesso. Dichiarato non
             # supportato, non finto-vuoto: una lista vuota direbbe "questa

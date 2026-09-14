@@ -2,9 +2,16 @@
 from __future__ import annotations
 from typing import Any
 from windows_os_api.backends.factory import get_backend
+from windows_os_api.os.capability import discover
 
-def list_processes() -> list[dict[str, Any]]:
-    return get_backend().list_processes()
+def list_processes() -> dict[str, Any]:
+    """Processi, col contratto `supported` (D3 / N004).
+
+    Usa il flag backend `processes` (False senza psutil → UNAVAILABLE / NOT_SUPPORTED
+    secondo NOT_IMPLEMENTED). Chiave `processes` invariata (additivo).
+    """
+    b = get_backend()
+    return discover(b, "processes", "processes", b.list_processes)
 
 def get_process(pid: int) -> dict[str, Any] | None:
     return get_backend().get_process(pid)

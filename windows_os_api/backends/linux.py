@@ -214,6 +214,10 @@ class LinuxBackend:
             "sessions": True,
             "devices": Path("/sys/block").is_dir(),
             "printers": bool(shutil.which("lpstat")),
+            # N004 D3: bare-list surfaces need explicit flags (empty ≠ unsupported).
+            "users": True,
+            "displays": bool(has_wm or has_mss),
+            "drives": True,
             "registry_compat": True,
             "windows_uia": False,  # never claim Windows UIA on Linux
             "ocr": has_ocr,

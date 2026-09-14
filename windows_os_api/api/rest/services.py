@@ -102,7 +102,7 @@ def list_printers(auth: AuthContext = Depends(require_permission(Permission.SYST
 
 @router.get("/users")
 def list_users(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"users": users.list_users()}
+    return users.list_users()
 
 @router.get("/sessions")
 def list_sessions(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):

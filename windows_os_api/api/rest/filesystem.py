@@ -50,4 +50,4 @@ def delete_file(path: str, auth: AuthContext = Depends(require_permission(Permis
 
 @router.get("/storage/drives")
 def drives(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
-    return {"drives": storage.list_drives()}
+    return storage.list_drives()

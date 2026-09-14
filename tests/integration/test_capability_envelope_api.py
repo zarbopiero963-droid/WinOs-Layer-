@@ -14,6 +14,11 @@ READ_ONLY = [
     ("/v1/devices", "devices"),
     ("/v1/printers", "printers"),
     ("/v1/audio/devices", "devices"),
+    # N004 — bare lists wrapped in D3 envelopes
+    ("/v1/processes", "processes"),
+    ("/v1/users", "users"),
+    ("/v1/displays", "displays"),
+    ("/v1/storage/drives", "drives"),
 ]
 
 
