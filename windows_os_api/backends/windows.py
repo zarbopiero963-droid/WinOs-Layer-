@@ -52,13 +52,11 @@ class WindowsBackendUnavailable(RuntimeError):
 
 
 # Capability che questo backend NON implementa affatto — distinte da quelle che
-# implementa ma che mancano su una macchina specifica. L'audio richiederebbe
-# Core Audio COM via pycaw, che l'owner ha deciso di non aggiungere adesso
-# (decisione D4-B, issue #6): nessuna installazione sulla macchina lo abilita,
-# e dirlo e' diverso dal dire "qui non c'e'".
+# implementa ma che mancano su una macchina specifica.
 # N007: service_control is implemented when win32service is present.
-# audio remains permanently out of scope without pycaw (D4-B).
-_WINDOWS_NOT_IMPLEMENTED = frozenset({"audio"})
+# N009: audio read (devices/default/volume/mute) is implemented via WASAPI
+# (comtypes); the flag is True only when a session can be opened. No pycaw.
+_WINDOWS_NOT_IMPLEMENTED = frozenset()
 
 
 def _require_windows() -> None:
@@ -318,6 +316,9 @@ class WindowsBackend:
             self._win32security = win32security
         except ImportError:
             pass
+        from windows_os_api.backends import windows_audio as _waudio
+
+        self._audio_session = _waudio.try_open_session()
         self._caps = self._probe_capabilities()
 
     def _probe_capabilities(self) -> dict[str, bool]:
@@ -366,11 +367,10 @@ class WindowsBackend:
             "users": True,
             "displays": self._win32api is not None,
             "drives": True,
-            # D4-B: l'audio su Windows richiederebbe Core Audio COM (pycaw), che
-            # l'owner ha deciso di non aggiungere adesso. Dichiarato non
-            # supportato, non finto-vuoto: una lista vuota direbbe "questa
-            # macchina non ha dispositivi audio", che e' falso su ogni PC.
-            "audio": False,
+            # N009 / D4: audio *read* is implemented (WASAPI via comtypes).
+            # True only when a session opened; False → UNAVAILABLE, not
+            # NOT_SUPPORTED. Mutations remain N010.
+            "audio": self._audio_session is not None,
             "atspi": False,
         }
 
@@ -1778,19 +1778,37 @@ class WindowsBackend:
         )
 
     def audio_devices(self) -> list[dict[str, Any]]:
-        """Non implementato su questo backend (decisione owner D4-B).
+        """WASAPI device enumeration (N009 / H63-N009).
 
-        Restituisce una lista vuota perche' la firma e' `list[...]`, ma via API
-        questo metodo NON viene mai raggiunto: il flag `audio: False` e
-        `NOT_IMPLEMENTED` fanno rispondere `CAPABILITY_NOT_SUPPORTED` prima
-        (#28). La lista vuota resta una trappola solo per chi chiami il backend
-        direttamente, e questa docstring e' l'avviso — implementarlo
-        richiederebbe `pycaw`, che l'owner ha deciso di non aggiungere ora.
+        Empty list means the enumerator ran and found no active endpoints —
+        not "audio is unimplemented". If the session cannot be opened this
+        raises ``AudioSessionUnavailable``; ``discover()`` then reports
+        UNAVAILABLE because ``audio`` is not in ``NOT_IMPLEMENTED``.
+        Mutations (set volume/mute) are N010.
         """
-        return []
+        from windows_os_api.backends import windows_audio as _waudio
+
+        return _waudio.list_devices(session=self._audio_session)
 
     def audio_volume(self) -> dict[str, Any]:
-        return {"volume": None, "muted": None}
+        """Read default-render volume/mute (N009). Does not mutate.
+
+        ``code=device_absent`` when the session exists but the default
+        endpoint is missing — distinct from session unavailable.
+        """
+        from windows_os_api.backends import windows_audio as _waudio
+
+        try:
+            return _waudio.get_volume(session=self._audio_session)
+        except _waudio.AudioSessionUnavailable as exc:
+            return {
+                "ok": False,
+                "supported": False,
+                "volume": None,
+                "muted": None,
+                "code": "session_unavailable",
+                "error": str(exc),
+            }
 
     def list_devices(self) -> list[dict[str, Any]]:
         """Storage volumes, in the same shape LinuxBackend reports for `/sys/block`.

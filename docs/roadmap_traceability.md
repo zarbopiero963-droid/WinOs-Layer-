@@ -211,3 +211,16 @@ pytest tests/integration/test_service_control_n008_http.py -q
 Full installed W/L H63-N008 not claimed PASS here. Do not stop CI runner
 system services in tests.
 
+## N009 — Audio Windows: enumerazione e lettura reale
+
+Contratto (#67 / H63-N009, D4): WASAPI read of devices / default / volume / mute
+via ``comtypes`` (no ``pycaw``). Session missing → ``CAPABILITY_UNAVAILABLE``.
+Empty active-endpoint list is honest zero. Default missing → ``device_absent``.
+Mutations + restore → N010.
+
+```bash
+pytest tests/unit/test_windows_audio_n009.py tests/unit/test_capability_flags_contract.py -q
+pytest tests/security/test_service_control_unsupported.py tests/security/test_power_action_denial.py -q
+```
+
+Full installed W/L H63-N009 not claimed PASS here (needs dedicated audio device).
