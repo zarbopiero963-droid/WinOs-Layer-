@@ -70,6 +70,16 @@ def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(
         # in un audit trail «negato» e «riuscito» non possono avere la stessa
         # faccia.
         raise HTTPException(403, result.get("error") or "service control denied")
+    # N008 / H63-N008: distinct HTTP for not_found / conflict / timeout.
+    # Operational failures (start_failed / stop_failed / ambiguous_state) stay
+    # 200 with ok=false so callers can read the structured body.
+    code = result.get("code")
+    if code == "not_found":
+        raise HTTPException(404, result.get("error") or "service not found")
+    if code == "conflict":
+        raise HTTPException(409, result.get("error") or "incompatible service state")
+    if code == "timeout":
+        raise HTTPException(504, result.get("error") or "service control timed out")
     return result
 
 @router.get("/audio/devices")

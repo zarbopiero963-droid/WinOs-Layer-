@@ -139,12 +139,29 @@ def control_service(
         }
         err_l = (r.stderr or "").lower()
         if r.returncode != 0:
+            # N008: align distinct codes with Windows SCM (permission / not_found / timeout).
             if "access denied" in err_l or "interactive authentication" in err_l or "permission" in err_l:
                 result["denied"] = True
                 result["code"] = "permission_denied"
                 result["error"] = "systemctl requires elevated permissions for this unit"
+            elif "could not be found" in err_l or "not found" in err_l or "not-found" in err_l:
+                result["code"] = "not_found"
+                result["error"] = (r.stderr or r.stdout or "unit not found")[:500]
+            elif "timed out" in err_l or "timeout" in err_l:
+                result["code"] = "timeout"
+                result["error"] = (r.stderr or r.stdout or "systemctl timed out")[:500]
             else:
+                result["code"] = f"{action}_failed"
                 result["error"] = (r.stderr or r.stdout or "systemctl failed")[:500]
         return result
+    except subprocess.TimeoutExpired as e:
+        return {
+            "ok": False,
+            "name": name,
+            "action": action,
+            "scope": scope,
+            "code": "timeout",
+            "error": f"systemctl timed out after {getattr(e, 'timeout', 15)}s",
+        }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e), "name": name, "action": action, "scope": scope}

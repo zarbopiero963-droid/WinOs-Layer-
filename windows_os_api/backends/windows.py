@@ -1755,21 +1755,27 @@ class WindowsBackend:
         return out
 
     def control_service(self, name: str, action: str) -> dict[str, Any]:
-        """Real SCM start/stop/status via pywin32 (N007 / H63-N007).
+        """Real SCM start/stop/status/restart via pywin32 (N007+N008).
 
         Was a permanent stub returning ``supported: False`` (owner D5-B until
         the dedicated PR). N007 implements OpenSCManager / OpenService /
         StartService / ControlService / QueryServiceStatus when
-        ``win32service`` is available.
+        ``win32service`` is available. N008 adds restart, limited waits,
+        conflict/timeout codes, and recovery without inventing success.
 
         Allowlist (D1-B empty default-deny) and RBAC run in
         ``os/services/service.py`` *before* this method is reached. Ambiguous
-        transitional states are not success — see ``windows_services``.
-        Restart/timeout/recovery are N008 and refused here.
+        transitional states and wait timeouts are not success — see
+        ``windows_services``.
         """
         from windows_os_api.backends import windows_services as _wsvc
 
-        return _wsvc.control_service(name, action, win32service=self._win32service)
+        return _wsvc.control_service(
+            name,
+            action,
+            win32service=self._win32service,
+            timeout_sec=_wsvc.DEFAULT_TIMEOUT_SEC,
+        )
 
     def audio_devices(self) -> list[dict[str, Any]]:
         """Non implementato su questo backend (decisione owner D4-B).

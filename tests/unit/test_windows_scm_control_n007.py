@@ -110,7 +110,7 @@ def test_start_pending_is_not_success():
         fake._state = wsvc.SERVICE_START_PENDING
 
     fake.StartService = start  # type: ignore[method-assign]
-    out = wsvc.control_service("WinOsN007Test", "start", win32service=fake)
+    out = wsvc.control_service("WinOsN007Test", "start", win32service=fake, timeout_sec=0)
     assert out["ok"] is False, out
     assert out["code"] == "ambiguous_state"
     assert out["status"] == "starting"
@@ -124,7 +124,7 @@ def test_stop_pending_is_not_success():
         fake._state = wsvc.SERVICE_STOP_PENDING
 
     fake.ControlService = stop  # type: ignore[method-assign]
-    out = wsvc.control_service("WinOsN007Test", "stop", win32service=fake)
+    out = wsvc.control_service("WinOsN007Test", "stop", win32service=fake, timeout_sec=0)
     assert out["ok"] is False, out
     assert out["code"] == "ambiguous_state"
     assert out["status"] == "stopping"
@@ -172,10 +172,10 @@ def test_invalid_name_never_opens_scm():
     assert fake.opened == []
 
 
-def test_restart_is_refused_without_scm_call():
-    """N008 owns restart — N007 must not invent stop+start success."""
+def test_enable_is_still_refused_without_scm_call():
+    """enable/disable remain out of SCM control scope (not N008 restart)."""
     fake = _FakeSCM()
-    out = wsvc.control_service("WinOsN007Test", "restart", win32service=fake)
+    out = wsvc.control_service("WinOsN007Test", "enable", win32service=fake)
     assert out["ok"] is False
     assert out["code"] == "action_not_supported"
     assert fake.opened == []

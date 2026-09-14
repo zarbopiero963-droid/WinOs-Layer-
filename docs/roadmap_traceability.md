@@ -194,3 +194,20 @@ pytest tests/security/test_windows_scm_n007.py tests/security/test_service_contr
 Full installed W/L H63-N007 not claimed PASS here. Do not stop CI runner
 system services in tests.
 
+## N008 — SCM restart, timeout e recovery
+
+Contratto (#67 / H63-N008): Windows SCM ``restart`` with limited waits for
+terminal state, incompatible-transition ``conflict``, distinct
+``timeout`` / ``not_found`` / ``permission_denied`` / operational codes,
+handle cleanup (no orphans), and Linux systemctl error-code parity. REST maps
+404/409/504. Default allowlist remains **empty** (D1-B). Ambiguous/timeout ≠ success.
+
+```bash
+pytest tests/unit/test_windows_scm_n008.py tests/unit/test_windows_scm_control_n007.py tests/unit/test_linux_scm_n008_codes.py -q
+pytest tests/security/test_windows_scm_security_n008.py tests/security/test_windows_scm_n007.py -q
+pytest tests/integration/test_service_control_n008_http.py -q
+```
+
+Full installed W/L H63-N008 not claimed PASS here. Do not stop CI runner
+system services in tests.
+
