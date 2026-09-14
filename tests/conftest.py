@@ -43,6 +43,7 @@ from windows_os_api.apps.reasoning.offline import set_llm, NullLLM
 from windows_os_api.core.events.bus import reset_event_bus
 from windows_os_api.observability.metrics import reset_metrics
 from windows_os_api.api.rest.deps import reset_limiter
+from windows_os_api.core.security.auth import reset_auth_registry
 
 
 def _reset_shared_singletons() -> None:
@@ -56,6 +57,7 @@ def _reset_shared_singletons() -> None:
     reset_event_bus()
     reset_metrics()
     reset_limiter()
+    reset_auth_registry()
     clear_adapter_store()
 
 
