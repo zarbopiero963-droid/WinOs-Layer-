@@ -35,29 +35,32 @@ def test_release_defaults_have_no_baked_in_keys(monkeypatch):
     assert s.admin_api_keys == []
     assert s.viewer_api_keys == []
     assert s.operator_api_keys == []
-    assert s.allow_placeholder_api_keys is False
     assert s.require_auth is True
+    # Placeholders are not configured → 401 on release defaults
+    from fastapi import HTTPException
+    from windows_os_api.core.security.auth import resolve_role, PLACEHOLDER_API_KEYS
+    for bad in PLACEHOLDER_API_KEYS:
+        try:
+            resolve_role(bad, s)
+            raise AssertionError(f"expected 401 for {bad}")
+        except HTTPException as ei:
+            assert ei.status_code == 401
 
 
-def test_release_path_rejects_placeholder_keys():
+def test_release_path_rejects_unconfigured_and_unknown_keys():
+    # Explicit real keys configured — placeholders / unknowns still 401
+    # because they are absent from every role list (release-safe).
     s = Settings(
         api_keys=["real-automator-key-0001"],
         admin_api_keys=["real-admin-key-0001"],
         viewer_api_keys=["real-viewer-key-0001"],
         operator_api_keys=["real-operator-key-0001"],
-        allow_placeholder_api_keys=False,
         require_auth=True,
     )
-    for bad in PLACEHOLDER_API_KEYS:
+    for bad in list(PLACEHOLDER_API_KEYS) + ["", "nope-unknown"]:
         with pytest.raises(HTTPException) as ei:
             resolve_role(bad, s)
         assert ei.value.status_code == 401
-    with pytest.raises(HTTPException) as ei:
-        resolve_role("", s)
-    assert ei.value.status_code == 401
-    with pytest.raises(HTTPException) as ei:
-        resolve_role("nope-unknown", s)
-    assert ei.value.status_code == 401
 
 
 def test_four_roles_assignable_via_distinct_keys():
@@ -66,7 +69,6 @@ def test_four_roles_assignable_via_distinct_keys():
         operator_api_keys=["k-operator"],
         api_keys=["k-automator"],
         admin_api_keys=["k-admin"],
-        allow_placeholder_api_keys=False,
         require_auth=True,
     )
     assert resolve_role("k-viewer", s) == Role.VIEWER
@@ -79,7 +81,6 @@ def test_ambiguous_key_in_two_lists_rejected():
     s = Settings(
         api_keys=["shared-key"],
         admin_api_keys=["shared-key"],
-        allow_placeholder_api_keys=False,
         require_auth=True,
     )
     with pytest.raises(HTTPException) as ei:
@@ -146,7 +147,6 @@ def test_ws_accepts_valid_automator_key(client):
 def test_build_auth_context_redacts_key_material():
     s = Settings(
         api_keys=["abcdefghijklmnop"],
-        allow_placeholder_api_keys=False,
         require_auth=True,
     )
     ctx = build_auth_context("abcdefghijklmnop", s)

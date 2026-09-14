@@ -15,8 +15,8 @@ from windows_os_api.core.permissions.model import (
 )
 from windows_os_api.core.runtime.config import Settings, get_settings
 
-# Documentation / suite placeholders — refused on the release path (N011 / H63-N011)
-# unless Settings.allow_placeholder_api_keys is explicitly enabled (tests).
+# Known documentation placeholders. Release Settings defaults are empty (N011);
+# installed-product preflight (N003) still forbids these as session keys.
 PLACEHOLDER_API_KEYS = frozenset(
     {
         "dev-key-change-me",
@@ -65,12 +65,10 @@ def _role_key_lists(settings: Settings) -> list[tuple[Role, list[str]]]:
 def resolve_role(api_key: str, settings: Settings) -> Role:
     """Map an API key to exactly one Role.
 
-    Multi-list hits are rejected (ambiguous identity). Unknown / placeholder
-    (release path) keys are rejected as 401.
+    Multi-list hits are rejected (ambiguous identity). Keys absent from every
+    configured list (including release defaults with empty lists) are 401.
     """
     if not api_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
-    if api_key in PLACEHOLDER_API_KEYS and not settings.allow_placeholder_api_keys:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     matched: list[Role] = []

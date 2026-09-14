@@ -16,8 +16,6 @@ from fastapi.testclient import TestClient
 # Force fake backend + known keys before imports mutate cache
 os.environ["WINOS_BACKEND"] = "fake"
 os.environ["WINOS_REQUIRE_AUTH"] = "true"
-# Suite may use documentation placeholder strings; release path refuses them (N011).
-os.environ["WINOS_ALLOW_PLACEHOLDER_API_KEYS"] = "true"
 os.environ["WINOS_API_KEYS"] = '["dev-key-change-me"]'
 os.environ["WINOS_ADMIN_API_KEYS"] = '["admin-key-change-me"]'
 os.environ["WINOS_VIEWER_API_KEYS"] = '["viewer-key-n011"]'
