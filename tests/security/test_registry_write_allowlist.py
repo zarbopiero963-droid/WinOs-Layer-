@@ -1,9 +1,9 @@
-"""L'allowlist di prefissi del registro: default `HKCU\\Software\\`, aree critiche mai.
+"""L'allowlist di prefissi del registro: default `HKCU\\Software\\WinOsLayer\\`, aree critiche mai.
 
-Decisione owner D2-B, issue #6 (2026-09-08), testualmente: «default sicuro su
-"HKCU\\Software\\". L'architettura deve permettere di aggiungere successivamente
-prefissi espliciti senza riscrivere il security gate. Nessun write arbitrario
-sul registry tramite semplice ADMIN/flag», e fuori dal percorso standard
+Decisione owner D2 (#64) / N006: default stretto `HKCU\\Software\\WinOsLayer\\`.
+Storico D2-B (issue #6) usava `HKCU\\Software\\` largo. L'architettura resta:
+aggiungere prefissi espliciti senza riscrivere il security gate; nessun write
+arbitrario tramite solo ADMIN/flag; fuori dal percorso standard
 `HKLM\\SYSTEM\\`, `HKLM\\SECURITY\\`, `HKLM\\SAM\\`.
 
 Cosa c'era prima
@@ -58,14 +58,30 @@ def clean_allowlist(monkeypatch):
 # ---------------------------------------------------------------------------
 # Il default
 # ---------------------------------------------------------------------------
-def test_the_default_is_hkcu_software_and_nothing_else():
-    assert allowed_prefixes() == ("HKCU\\SOFTWARE\\",)
-    assert DEFAULT_PREFIXES == ("HKCU\\SOFTWARE\\",)
+def test_the_default_is_hkcu_software_winoslayer_and_nothing_else():
+    assert allowed_prefixes() == ("HKCU\\SOFTWARE\\WINOSLAYER\\",)
+    assert DEFAULT_PREFIXES == ("HKCU\\SOFTWARE\\WINOSLAYER\\",)
+
+
+def test_wide_hkcu_software_requires_explicit_env_extension(monkeypatch):
+    """N006 migration: old wide default is gone; extend via WINOS_REGISTRY_ALLOWLIST."""
+    with pytest.raises(RegistryPathRejected):
+        check(r"HKCU\Software\LegacyApp\Settings")
+    monkeypatch.setenv(ENV_VAR, r"HKCU\Software\LegacyApp")
+    assert check(r"HKCU\Software\LegacyApp\Settings")
+
+
+def test_wide_hkcu_software_requires_explicit_env_extension(monkeypatch):
+    """N006 migration: old wide default is gone; extend via WINOS_REGISTRY_ALLOWLIST."""
+    with pytest.raises(RegistryPathRejected):
+        check(r"HKCU\Software\LegacyApp\Settings")
+    monkeypatch.setenv(ENV_VAR, r"HKCU\Software\LegacyApp")
+    assert check(r"HKCU\Software\LegacyApp\Settings")
 
 
 def test_a_path_under_the_default_prefix_is_authorised():
-    assert check(r"HKCU\Software\MyApp") == r"HKCU\Software\MyApp"
-    assert check(r"HKCU\Software\Company\Product\Settings")
+    assert check(r"HKCU\Software\WinOsLayer") == r"HKCU\Software\WinOsLayer"
+    assert check(r"HKCU\Software\WinOsLayer\Product\Settings")
 
 
 def test_the_authorised_path_keeps_the_case_the_caller_wrote():
@@ -76,8 +92,8 @@ def test_the_authorised_path_keeps_the_case_the_caller_wrote():
     LinuxBackend sono dizionari, e per un dizionario `Software` e `SOFTWARE`
     sono due chiavi.
     """
-    assert check(r"HKCU\Software\MyApp") == r"HKCU\Software\MyApp"
-    assert check(r"HKCU/Software/MyApp") == r"HKCU\Software\MyApp"  # solo i separatori
+    assert check(r"HKCU\Software\WinOsLayer") == r"HKCU\Software\WinOsLayer"
+    assert check(r"HKCU/Software/WinOsLayer/Probe") == r"HKCU\Software\WinOsLayer\Probe"
 
 
 def test_paths_outside_the_default_are_refused():
@@ -86,6 +102,9 @@ def test_paths_outside_the_default_are_refused():
         r"HKCU\Environment",
         r"HKCR\.txt",
         r"HKU\S-1-5-21\Software",
+        r"HKCU\Software\OtherApp\Probe",
+        r"HKCU\Software\Foo",
+        r"HKCU\Software\MyApp",
     ):
         with pytest.raises(RegistryPathRejected) as exc:
             check(path)
@@ -199,7 +218,7 @@ def test_the_allowlist_extends_without_touching_the_gate(monkeypatch):
     monkeypatch.setenv(ENV_VAR, "HKCU\\Tools\\,HKCU\\Company\\")
     assert check(r"HKCU\Tools\App")
     assert check(r"HKCU\Company\Product")
-    assert check(r"HKCU\Software\Still")  # il default resta
+    assert check(r"HKCU\Software\WinOsLayer\Still")  # il default resta
 
 
 def test_a_malformed_entry_does_not_widen_anything(monkeypatch):
@@ -212,7 +231,7 @@ def test_a_malformed_entry_does_not_widen_anything(monkeypatch):
 def test_comparison_is_case_insensitive_but_the_path_is_not_rewritten():
     assert comparison_key(r"hkcu\software\app") == r"HKCU\SOFTWARE\APP"
     assert normalize(r"hkcu\software\app") == r"hkcu\software\app"
-    assert check(r"hkcu\software\app") == r"hkcu\software\app"
+    assert check(r"hkcu\software\winoslayer\app") == r"hkcu\software\winoslayer\app"
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +256,7 @@ def test_a_refused_write_never_reaches_the_backend(monkeypatch):
         "windows_os_api.os.registry.service.get_backend", lambda: _Explodes()
     )
 
-    for path in (r"HKLM\SYSTEM\Foo", r"HKCU\Environment", r"HKCU\Software\..\..\X"):
+    for path in (r"HKLM\SYSTEM\Foo", r"HKCU\Environment", r"HKCU\Software\OtherApp", r"HKCU\Software\..\..\X"):
         out = reg.write(path, "k", "v")
         assert out["ok"] is False, out
         assert out["denied"] is True, out
@@ -261,9 +280,9 @@ def test_an_authorised_write_does_reach_the_backend(monkeypatch):
     monkeypatch.setattr(
         "windows_os_api.os.registry.service.get_backend", lambda: _Records()
     )
-    out = reg.write(r"HKCU\Software\MyApp", "Setting", "on")
+    out = reg.write(r"HKCU\Software\WinOsLayer\MyApp", "Setting", "on")
     assert out["ok"] is True, out
-    assert seen == [(r"HKCU\Software\MyApp", "Setting", "on")], seen
+    assert seen == [(r"HKCU\Software\WinOsLayer\MyApp", "Setting", "on")], seen
 
 
 def test_admin_is_not_a_shortcut_around_the_registry_allowlist(monkeypatch):

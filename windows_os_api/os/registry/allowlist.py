@@ -1,14 +1,14 @@
 """Dove puo' scrivere questa API nel registro? Solo sotto i prefissi elencati.
 
-Decisione owner D2-B, issue #6 (2026-09-08):
+Decisione owner D2 (#64) / N006 (#67): default stretto + estensione esplicita.
 
-    default:  HKCU\\Software\\
+    default:  HKCU\\Software\\WinOsLayer\\
     estende:  WINOS_REGISTRY_ALLOWLIST=HKCU\\Software\\MyApp\\,HKCU\\Software\\Company\\
     mai:      HKLM\\SYSTEM\\   HKLM\\SECURITY\\   HKLM\\SAM\\
 
-e, testualmente: «l'architettura deve permettere di aggiungere successivamente
-prefissi espliciti senza riscrivere il security gate. Nessun write arbitrario
-sul registry tramite semplice ADMIN/flag.»
+Storico D2-B (issue #6) usava `HKCU\\Software\\` largo; D2 in #64 restringe il
+default allo spazio applicativo WinOsLayer. Resta: aggiungere prefissi espliciti
+senza riscrivere il security gate; nessun write arbitrario tramite solo ADMIN/flag.
 
 Cosa c'era prima
 ----------------
@@ -56,9 +56,10 @@ REGISTRY_PATH_INVALID = "REGISTRY_PATH_INVALID"
 REGISTRY_READ_FORBIDDEN = "REGISTRY_READ_FORBIDDEN"
 REGISTRY_VALUE_FORBIDDEN = "REGISTRY_VALUE_FORBIDDEN"
 
-# Il default sicuro: le impostazioni di un'applicazione per l'utente corrente.
+# Il default sicuro (D2 / N006): solo HKCU\Software\WinOsLayer\.
+# Prefissi applicativi aggiuntivi via WINOS_REGISTRY_ALLOWLIST (migrazione).
 # Nessuna scrittura qui puo' rompere la macchina o toccare un altro utente.
-DEFAULT_PREFIXES = ("HKCU\\SOFTWARE\\",)
+DEFAULT_PREFIXES = ("HKCU\\SOFTWARE\\WINOSLAYER\\",)
 
 # Non negoziabili: nessuna variabile d'ambiente le riapre.
 FORBIDDEN_PREFIXES = (
