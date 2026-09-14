@@ -112,6 +112,29 @@ pytest tests/unit/test_fixture_isolation_n002.py -q
 
 Out of scope: harness prodotto installato (N003), farm matrix completa.
 
+## N003 — Harness del prodotto installato (preflight)
+
+Contratto (#67 / H63-N003, famiglie Q00/Q01) — **scaffolding fail-closed only**:
+
+1. Porta destinazione occupata → blocco (`require_port_free`).
+2. `FakeBackend` / `backend==fake` rilevato → blocco.
+3. Checksum artifact assente o hash mismatch → blocco.
+4. API key di sessione **realmente generata** (`secrets.token_urlsafe`); chiavi
+   statiche di suite/smoke rifiutate.
+
+Helpers: `tests/harness/installed_product_preflight.py`
+(`run_session_preflight`, raccolta version/hash/backend, stub clients_allowed
+tcp/mcp/ws/browser).
+
+```bash
+pytest tests/unit/test_installed_product_preflight_n003.py -q
+```
+
+**Non** certifica download/install Windows+Linux su prodotto reale (#21), né
+MANUAL_ONLY desktop/hardware come PASS. Quelli restano aperti / NEEDS_MANUAL.
+
+Out of scope: altri lotti, segreti reali, bypass gate, farm matrix completa.
+
 ## Mapping requisiti N001
 
 Copertura dichiarata dalla scheda #67: R01 R42 T04 T05 T08 T10 T11 T12
