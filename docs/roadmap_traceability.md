@@ -163,3 +163,17 @@ pytest tests/integration/test_capability_envelope_api.py -q
 **Out of scope (deferred):** Windows `terminate_process` ownership (N047/N048);
 full installed W/L H63-N004; MANUAL_ONLY desktop. Phase 0:
 https://github.com/zarbopiero963-droid/WinOs-Layer-/issues/67#issuecomment-5668178895
+
+## N006 — Scrittura registry: default D2 stretto e migrazione
+
+Contratto (#67 / H63-N006, D2 in #64): `DEFAULT_PREFIXES` = only
+`HKCU\\Software\\WinOsLayer\\`. Extend via `WINOS_REGISTRY_ALLOWLIST`.
+Immutable denylist (`HKLM\\SYSTEM|SECURITY|SAM`) remains non-reopenable by ADMIN/env.
+
+```bash
+pytest tests/security/test_registry_write_allowlist.py -q
+pytest tests/integration/test_service_control_api.py -q -k registry
+```
+
+**Migration:** callers that wrote under generic `HKCU\\Software\\<Other>` must
+set `WINOS_REGISTRY_ALLOWLIST`. Full installed W/L H63-N006 not claimed PASS here.

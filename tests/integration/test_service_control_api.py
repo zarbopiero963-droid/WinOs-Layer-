@@ -79,16 +79,16 @@ def clean_registry_allowlist(monkeypatch):
     monkeypatch.delenv(REGISTRY_ENV, raising=False)
 
 
-def test_a_write_under_hkcu_software_is_allowed(client, auth_headers):
-    """Il default sicuro funziona: le impostazioni dell'app si scrivono."""
+def test_a_write_under_hkcu_software_winoslayer_is_allowed(client, auth_headers):
+    """Il default D2/N006 funziona: solo sotto WinOsLayer."""
     r = client.put("/v1/registry", headers=auth_headers,
-                   json={"path": r"HKCU\Software\WinOsTest", "name": "k", "value": "v"})
+                   json={"path": r"HKCU\Software\WinOsLayer\WinOsTest", "name": "k", "value": "v"})
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True, r.text
 
 
 def test_writes_outside_the_allowlist_are_403(client, auth_headers):
-    for path in (r"HKLM\SOFTWARE\Microsoft", r"HKCU\Environment", r"HKCU\SoftwareAltro\X"):
+    for path in (r"HKLM\SOFTWARE\Microsoft", r"HKCU\Environment", r"HKCU\SoftwareAltro\X", r"HKCU\Software\OtherApp"):
         r = client.put("/v1/registry", headers=auth_headers,
                        json={"path": path, "name": "k", "value": "v"})
         assert r.status_code == 403, f"{path}: {r.status_code} {r.text}"
@@ -133,7 +133,7 @@ def test_a_written_value_can_be_read_back_at_the_same_path(client, auth_headers)
     gli store di Fake e Linux sono dizionari, e per un dizionario `Software` e
     `SOFTWARE` sono due chiavi.
     """
-    path = r"HKCU\Software\RoundTrip"
+    path = r"HKCU\Software\WinOsLayer\RoundTrip"
     client.put("/v1/registry", headers=auth_headers,
                json={"path": path, "name": "Setting", "value": "on"})
     r = client.get("/v1/registry", headers=auth_headers, params={"path": path, "name": "Setting"})

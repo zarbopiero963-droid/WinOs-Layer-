@@ -24,7 +24,7 @@ from windows_os_api.backends.windows import WindowsBackend  # noqa: E402
 from windows_os_api.os.registry import service as reg  # noqa: E402
 from windows_os_api.os.registry.allowlist import ENV_VAR  # noqa: E402
 
-TEST_KEY = r"HKCU\Software\WinOsApiTest"
+TEST_KEY = r"HKCU\Software\WinOsLayer\WinOsApiTest"
 
 
 @pytest.fixture
