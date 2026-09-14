@@ -120,4 +120,5 @@ def verify(
 
 @router.get("/{app_id}/openapi.json")
 def openapi_for_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, app_id)
     return app_openapi(app_id)
