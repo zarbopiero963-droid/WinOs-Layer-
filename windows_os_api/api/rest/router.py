@@ -2,7 +2,7 @@
 from __future__ import annotations
 from fastapi import APIRouter
 from windows_os_api.api.rest import (
-    health, processes, apps, windows, ui, filesystem, network, services, workflows, security_routes, ai,
+    health, processes, apps, windows, ui, filesystem, network, services, workflows, security_routes, ai, apis,
 )
 
 api_router = APIRouter(prefix="/v1")
@@ -17,3 +17,4 @@ api_router.include_router(services.router)
 api_router.include_router(workflows.router)
 api_router.include_router(security_routes.router)
 api_router.include_router(ai.router)
+api_router.include_router(apis.router)

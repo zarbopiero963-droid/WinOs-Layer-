@@ -301,3 +301,13 @@ pytest tests/unit/test_api_registry_n015.py tests/unit/test_api_registry_n014.py
 
 Full installed W/L H63-N015 not claimed PASS here (MANUAL / #21).
 
+
+## N016 — Catalogo API: lista, dettaglio, ricerca e filtri
+
+Contratto (#67 / H63-N016, B-API, Q08): `GET /v1/apis` + detail with `limit`/`offset` pagination (no duplicate ids across pages), search `q`, filters `source` / `application_id`|`app` / `status` / `permission`|`permissions`, authorized visibility via app_scopes (ADMIN sees all; cross-app filter → 403). Missing record **404** distinct from registry unavailable **503**. Catalog helpers under `apps/api_registry/catalog.py`; REST `api/rest/apis.py`. Coverage: R31 R32 W062 W070 L062 L070 S61-04–S61-05 G28 G29. Gateway → N017.
+
+```bash
+pytest tests/unit/test_api_registry_n016.py tests/unit/test_api_registry_n015.py tests/unit/test_api_registry_n014.py -q
+```
+
+Full installed W/L H63-N016 not claimed PASS here (MANUAL / #21).
