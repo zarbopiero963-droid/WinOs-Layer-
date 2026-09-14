@@ -68,3 +68,9 @@ def get_event_bus() -> EventBus:
     if _bus is None:
         _bus = EventBus()
     return _bus
+
+
+def reset_event_bus() -> None:
+    """Drop the process-wide bus so tests cannot inherit history/subscribers."""
+    global _bus
+    _bus = None

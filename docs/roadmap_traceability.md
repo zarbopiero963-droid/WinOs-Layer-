@@ -93,6 +93,25 @@ python scripts/forensic_audit.py
 pytest tests/unit/test_forensic_audit_traceability.py -q
 ```
 
+## N002 — Fixture isolate e separazione fake/live
+
+Contratto (#67 / H63-N002, famiglie Q00/Q15):
+
+1. Nessun adapter, subscriber, policy o counter ereditato tra test dopo il
+   teardown (bus / metrics / rate-limiter / adapter store wipe).
+2. Fixture live (`live_backend` / `live_client`) **fail-closed** se il backend
+   risolto è `FakeBackend` (`WINOS_ALLOW_FAKE_FALLBACK=false` sul path live).
+
+Helpers: `reset_event_bus`, `reset_metrics`, `reset_limiter`,
+`clear_adapter_store`, cablati in `tests/conftest.py` (`tmp_sandbox`) e
+`tests/linux/conftest.py` (`linux_backend`).
+
+```bash
+pytest tests/unit/test_fixture_isolation_n002.py -q
+```
+
+Out of scope: harness prodotto installato (N003), farm matrix completa.
+
 ## Mapping requisiti N001
 
 Copertura dichiarata dalla scheda #67: R01 R42 T04 T05 T08 T10 T11 T12
