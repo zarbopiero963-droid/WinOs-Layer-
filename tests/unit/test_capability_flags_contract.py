@@ -69,14 +69,13 @@ def test_both_real_backends_declare_the_four_read_only_families(family):
         )
 
 
-def test_windows_declares_audio_as_never_implemented():
-    """Decisione owner D4-B, come dato e non come commento.
+def test_windows_does_not_declare_audio_as_never_implemented():
+    """N009 / D4: audio read is implemented (WASAPI). Missing COM → UNAVAILABLE.
 
-    `audio: False` da solo direbbe «qui non c'e' l'audio». La verita' e' che
-    questo backend non lo implementa affatto senza pycaw, e la distinzione
-    arriva al chiamante solo se il backend la dichiara.
+    Remaining in NOT_IMPLEMENTED would tell the caller to give up even after
+    installing comtypes, which is the opposite of the D4 decision.
     """
-    assert "audio" in WindowsBackend.NOT_IMPLEMENTED
+    assert "audio" not in WindowsBackend.NOT_IMPLEMENTED
 
 
 def test_linux_does_not_claim_anything_is_permanently_unimplemented():

@@ -149,7 +149,8 @@ def test_windows_no_longer_lists_service_control_as_never_implemented():
     from windows_os_api.backends.windows import WindowsBackend
 
     assert "service_control" not in WindowsBackend.NOT_IMPLEMENTED
-    assert "audio" in WindowsBackend.NOT_IMPLEMENTED
+    # N009: audio read is implemented (WASAPI); no longer NEVER-implemented.
+    assert "audio" not in WindowsBackend.NOT_IMPLEMENTED
 
 
 def test_listing_and_controlling_are_separate_capabilities():

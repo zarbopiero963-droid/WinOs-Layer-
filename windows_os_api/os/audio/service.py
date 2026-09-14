@@ -5,12 +5,13 @@ from windows_os_api.backends.factory import get_backend
 from windows_os_api.os.capability import discover, unsupported
 
 def devices() -> dict[str, Any]:
-    """Device audio, col contratto `supported` (decisioni owner D3-A e D4-B).
+    """Device audio, col contratto `supported` (D3-A; N009 / D4).
 
-    Su Windows questo risponde `supported: false`: l'audio richiederebbe Core
-    Audio COM (`pycaw`), che l'owner ha deciso di non aggiungere adesso (D4-B).
-    Prima rispondeva `200` con lista vuota, cioe' «questa macchina non ha
-    dispositivi audio» — un'affermazione falsa su qualunque PC.
+    Windows implements WASAPI read (comtypes, no pycaw). ``supported: false``
+    with ``CAPABILITY_UNAVAILABLE`` means the session could not be opened on
+    this machine — not that the backend never implements audio. An empty
+    ``devices`` list with ``supported: true`` means the enumerator ran and
+    found no active endpoints.
     """
     b = get_backend()
     return discover(b, "audio", "devices", b.audio_devices)

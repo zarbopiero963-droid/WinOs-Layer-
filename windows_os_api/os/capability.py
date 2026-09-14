@@ -48,9 +48,8 @@ DISCOVERY_FAILED = "DISCOVERY_FAILED"
 # sono due risposte diverse, e portano a due azioni diverse: la prima non
 # cambiera' installando qualcosa, la seconda si'.
 #
-#   Windows + audio     -> NOT_SUPPORTED: servirebbe pycaw, che l'owner ha
-#                          deciso di non aggiungere adesso (D4-B). Installare
-#                          qualcosa sulla macchina non cambia niente.
+#   Windows + audio     -> implemented (N009 WASAPI). Flag False → UNAVAILABLE
+#                          when the COM session cannot be opened here.
 #   Linux + printers    -> UNAVAILABLE: le stampanti sono implementate via
 #                          lpstat, che su QUESTA macchina non c'e'. Installare
 #                          CUPS le fa comparire.

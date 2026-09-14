@@ -129,14 +129,8 @@ def test_every_action_is_refused_the_same_way(action):
     )
 
 
-def test_audio_devices_documents_why_it_is_empty():
-    """P3: una lista vuota muta e' una trappola, anche se irraggiungibile.
-
-    Via API il flag `audio: False` la intercetta (#28, D4-B), ma chi chiama il
-    backend direttamente riceve `[]` e legge "nessun dispositivo audio". La
-    docstring e' l'avviso; implementarlo richiederebbe pycaw, che l'owner ha
-    deciso di non aggiungere.
-    """
+def test_audio_devices_documents_wasapi_read_path():
+    """N009: audio_devices is the WASAPI enumerator, not a silent empty stub."""
     doc = inspect.getdoc(windows_module.WindowsBackend.audio_devices) or ""
-    assert "D4-B" in doc, "l'assenza deve rimandare alla decisione che la motiva"
-    assert "CAPABILITY_NOT_SUPPORTED" in doc
+    assert "WASAPI" in doc or "N009" in doc
+    assert "pycaw" not in doc.lower() or "no pycaw" in doc.lower() or "N010" in doc

@@ -4,7 +4,7 @@ Su Windows i due rami opposti convivono sulla stessa macchina, ed e' il modo
 piu' onesto di verificare la distinzione:
 
     servizi/stampanti/volumi  ->  supported: true   (pywin32 c'e', si enumera)
-    audio                     ->  supported: false  (D4-B: niente pycaw)
+    audio                     ->  supported: true when WASAPI session opens (N009)
 
 Prima l'audio rispondeva `200` con lista vuota, cioe' «questa macchina non ha
 dispositivi audio» — falso su qualunque PC.
@@ -35,19 +35,23 @@ def backend(tmp_path):
     return WindowsBackend(str(tmp_path))
 
 
-def test_audio_is_declared_unimplemented_not_empty(backend):
-    """D4-B, verificato sul backend vero.
+def test_audio_read_is_implemented_not_a_silent_empty_list(backend):
+    """N009 / D4: WASAPI read. Missing session → UNAVAILABLE, not NOT_SUPPORTED.
 
-    `CAPABILITY_NOT_SUPPORTED` e non `CAPABILITY_UNAVAILABLE`: installare
-    qualcosa su questa macchina non abilita l'audio, servirebbe `pycaw` nel
-    progetto. La differenza dice al chiamante se ha senso provare.
+    A live session yields supported true (empty or populated). Never claim
+    NOT_SUPPORTED: comtypes is already a windows extra, so installing it on
+    the machine *can* enable audio.
     """
     out = discover(backend, "audio", "devices", backend.audio_devices)
-    assert out["supported"] is False, out
-    assert out["error_code"] == CAPABILITY_NOT_SUPPORTED, out
-    assert out["error_code"] != CAPABILITY_UNAVAILABLE
-    assert out["devices"] == []
-    assert "non e' una questione di configurazione" in out["reason"]
+    if backend._audio_session is None:
+        assert out["supported"] is False, out
+        assert out["error_code"] == CAPABILITY_UNAVAILABLE, out
+        assert out["error_code"] != CAPABILITY_NOT_SUPPORTED
+        assert out["devices"] == []
+    else:
+        assert out["supported"] is True, out
+        assert isinstance(out["devices"], list)
+        assert out.get("error_code") != CAPABILITY_NOT_SUPPORTED
 
 
 def test_services_are_supported_and_enumerated(backend):
@@ -117,4 +121,5 @@ def test_the_capability_table_matches_what_pywin32_provides(backend):
     assert flags["services"] is (backend._win32service is not None)
     assert flags["printers"] is (backend._win32print is not None)
     assert flags["devices"] is (backend._win32api is not None)
-    assert flags["audio"] is False, "D4-B: nessun pycaw, quindi nessun audio"
+    # N009: audio is implemented; True iff a WASAPI session opened on this box.
+    assert flags["audio"] is (getattr(backend, "_audio_session", None) is not None)
