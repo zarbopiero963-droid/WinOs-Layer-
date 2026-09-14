@@ -2,8 +2,14 @@
 from __future__ import annotations
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
-from windows_os_api.core.permissions.model import Permission
-from windows_os_api.core.security.auth import AuthContext, require_permission
+from windows_os_api.core.permissions.model import Permission, Role
+from windows_os_api.core.security.auth import (
+    AuthContext,
+    require_permission,
+    assert_active,
+    ensure_app_access,
+    ensure_resource_owner,
+)
 from windows_os_api.apps.workflows import recorder, generator
 from windows_os_api.apps.adapters.engine import invoke_action
 from windows_os_api.apps.intent.engine import execute_intent, parse_intent
@@ -46,8 +52,9 @@ class ReasonBody(BaseModel):
 
 @router.post("/workflows/record/start")
 def start_rec(body: RecordStart, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE))):
-    wf = recorder.start_recording(body.name, body.app_id)
-    return {"id": wf.id, "name": wf.name}
+    ensure_app_access(auth, body.app_id)
+    wf = recorder.start_recording(body.name, body.app_id, owner_subject=auth.subject)
+    return {"id": wf.id, "name": wf.name, "owner_subject": wf.owner_subject}
 
 @router.post("/workflows/record/step")
 def rec_step(body: RecordStep, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE))):
@@ -66,19 +73,37 @@ def stop_rec(auth: AuthContext = Depends(require_permission(Permission.ADAPTER_M
 
 @router.get("/workflows")
 def list_wf(auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
-    return {"workflows": recorder.list_workflows()}
+    include_all = auth.role == Role.ADMIN
+    return {"workflows": recorder.list_workflows(auth.subject, include_all=include_all)}
 
 @router.post("/workflows/generate")
 def gen_wf(body: IntentBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE))):
+    ensure_app_access(auth, body.app_id)
     wf = generator.generate_workflow(body.text, app_id=body.app_id)
+    # Bind ownership when generator stores via recorder helpers if present.
+    if hasattr(wf, "owner_subject"):
+        wf.owner_subject = auth.subject
     return recorder.to_dict(wf)
 
 @router.post("/workflows/{wf_id}/play")
 def play_wf(wf_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
-    return recorder.play(wf_id, invoke_action)
+    wf = recorder.get_workflow(wf_id)
+    if not wf:
+        raise HTTPException(404, "workflow not found")
+    ensure_resource_owner(auth, wf.owner_subject)
+    if wf.app_id:
+        ensure_app_access(auth, wf.app_id)
+
+    def _gate(_index, _step):
+        assert_active(auth)
+        if wf.app_id:
+            ensure_app_access(auth, wf.app_id)
+
+    return recorder.play(wf_id, invoke_action, before_step=_gate)
 
 @router.post("/intent")
 def intent(body: IntentBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, body.app_id)
     return execute_intent(body.text, body.app_id)
 
 @router.post("/intent/parse")
@@ -87,6 +112,7 @@ def intent_parse(body: IntentBody, auth: AuthContext = Depends(require_permissio
 
 @router.post("/agent/run")
 def agent_run(body: AgentBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, body.app_id)
     return ComputerAgent(body.app_id).run(body.goal)
 
 @router.post("/ui/reason")
@@ -99,4 +125,5 @@ def ui_heal(body: HealBody, auth: AuthContext = Depends(require_permission(Permi
 
 @router.post("/plan")
 def make_plan(body: IntentBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, body.app_id)
     return plan(body.text, body.app_id)

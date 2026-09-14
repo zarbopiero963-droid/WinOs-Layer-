@@ -259,3 +259,14 @@ pytest tests/security/test_security_hard.py -q
 
 Full installed W/L H63-N011 not claimed PASS here (MANUAL / #21).
 
+
+## N012 — Rotazione, revoca e isolamento user/app/session
+
+Contratto (#67 / H63-N012, B-AUTH): runtime revocation registry (key still in Settings → 401); session issue + revoke; key rotation without role escalation (ADMIN / SoD); app_scopes + workflow `owner_subject` isolation; `before_step` / `assert_active` at side-effect boundary so mid-play revoke denies the next step. WS drops on revoked key/session. Rate-limit / remote HTTP → N013; MCP tool revoke → N020.
+
+```bash
+pytest tests/unit/test_auth_n012.py tests/unit/test_auth_n011.py -q
+pytest tests/security/test_security_hard.py -q
+```
+
+Full installed W/L H63-N012 not claimed PASS here (MANUAL / #21).

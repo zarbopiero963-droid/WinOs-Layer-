@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
 from windows_os_api.core.permissions.model import Permission
-from windows_os_api.core.security.auth import AuthContext, require_permission
+from windows_os_api.core.security.auth import AuthContext, require_permission, ensure_app_access
 from windows_os_api.api.rest.deps import audit
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.adapters.engine import (
@@ -59,6 +59,7 @@ def adapters(auth: AuthContext = Depends(require_permission(Permission.ADAPTER_U
 
 @router.get("/{app_id}")
 def get_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
+    ensure_app_access(auth, app_id)
     app = discovery.get_app(app_id)
     if not app:
         raise HTTPException(404, "app not found")
@@ -66,16 +67,19 @@ def get_app(app_id: str, auth: AuthContext = Depends(require_permission(Permissi
 
 @router.post("/{app_id}/adapter")
 def make_adapter(app_id: str, body: CreateAdapterBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE))):
+    ensure_app_access(auth, app_id)
     adapter = create_adapter(app_id, hwnd=body.hwnd, trust_level=body.trust_level)
     audit("adapter.create", auth, resource=app_id, detail={"actions": len(adapter.actions)})
     return {"app_id": adapter.app_id, "actions": [a.name for a in adapter.actions], "trust_level": adapter.trust_level}
 
 @router.get("/{app_id}/actions")
 def actions(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, app_id)
     return {"actions": discover_actions(app_id=app_id)}
 
 @router.post("/{app_id}/actions/{action_name}")
 def invoke(app_id: str, action_name: str, body: InvokeBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, app_id)
     adapter = get_adapter(app_id)
     if not adapter:
         create_adapter(app_id)
@@ -99,6 +103,7 @@ def verify(
 ):
     # La verifica modifica temporaneamente l'app e persiste il verdetto: per
     # questo richiede ADAPTER_MANAGE, non il solo permesso di invocazione.
+    ensure_app_access(auth, app_id)
     result = verify_and_record(app_id, action_name, times=body.times)
     state = (result.get("verification") or {}).get("state")
     outcome = "success" if result.get("ok") else "failure"
@@ -115,4 +120,5 @@ def verify(
 
 @router.get("/{app_id}/openapi.json")
 def openapi_for_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    ensure_app_access(auth, app_id)
     return app_openapi(app_id)
