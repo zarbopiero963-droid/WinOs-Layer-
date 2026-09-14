@@ -42,6 +42,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # non sparisce: finisce nell'audit di avvio come il resto.
             adapters_report = {"restored": [], "skipped": [{"reason": str(exc)}]}
 
+        key_lists = (
+            settings.admin_api_keys,
+            settings.api_keys,
+            settings.operator_api_keys,
+            settings.viewer_api_keys,
+        )
+        configured_keys = sum(1 for lst in key_lists for k in (lst or []) if k)
         get_audit_logger().log(
             "server.startup",
             subject="system",
@@ -50,6 +57,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "host": settings.effective_host(),
                 "adapters_restored": adapters_report["restored"],
                 "adapters_skipped": adapters_report["skipped"],
+                "require_auth": settings.require_auth,
+                "configured_api_keys": configured_keys,
             },
         )
         get_metrics().incr("server.starts")

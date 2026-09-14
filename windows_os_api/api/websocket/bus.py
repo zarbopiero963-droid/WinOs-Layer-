@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from windows_os_api.core.events.bus import get_event_bus
 from windows_os_api.core.runtime.config import get_settings
+from windows_os_api.core.security.auth import build_auth_context
 
 router = APIRouter(tags=["websocket"])
 
@@ -15,13 +16,13 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/events")
 async def events_ws(websocket: WebSocket) -> None:
     settings = get_settings()
-    # Auth via query param api_key for WS
+    # Same principal resolution as REST (N011) — query param api_key for WS.
     api_key = websocket.query_params.get("api_key")
-    if settings.require_auth:
-        valid = (api_key in settings.api_keys) or (api_key in settings.admin_api_keys)
-        if not valid:
-            await websocket.close(code=4401)
-            return
+    try:
+        build_auth_context(api_key, settings)
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     bus = get_event_bus()
     try:

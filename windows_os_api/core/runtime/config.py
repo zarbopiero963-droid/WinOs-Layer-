@@ -24,10 +24,15 @@ class Settings(BaseSettings):
     remote_access_enabled: bool = False
     allowed_hosts: list[str] = Field(default_factory=lambda: ["127.0.0.1", "localhost"])
 
-    # Security
-    api_keys: list[str] = Field(default_factory=lambda: ["dev-key-change-me"])
+    # Security — N011: release defaults carry NO baked-in keys.
+    # Assign keys via WINOS_*_API_KEYS env (four roles). Explicit env may
+    # still set documentation placeholders for local/CI; empty default =
+    # release path rejects them (not present in any list).
+    api_keys: list[str] = Field(default_factory=list)  # AUTOMATOR
+    viewer_api_keys: list[str] = Field(default_factory=list)
+    operator_api_keys: list[str] = Field(default_factory=list)
+    admin_api_keys: list[str] = Field(default_factory=list)
     require_auth: bool = True
-    admin_api_keys: list[str] = Field(default_factory=lambda: ["admin-key-change-me"])
     rate_limit_per_minute: int = 120
     audit_log_path: str = "logs/audit.jsonl"
     sandbox_root: str = "sandbox"
