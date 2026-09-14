@@ -150,13 +150,14 @@ def test_denylist_not_bypassed_by_read_allowlist_env(monkeypatch, spy):
 
 
 def test_corrupt_read_allowlist_env_is_discarded_recovery(monkeypatch, spy):
-    monkeypatch.setenv(ENV_VAR_READ, r"???bad,,,HKCU\Software\..\Evil\,")
-    assert allowed_read_prefixes() == DEFAULT_READ_PREFIXES
+    """Fail-closed su variabile scritta male: si scarta la voce, non si apre."""
+    junk_values = [",", ",,", "   ", "..\\..", "\\", "HKCU\\Software\\..\\Evil\\"]
+    for junk in junk_values:
+        monkeypatch.setenv(ENV_VAR_READ, junk)
+        assert allowed_read_prefixes() == DEFAULT_READ_PREFIXES, junk
     result = registry_service.read(ALLOWED_TEMP, "Theme")
     assert result["ok"] is True, result
     assert spy.calls == [(ALLOWED_TEMP, "Theme")]
-
-
 def test_hive_alias_outside_allowlist_still_denied(spy):
     result = registry_service.read(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft")
     assert result["code"] == REGISTRY_READ_NOT_ALLOWED, result
