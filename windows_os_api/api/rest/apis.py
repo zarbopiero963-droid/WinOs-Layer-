@@ -1,4 +1,4 @@
-"""N016/N018/N019 — REST API catalog + API Test + OpenAPI export.
+"""N016/N018/N019/N023 — REST API catalog + API Test + OpenAPI + disable.
 
 Catalog: GET /v1/apis list + detail over PersistentApiRegistry / ApiRegistry.
 Pagination uses ``limit``/``offset``. Missing record → 404; registry
@@ -6,6 +6,9 @@ unavailable → 503. Cross-app filter outside caller scopes → 403.
 
 N018: ``POST /v1/apis/{api_id}/test`` runs gateway execute + independent
 postcondition; HTTP 200 alone is never verified success.
+
+N023: ``POST /v1/apis/{api_id}/disable`` sets registry status DISABLED
+(ADAPTER_MANAGE); gateway then fail-closes Try it / execute.
 """
 from __future__ import annotations
 
@@ -248,3 +251,53 @@ def test_api_route(
         outcome = "denied"
     audit("apis.test", auth, resource=api_id, outcome=outcome, detail=result)
     return result
+
+
+@router.post("/{api_id}/disable")
+def disable_api_route(
+    api_id: str,
+    auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE)),
+):
+    """N023: set API status to DISABLED (auth + audit). Gateway fail-closes after.
+
+    Requires ADAPTER_MANAGE (or ADMIN). Missing API → 404. Registry down → 503.
+    """
+    try:
+        registry = resolve_registry()
+    except RegistryUnavailable as exc:
+        audit("apis.disable", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+
+    visible = _visible_app_ids(auth)
+    try:
+        rec = get_catalog_record(api_id, visible_app_ids=visible)
+    except RegistryUnavailable as exc:
+        audit("apis.disable", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+    if rec is None:
+        audit("apis.disable", auth, resource=api_id, outcome="failure", detail={"reason": "not_found"})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API not found")
+
+    if rec.application_id:
+        ensure_app_access(auth, rec.application_id)
+
+    try:
+        updated = registry.set_status(api_id, ApiStatus.DISABLED)
+    except KeyError as exc:
+        audit("apis.disable", auth, resource=api_id, outcome="failure", detail={"reason": "not_found"})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API not found") from exc
+
+    audit(
+        "apis.disable",
+        auth,
+        resource=api_id,
+        outcome="success",
+        detail={"status": updated.status.value},
+    )
+    return updated.to_dict()

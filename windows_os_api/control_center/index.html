@@ -71,6 +71,18 @@
       padding: 1rem; border-radius: 8px; min-height: 4rem; font-family: ui-monospace, monospace;
       font-size: .85rem; margin-top: .75rem;
     }
+    #api_diag_out {
+      white-space: pre-wrap; word-break: break-word; background: #020617;
+      padding: 1rem; border-radius: 8px; min-height: 4rem; font-family: ui-monospace, monospace;
+      font-size: .85rem; margin-top: .5rem; max-height: 360px; overflow: auto;
+    }
+    #api_params {
+      width: 100%; min-height: 4.5rem; font-family: ui-monospace, monospace; font-size: .85rem;
+      background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px;
+      padding: .5rem .6rem; margin-top: .35rem;
+    }
+    button.danger { background: #b91c1c; color: #fef2f2; }
+    button.danger:hover { background: #ef4444; color: #0f172a; }
   </style>
 </head>
 <body>
@@ -176,6 +188,22 @@
         </table>
         <p id="api_list_note" class="note"></p>
         <div id="api_detail" aria-live="polite">Seleziona una riga per il dettaglio.</div>
+        <div class="card" id="api_diagnose" style="margin-top:.5rem">
+          <h2>Try it / diagnosi (N023)</h2>
+          <p class="muted">Auth via <code>X-API-Key</code> (#key). Try it → <code>POST /v1/apis/{id}/test</code> (gateway N018). Success solo se <code>success</code>/<code>verification.verified</code> — mai HTTP 200 da solo.</p>
+          <label>Params JSON (opzionale)
+            <textarea id="api_params" placeholder='{"field":"value"}'></textarea>
+          </label>
+          <div class="row" style="margin-top:.75rem">
+            <button type="button" id="btn_try_it" onclick="tryItApi()">Try it / API Test</button>
+            <button type="button" class="secondary" onclick="viewWorkflow()">View workflow</button>
+            <button type="button" class="secondary" onclick="viewAdapter()">View adapter</button>
+            <button type="button" class="secondary" onclick="viewLog()">View log</button>
+            <button type="button" class="danger" onclick="disableApi()">Disable</button>
+          </div>
+          <p id="api_diag_status" class="status muted"></p>
+          <div id="api_diag_out" aria-live="polite">Seleziona un&apos;API, poi Try it / View…</div>
+        </div>
       </div>
     </section>
   </main>
@@ -184,7 +212,8 @@
     /* N022 — Tabbed Control Center (Dashboard / OS / Apps / API).
        Adapter status: bound when list_adapters.bound||hwnd; unbound when adapter
        exists with hwnd null (disk restore); nessuno when no adapter.
-       Catalog UI always requests status=VERIFIED. Hostile metadata → textContent. */
+       Catalog UI always requests status=VERIFIED. Hostile metadata → textContent.
+       N023: Try it → POST /v1/apis/{id}/test; View workflow/adapter/log; Disable → /disable. */
 
     const OS_ENDPOINTS = [
       { method: "GET", path: "/v1/health", area: "health" },
@@ -487,15 +516,56 @@
       });
     }
 
+    let _selectedApiId = "";
+    let _selectedAppId = "";
+
+    function setDiagStatus(ok, msg) {
+      const el = document.getElementById("api_diag_status");
+      el.className = "status " + (ok === true ? "ok" : ok === false ? "err" : "muted");
+      el.textContent = msg || "";
+    }
+
+    function setDiagOut(obj) {
+      const el = document.getElementById("api_diag_out");
+      if (typeof obj === "string") {
+        el.textContent = obj;
+      } else {
+        el.textContent = JSON.stringify(obj, null, 2);
+      }
+    }
+
+    function redactSecrets(value) {
+      const SECRET_KEYS = /^(api[_-]?key|password|token|authorization|secret|access[_-]?token|refresh[_-]?token)$/i;
+      function walk(v) {
+        if (Array.isArray(v)) return v.map(walk);
+        if (v && typeof v === "object") {
+          const out = {};
+          Object.keys(v).forEach(function (k) {
+            if (SECRET_KEYS.test(k)) out[k] = "[REDACTED]";
+            else out[k] = walk(v[k]);
+          });
+          return out;
+        }
+        return v;
+      }
+      return walk(value);
+    }
+
     async function showApiDetail(apiId) {
       const detail = document.getElementById("api_detail");
+      _selectedApiId = apiId || "";
+      _selectedAppId = "";
       detail.textContent = "Caricamento " + apiId + "…";
+      setDiagStatus(null, "");
+      setDiagOut("Pronto per Try it / View workflow / View adapter / View log / Disable su " + apiId);
       const r = await api("/v1/apis/" + encodeURIComponent(apiId));
       if (r.status !== 200) {
         detail.textContent = "Errore " + r.status + ": " + (typeof r.body === "string" ? r.body : JSON.stringify(r.body));
+        setDiagStatus(false, "Dettaglio API fallito HTTP " + r.status);
         return;
       }
       const rec = r.body || {};
+      _selectedAppId = rec.application_id || "";
       const lines = [
         "id: " + (rec.id || ""),
         "method: " + (rec.method || ""),
@@ -513,6 +583,128 @@
       ];
       // textContent only — never assign name/description via innerHTML
       detail.textContent = lines.join("\n");
+    }
+
+    async function tryItApi() {
+      const apiId = _selectedApiId;
+      if (!apiId) {
+        setDiagStatus(false, "Seleziona un'API dal catalogo.");
+        setDiagOut("Nessuna API selezionata.");
+        return;
+      }
+      let params = {};
+      const raw = document.getElementById("api_params").value.trim();
+      if (raw) {
+        try {
+          params = JSON.parse(raw);
+          if (!params || typeof params !== "object" || Array.isArray(params)) {
+            throw new Error("params must be a JSON object");
+          }
+        } catch (e) {
+          setDiagStatus(false, "Params JSON non valido.");
+          setDiagOut(String(e && e.message ? e.message : e));
+          return;
+        }
+      }
+      setDiagStatus(null, "Esecuzione Try it / API Test…");
+      const r = await api("/v1/apis/" + encodeURIComponent(apiId) + "/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ params: params, update_registry_on_pass: false }),
+      });
+      const body = r.body;
+      setDiagOut({ http_status: r.status, body: body });
+      if (r.status === 401 || r.status === 403 || r.status === 404) {
+        setDiagStatus(false, "Errore HTTP " + r.status + " (auth/missing) — non successo.");
+        return;
+      }
+      if (r.status !== 200) {
+        setDiagStatus(false, "Errore HTTP " + r.status + " — non successo.");
+        return;
+      }
+      const verified = !!(body && (body.success === true || (body.verification && body.verification.verified === true)));
+      // Never treat HTTP 200 alone as success
+      if (verified) {
+        setDiagStatus(true, "Successo (success/verification.verified).");
+      } else {
+        setDiagStatus(false, "HTTP 200 ma non verificato (success/verified assenti o false).");
+      }
+    }
+
+    async function viewWorkflow() {
+      setDiagStatus(null, "Carico GET /v1/workflows…");
+      const r = await api("/v1/workflows");
+      setDiagOut({ http_status: r.status, body: r.body });
+      if (r.status === 200) setDiagStatus(true, "Workflows caricati.");
+      else setDiagStatus(false, "Workflows errore HTTP " + r.status);
+    }
+
+    async function viewAdapter() {
+      const appId = _selectedAppId;
+      setDiagStatus(null, "Carico adapter…");
+      const list = await api("/v1/apps/adapters/list");
+      let appInfo = null;
+      let actions = null;
+      if (appId) {
+        appInfo = await api("/v1/apps/" + encodeURIComponent(appId));
+        actions = await api("/v1/apps/" + encodeURIComponent(appId) + "/actions");
+      }
+      const adapters = (list.body && list.body.adapters) || [];
+      let st = "nessuno";
+      let match = null;
+      if (appId) {
+        match = adapters.find(function (a) {
+          return (a.app_id || a.application_id || a.id) === appId;
+        }) || null;
+        if (match) {
+          const bound = !!(match.bound || match.hwnd);
+          st = bound ? "bound" : "unbound";
+        }
+      } else {
+        st = "nessuno (application_id assente sul record)";
+      }
+      setDiagOut({
+        http_status_list: list.status,
+        application_id: appId || null,
+        adapter_status: st,
+        adapter: match,
+        app: appInfo ? { http_status: appInfo.status, body: appInfo.body } : null,
+        actions: actions ? { http_status: actions.status, body: actions.body } : null,
+      });
+      if (list.status === 200) setDiagStatus(true, "Adapter: " + st);
+      else setDiagStatus(false, "Adapters list errore HTTP " + list.status);
+    }
+
+    async function viewLog() {
+      setDiagStatus(null, "Carico GET /v1/audit…");
+      const r = await api("/v1/audit?limit=50");
+      const redacted = redactSecrets(r.body);
+      setDiagOut({ http_status: r.status, body: redacted });
+      if (r.status === 200) setDiagStatus(true, "Audit log (secret redatti).");
+      else setDiagStatus(false, "Audit errore HTTP " + r.status + " (serve admin).");
+    }
+
+    async function disableApi() {
+      const apiId = _selectedApiId;
+      if (!apiId) {
+        setDiagStatus(false, "Seleziona un'API dal catalogo.");
+        setDiagOut("Nessuna API selezionata.");
+        return;
+      }
+      if (!window.confirm("Disabilitare API " + apiId + "? (POST /v1/apis/{id}/disable)")) return;
+      setDiagStatus(null, "Disable in corso…");
+      const r = await api("/v1/apis/" + encodeURIComponent(apiId) + "/disable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      setDiagOut({ http_status: r.status, body: r.body });
+      if (r.status === 200) {
+        setDiagStatus(true, "API DISABLED. Try it deve fallire chiuso.");
+        showApiDetail(apiId);
+      } else {
+        setDiagStatus(false, "Disable fallito HTTP " + r.status + " (serve adapter.manage/admin).");
+      }
     }
 
     async function loadHealth() {

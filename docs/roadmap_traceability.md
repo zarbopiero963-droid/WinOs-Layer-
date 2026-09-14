@@ -375,3 +375,13 @@ pytest tests/unit/test_control_center_n022.py -q
 ```
 
 Full installed W/L H63-N022 not claimed PASS here (MANUAL / #21).
+
+## N023 — Control Center Try it, test e diagnosi API
+
+Contratto (#67 / H63-N023, B-UI, Q08/Q13): **Try it / API Test** su dettaglio API → ``POST /v1/apis/{id}/test`` (gateway N018) con ``X-API-Key`` da ``#key``; successo solo se ``success`` / ``verification.verified`` (mai HTTP 200 da solo). **View workflow** (``GET /v1/workflows``), **View adapter** (``GET /v1/apps/adapters/list`` + app/actions; ``nessuno``/``unbound``/``bound``), **View log** (``GET /v1/audit`` con redaction secret), **Disable** via ``POST /v1/apis/{id}/disable`` (``ADAPTER_MANAGE`` → ``set_status(DISABLED)`` + audit; Try it fail-closed). Risultati via ``textContent``; API Key **non** precompilata. Create→Verify→Publish → N024. Coverage: R40 W092 L092 S61-11 S61-25 G28 G29.
+
+```bash
+pytest tests/unit/test_control_center_n023.py tests/unit/test_control_center_n022.py -q
+```
+
+Full installed W/L H63-N023 not claimed PASS here (MANUAL / #21).
