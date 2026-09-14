@@ -5,149 +5,602 @@
   <title>WinOs Layer — Control Center</title>
   <style>
     :root { font-family: system-ui, sans-serif; color: #e8eef7; background: #0f172a; }
-    body { margin: 0; padding: 1.5rem; }
-    h1 { margin: 0 0 .25rem; }
-    h2 { margin: 0 0 .75rem; font-size: 1.1rem; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; }
+    aside {
+      width: 200px; flex-shrink: 0; background: #020617; border-right: 1px solid #1e293b;
+      padding: 1.25rem .75rem; display: flex; flex-direction: column; gap: .35rem;
+    }
+    aside .brand { font-weight: 700; font-size: 1rem; margin: 0 .5rem .75rem; color: #f8fafc; }
+    aside .brand small { display: block; font-weight: 400; color: #64748b; font-size: .75rem; margin-top: .2rem; }
+    .tab-btn {
+      text-align: left; background: transparent; color: #94a3b8; border: 0; border-radius: 8px;
+      padding: .55rem .75rem; font-weight: 600; cursor: pointer; width: 100%;
+    }
+    .tab-btn:hover { background: #1e293b; color: #e2e8f0; }
+    .tab-btn.active { background: #0ea5e9; color: #0f172a; }
+    main { flex: 1; padding: 1.25rem 1.5rem; overflow: auto; max-width: 1100px; }
+    h1 { margin: 0 0 .25rem; font-size: 1.35rem; }
+    h2 { margin: 0 0 .75rem; font-size: 1.05rem; }
     .muted { color: #94a3b8; }
     .card { background: #1e293b; border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; }
-    button { background: #38bdf8; color: #0f172a; border: 0; border-radius: 8px; padding: .5rem 1rem; font-weight: 600; cursor: pointer; }
+    button {
+      background: #38bdf8; color: #0f172a; border: 0; border-radius: 8px;
+      padding: .45rem .9rem; font-weight: 600; cursor: pointer;
+    }
     button:hover { background: #7dd3fc; }
     button.secondary { background: #64748b; color: #f8fafc; }
     button.secondary:hover { background: #94a3b8; color: #0f172a; }
-    pre { background: #020617; padding: 1rem; border-radius: 8px; overflow: auto; max-height: 320px; }
-    input, select { background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px; padding: .4rem .6rem; min-width: 220px; }
+    pre { background: #020617; padding: 1rem; border-radius: 8px; overflow: auto; max-height: 360px; margin: 0; }
+    input, select {
+      background: #020617; color: #e8eef7; border: 1px solid #334155; border-radius: 6px;
+      padding: .4rem .6rem; min-width: 160px;
+    }
     label { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; color: #cbd5e1; }
     .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; }
     .note { font-size: .85rem; color: #94a3b8; margin-top: .5rem; }
     .status { font-size: .9rem; margin-top: .5rem; }
     .ok { color: #4ade80; }
     .err { color: #f87171; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid #334155; vertical-align: top; }
+    th { color: #94a3b8; font-weight: 600; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: #0f172a; }
+    .badge {
+      display: inline-block; padding: .15rem .45rem; border-radius: 999px; font-size: .75rem;
+      font-weight: 700; text-transform: lowercase;
+    }
+    .badge-nessuno { background: #334155; color: #cbd5e1; }
+    .badge-bound { background: #14532d; color: #86efac; }
+    .badge-unbound { background: #713f12; color: #fde68a; }
+    .method {
+      font-family: ui-monospace, monospace; font-size: .75rem; font-weight: 700;
+      color: #38bdf8; min-width: 3.5rem; display: inline-block;
+    }
+    .path { font-family: ui-monospace, monospace; font-size: .85rem; }
+    .app-block { border: 1px solid #334155; border-radius: 10px; padding: .75rem 1rem; margin: .75rem 0; }
+    .app-block h3 { margin: 0 0 .35rem; font-size: 1rem; }
+    .api-list { margin: .5rem 0 0; padding-left: 1.1rem; color: #cbd5e1; font-size: .85rem; }
+    .api-list li { margin: .2rem 0; }
+    .empty { color: #64748b; font-style: italic; }
+    #api_detail {
+      white-space: pre-wrap; word-break: break-word; background: #020617;
+      padding: 1rem; border-radius: 8px; min-height: 4rem; font-family: ui-monospace, monospace;
+      font-size: .85rem; margin-top: .75rem;
+    }
   </style>
 </head>
 <body>
-  <h1>WinOs Layer Control Center</h1>
-  <p class="muted">Dashboard locale FastAPI — bind 127.0.0.1 di default (Windows + Linux)</p>
-  <div class="card row">
-    <label>API Key <input id="key" value="" placeholder="X-API-Key" autocomplete="off"/></label>
-    <button onclick="loadHealth()">Health</button>
-    <button onclick="loadCaps()">Capabilities</button>
-    <button onclick="loadApps()">Discover Apps</button>
-    <button onclick="loadMetrics()">Metrics</button>
-  </div>
+  <aside>
+    <div class="brand">WinOs Layer<small>Control Center</small></div>
+    <button type="button" class="tab-btn active" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
+    <button type="button" class="tab-btn" data-tab="os" onclick="showTab('os')">OS Layer</button>
+    <button type="button" class="tab-btn" data-tab="apps" onclick="showTab('apps')">Apps</button>
+    <button type="button" class="tab-btn" data-tab="api" onclick="showTab('api')">API</button>
+  </aside>
 
-  <div class="card">
-    <h2>AI Provider</h2>
-    <p class="note">Optional. Local OCR (Pillow / tesseract) works without a key. Same settings on Windows and Linux. Saving/testing requires an <b>admin</b> API key in the field above.</p>
-    <div class="row">
-      <label>Provider
-        <select id="ai_provider">
-          <option value="local">local</option>
-          <option value="openai">openai</option>
-          <option value="anthropic">anthropic</option>
-          <option value="openrouter">openrouter</option>
-        </select>
-      </label>
-      <label>Model <input id="ai_model" placeholder="default per provider"/></label>
-      <label>Base URL <input id="ai_base_url" placeholder="optional / OpenRouter custom"/></label>
-      <label>API Key <input id="ai_api_key" type="password" placeholder="sk-… (leave blank to keep)"/></label>
+  <main>
+    <div class="card row">
+      <label>API Key <input id="key" value="" placeholder="X-API-Key" autocomplete="off"/></label>
+      <span class="note">Nessuna chiave precompilata (né <code>dev</code> né <code>admin</code>).</span>
     </div>
-    <div class="row" style="margin-top:.75rem">
-      <button onclick="saveAi()">Save</button>
-      <button class="secondary" onclick="testAi()">Test</button>
-      <button class="secondary" onclick="loadAi()">Reload</button>
-      <span id="ai_preview" class="muted"></span>
-    </div>
-    <div id="ai_status" class="status muted"></div>
-  </div>
 
-  <div class="card"><pre id="out">Pronto.</pre></div>
+    <!-- Dashboard -->
+    <section id="panel-dashboard" class="panel active" data-panel="dashboard">
+      <h1>Dashboard</h1>
+      <p class="muted">Scorciatoie di salute e provider AI — bind 127.0.0.1 di default (Windows + Linux)</p>
+      <div class="card row">
+        <button type="button" onclick="loadHealth()">Health</button>
+        <button type="button" onclick="loadCaps()">Capabilities</button>
+        <button type="button" onclick="loadMetrics()">Metrics</button>
+      </div>
+      <div class="card">
+        <h2>AI Provider</h2>
+        <p class="note">Optional. Local OCR (Pillow / tesseract) works without a key. Same settings on Windows and Linux. Saving/testing requires an <b>admin</b> API key in the field above.</p>
+        <div class="row">
+          <label>Provider
+            <select id="ai_provider">
+              <option value="local">local</option>
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+              <option value="openrouter">openrouter</option>
+            </select>
+          </label>
+          <label>Model <input id="ai_model" placeholder="default per provider"/></label>
+          <label>Base URL <input id="ai_base_url" placeholder="optional / OpenRouter custom"/></label>
+          <label>API Key <input id="ai_api_key" type="password" placeholder="sk-… (leave blank to keep)"/></label>
+        </div>
+        <div class="row" style="margin-top:.75rem">
+          <button type="button" onclick="saveAi()">Save</button>
+          <button type="button" class="secondary" onclick="testAi()">Test</button>
+          <button type="button" class="secondary" onclick="loadAi()">Reload</button>
+          <span id="ai_preview" class="muted"></span>
+        </div>
+        <div id="ai_status" class="status muted"></div>
+      </div>
+      <div class="card"><pre id="out">Pronto.</pre></div>
+    </section>
+
+    <!-- OS Layer -->
+    <section id="panel-os" class="panel" data-panel="os">
+      <h1>OS Layer</h1>
+      <p class="muted">Endpoint nativi <code>/v1/*</code> (lista curata — nessun path business inventato).</p>
+      <div class="card">
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Area</th></tr></thead>
+          <tbody id="os_tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Apps -->
+    <section id="panel-apps" class="panel" data-panel="apps">
+      <h1>Apps</h1>
+      <p class="muted">Discover reale + stato adapter (<code>nessuno</code> / <code>unbound</code> / <code>bound</code>). Solo API <strong>VERIFIED</strong> per app.</p>
+      <div class="card row">
+        <button type="button" onclick="loadAppsTab()">Aggiorna discover</button>
+        <span id="apps_status" class="status muted"></span>
+      </div>
+      <div id="apps_list"></div>
+    </section>
+
+    <!-- API catalog -->
+    <section id="panel-api" class="panel" data-panel="api">
+      <h1>Catalogo API</h1>
+      <p class="muted">Solo record <code>status=VERIFIED</code> da <code>GET /v1/apis</code>. Metadata ostile reso come testo (anti-XSS).</p>
+      <div class="card row">
+        <label>Cerca (q) <input id="api_q" placeholder="nome / path / id"/></label>
+        <label>Method
+          <select id="api_method">
+            <option value="">tutti</option>
+            <option>GET</option>
+            <option>POST</option>
+            <option>PUT</option>
+            <option>DELETE</option>
+            <option>PATCH</option>
+          </select>
+        </label>
+        <label>Source <input id="api_source" placeholder="es. virtual_adapter"/></label>
+        <label>application_id <input id="api_app_id" placeholder="opzionale"/></label>
+        <button type="button" onclick="loadApiCatalog()">Cerca</button>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Path</th><th>Name</th><th>Source</th><th>App</th><th>Status</th></tr>
+          </thead>
+          <tbody id="api_tbody"></tbody>
+        </table>
+        <p id="api_list_note" class="note"></p>
+        <div id="api_detail" aria-live="polite">Seleziona una riga per il dettaglio.</div>
+      </div>
+    </section>
+  </main>
+
   <script>
-    const out = document.getElementById('out');
-    const aiStatus = document.getElementById('ai_status');
-    function headers(extra={}) {
-      const key = document.getElementById('key').value;
-      return { 'X-API-Key': key, ...extra };
+    /* N022 — Tabbed Control Center (Dashboard / OS / Apps / API).
+       Adapter status: bound when list_adapters.bound||hwnd; unbound when adapter
+       exists with hwnd null (disk restore); nessuno when no adapter.
+       Catalog UI always requests status=VERIFIED. Hostile metadata → textContent. */
+
+    const OS_ENDPOINTS = [
+      { method: "GET", path: "/v1/health", area: "health" },
+      { method: "GET", path: "/v1/ready", area: "health" },
+      { method: "GET", path: "/v1/system", area: "health" },
+      { method: "GET", path: "/v1/capabilities", area: "health" },
+      { method: "GET", path: "/v1/system/resources", area: "metrics" },
+      { method: "GET", path: "/v1/system/uptime", area: "metrics" },
+      { method: "GET", path: "/v1/metrics", area: "metrics" },
+      { method: "GET", path: "/v1/processes", area: "processes" },
+      { method: "GET", path: "/v1/fs", area: "filesystem" },
+      { method: "GET", path: "/v1/storage/drives", area: "filesystem" },
+      { method: "GET", path: "/v1/windows", area: "windows" },
+      { method: "GET", path: "/v1/network/interfaces", area: "network" },
+      { method: "GET", path: "/v1/network/connections", area: "network" },
+      { method: "GET", path: "/v1/services", area: "services" },
+      { method: "POST", path: "/v1/apps/discover", area: "apps" },
+      { method: "GET", path: "/v1/apps/adapters/list", area: "apps" },
+      { method: "GET", path: "/v1/apis", area: "apis" },
+      { method: "GET", path: "/v1/apis/openapi.json", area: "apis" },
+      { method: "GET", path: "/v1/ai/settings", area: "ai" },
+      { method: "POST", path: "/v1/ai/test", area: "ai" },
+      { method: "GET", path: "/v1/workflows", area: "workflows" },
+      { method: "GET", path: "/v1/auth/me", area: "security" },
+      { method: "GET", path: "/v1/audit", area: "security" },
+      { method: "GET", path: "/v1/sandbox/policy/{app_id}", area: "security" },
+    ];
+
+    const out = document.getElementById("out");
+    const aiStatus = document.getElementById("ai_status");
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
-    async function api(path, opts={}) {
-      const r = await fetch(path, { ...opts, headers: { ...headers(opts.headers||{}) } });
+
+    function headers(extra) {
+      const key = document.getElementById("key").value;
+      return Object.assign({ "X-API-Key": key }, extra || {});
+    }
+
+    async function api(path, opts) {
+      opts = opts || {};
+      const r = await fetch(path, Object.assign({}, opts, {
+        headers: Object.assign({}, headers(opts.headers || {})),
+      }));
       const t = await r.text();
       try { return { status: r.status, body: JSON.parse(t) }; }
-      catch { return { status: r.status, body: t }; }
+      catch (e) { return { status: r.status, body: t }; }
     }
-    async function loadHealth(){ const r = await api('/v1/health'); out.textContent = JSON.stringify(r.body, null, 2); }
-    async function loadCaps(){ const r = await api('/v1/capabilities'); out.textContent = JSON.stringify(r.body, null, 2); }
-    async function loadApps(){ const r = await api('/v1/apps/discover', {method:'POST'}); out.textContent = JSON.stringify(r.body, null, 2); }
-    async function loadMetrics(){ const r = await api('/v1/metrics'); out.textContent = JSON.stringify(r.body, null, 2); }
+
+    function showTab(name) {
+      document.querySelectorAll(".tab-btn").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-tab") === name);
+      });
+      document.querySelectorAll(".panel").forEach(function (p) {
+        p.classList.toggle("active", p.getAttribute("data-panel") === name);
+      });
+      if (name === "apps") loadAppsTab().catch(function () {});
+      if (name === "api") loadApiCatalog().catch(function () {});
+    }
+
+    function renderOsLayer() {
+      const tbody = document.getElementById("os_tbody");
+      tbody.textContent = "";
+      OS_ENDPOINTS.forEach(function (ep) {
+        const tr = document.createElement("tr");
+        const tdM = document.createElement("td");
+        const span = document.createElement("span");
+        span.className = "method";
+        span.textContent = ep.method;
+        tdM.appendChild(span);
+        const tdP = document.createElement("td");
+        const pathEl = document.createElement("span");
+        pathEl.className = "path";
+        pathEl.textContent = ep.path;
+        tdP.appendChild(pathEl);
+        const tdA = document.createElement("td");
+        tdA.textContent = ep.area;
+        tr.appendChild(tdM);
+        tr.appendChild(tdP);
+        tr.appendChild(tdA);
+        tbody.appendChild(tr);
+      });
+    }
+
+    function adapterStatusFor(appId, adaptersByApp) {
+      const a = adaptersByApp[appId];
+      if (!a) return "nessuno";
+      if (a.bound === true || (a.hwnd != null && a.hwnd !== "")) return "bound";
+      return "unbound";
+    }
+
+    async function loadAppsTab() {
+      const statusEl = document.getElementById("apps_status");
+      const listEl = document.getElementById("apps_list");
+      statusEl.className = "status muted";
+      statusEl.textContent = "Caricamento…";
+      listEl.textContent = "";
+
+      const disc = await api("/v1/apps/discover", { method: "POST" });
+      const adap = await api("/v1/apps/adapters/list");
+      if (disc.status !== 200) {
+        statusEl.className = "status err";
+        statusEl.textContent = "Discover fallito (" + disc.status + "). Serve API key valida.";
+        return;
+      }
+      if (adap.status !== 200) {
+        statusEl.className = "status err";
+        statusEl.textContent = "Adapters list fallito (" + adap.status + ").";
+        return;
+      }
+
+      const apps = (disc.body && disc.body.apps) || [];
+      const adapters = (adap.body && adap.body.adapters) || [];
+      const byApp = {};
+      adapters.forEach(function (a) {
+        if (a && a.app_id) byApp[a.app_id] = a;
+      });
+
+      statusEl.className = "status ok";
+      statusEl.textContent = apps.length + " app, " + adapters.length + " adapter.";
+
+      if (!apps.length) {
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "Nessuna app discovery.";
+        listEl.appendChild(p);
+        return;
+      }
+
+      for (let i = 0; i < apps.length; i++) {
+        const app = apps[i] || {};
+        const appId = app.id || app.app_id || "";
+        const block = document.createElement("div");
+        block.className = "app-block";
+
+        const h3 = document.createElement("h3");
+        h3.textContent = app.name || appId || "(senza nome)";
+        block.appendChild(h3);
+
+        const meta = document.createElement("div");
+        meta.className = "muted";
+        meta.style.fontSize = ".85rem";
+        meta.textContent = "id: " + (appId || "—") + " · path: " + (app.path || "—");
+        block.appendChild(meta);
+
+        const st = adapterStatusFor(appId, byApp);
+        const badge = document.createElement("span");
+        badge.className = "badge badge-" + st;
+        badge.textContent = "adapter: " + st;
+        badge.style.marginTop = ".4rem";
+        block.appendChild(badge);
+
+        const apisTitle = document.createElement("div");
+        apisTitle.className = "note";
+        apisTitle.textContent = "API VERIFIED per questa app:";
+        block.appendChild(apisTitle);
+
+        const ul = document.createElement("ul");
+        ul.className = "api-list";
+        block.appendChild(ul);
+
+        if (appId) {
+          const qs = "/v1/apis?application_id=" + encodeURIComponent(appId) + "&status=VERIFIED&limit=50";
+          const cat = await api(qs);
+          const items = (cat.body && cat.body.apis) || [];
+          if (cat.status !== 200) {
+            const li = document.createElement("li");
+            li.className = "err";
+            li.textContent = "Catalogo non disponibile (" + cat.status + ")";
+            ul.appendChild(li);
+          } else if (!items.length) {
+            const li = document.createElement("li");
+            li.className = "empty";
+            li.textContent = "nessuna API VERIFIED";
+            ul.appendChild(li);
+          } else {
+            items.forEach(function (rec) {
+              if ((rec.status || "").toUpperCase() !== "VERIFIED") return;
+              const li = document.createElement("li");
+              const m = document.createElement("span");
+              m.className = "method";
+              m.textContent = rec.method || "?";
+              li.appendChild(m);
+              li.appendChild(document.createTextNode(" "));
+              const p = document.createElement("span");
+              p.className = "path";
+              p.textContent = rec.path || "";
+              li.appendChild(p);
+              li.appendChild(document.createTextNode(" — "));
+              const n = document.createElement("span");
+              n.textContent = rec.name || rec.id || "";
+              li.appendChild(n);
+              ul.appendChild(li);
+            });
+            if (!ul.childNodes.length) {
+              const li = document.createElement("li");
+              li.className = "empty";
+              li.textContent = "nessuna API VERIFIED";
+              ul.appendChild(li);
+            }
+          }
+        } else {
+          const li = document.createElement("li");
+          li.className = "empty";
+          li.textContent = "application_id assente";
+          ul.appendChild(li);
+        }
+
+        listEl.appendChild(block);
+      }
+    }
+
+    async function loadApiCatalog() {
+      const tbody = document.getElementById("api_tbody");
+      const note = document.getElementById("api_list_note");
+      const detail = document.getElementById("api_detail");
+      tbody.textContent = "";
+      note.textContent = "Caricamento…";
+      detail.textContent = "Seleziona una riga per il dettaglio.";
+
+      const params = new URLSearchParams();
+      params.set("status", "VERIFIED");
+      params.set("limit", "100");
+      const q = document.getElementById("api_q").value.trim();
+      const source = document.getElementById("api_source").value.trim();
+      const appId = document.getElementById("api_app_id").value.trim();
+      const methodFilter = document.getElementById("api_method").value.trim().toUpperCase();
+      if (q) params.set("q", q);
+      if (source) params.set("source", source);
+      if (appId) params.set("application_id", appId);
+
+      const r = await api("/v1/apis?" + params.toString());
+      if (r.status !== 200) {
+        note.className = "note err";
+        note.textContent = "Errore " + r.status + " — serve API key con system.read.";
+        return;
+      }
+
+      let items = (r.body && r.body.apis) || [];
+      items = items.filter(function (rec) {
+        if ((rec.status || "").toUpperCase() !== "VERIFIED") return false;
+        if (methodFilter && String(rec.method || "").toUpperCase() !== methodFilter) return false;
+        return true;
+      });
+
+      note.className = "note";
+      note.textContent = items.length + " API VERIFIED (filtro status=VERIFIED obbligatorio).";
+
+      if (!items.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.className = "empty";
+        td.textContent = "Nessun risultato.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      items.forEach(function (rec) {
+        const tr = document.createElement("tr");
+        tr.className = "clickable";
+        tr.setAttribute("data-api-id", rec.id || "");
+
+        function cell(text) {
+          const td = document.createElement("td");
+          td.textContent = text == null ? "" : String(text);
+          return td;
+        }
+
+        const tdM = document.createElement("td");
+        const sm = document.createElement("span");
+        sm.className = "method";
+        sm.textContent = rec.method || "";
+        tdM.appendChild(sm);
+        tr.appendChild(tdM);
+
+        const tdP = document.createElement("td");
+        const sp = document.createElement("span");
+        sp.className = "path";
+        sp.textContent = rec.path || "";
+        tdP.appendChild(sp);
+        tr.appendChild(tdP);
+
+        tr.appendChild(cell(rec.name || ""));
+        tr.appendChild(cell(rec.source || ""));
+        tr.appendChild(cell(rec.application_id || ""));
+        tr.appendChild(cell(rec.status || ""));
+
+        tr.addEventListener("click", function () {
+          showApiDetail(rec.id);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function showApiDetail(apiId) {
+      const detail = document.getElementById("api_detail");
+      detail.textContent = "Caricamento " + apiId + "…";
+      const r = await api("/v1/apis/" + encodeURIComponent(apiId));
+      if (r.status !== 200) {
+        detail.textContent = "Errore " + r.status + ": " + (typeof r.body === "string" ? r.body : JSON.stringify(r.body));
+        return;
+      }
+      const rec = r.body || {};
+      const lines = [
+        "id: " + (rec.id || ""),
+        "method: " + (rec.method || ""),
+        "path: " + (rec.path || ""),
+        "name: " + (rec.name || ""),
+        "description: " + (rec.description || ""),
+        "source: " + (rec.source || ""),
+        "status: " + (rec.status || ""),
+        "application_id: " + (rec.application_id || ""),
+        "permissions: " + JSON.stringify(rec.permissions || []),
+        "request_schema: " + JSON.stringify(rec.request_schema || rec.input_schema || null, null, 2),
+        "response_schema: " + JSON.stringify(rec.response_schema || rec.output_schema || null, null, 2),
+        "capability: " + (rec.capability || ""),
+        "verification_id: " + (rec.verification_id || ""),
+      ];
+      // textContent only — never assign name/description via innerHTML
+      detail.textContent = lines.join("\n");
+    }
+
+    async function loadHealth() {
+      const r = await api("/v1/health");
+      out.textContent = JSON.stringify(r.body, null, 2);
+    }
+    async function loadCaps() {
+      const r = await api("/v1/capabilities");
+      out.textContent = JSON.stringify(r.body, null, 2);
+    }
+    async function loadMetrics() {
+      const r = await api("/v1/metrics");
+      out.textContent = JSON.stringify(r.body, null, 2);
+    }
 
     function fillAi(s) {
-      if (!s || typeof s !== 'object') return;
-      document.getElementById('ai_provider').value = s.provider || 'local';
-      document.getElementById('ai_model').value = s.model || '';
-      document.getElementById('ai_base_url').value = s.base_url || '';
-      document.getElementById('ai_api_key').value = '';
-      const prev = document.getElementById('ai_preview');
+      if (!s || typeof s !== "object") return;
+      document.getElementById("ai_provider").value = s.provider || "local";
+      document.getElementById("ai_model").value = s.model || "";
+      document.getElementById("ai_base_url").value = s.base_url || "";
+      document.getElementById("ai_api_key").value = "";
+      const prev = document.getElementById("ai_preview");
       prev.textContent = s.api_key_set
-        ? `key set: ${s.api_key_preview || 'sk-…xxxx'}`
-        : 'no API key set';
+        ? "key set: " + (s.api_key_preview || "sk-…xxxx")
+        : "no API key set";
     }
+
     async function loadAi() {
-      const r = await api('/v1/ai/settings');
+      const r = await api("/v1/ai/settings");
       out.textContent = JSON.stringify(r.body, null, 2);
       if (r.status === 200) {
         fillAi(r.body);
-        aiStatus.className = 'status ok';
-        aiStatus.textContent = 'Settings loaded.';
+        aiStatus.className = "status ok";
+        aiStatus.textContent = "Settings loaded.";
       } else {
-        aiStatus.className = 'status err';
-        aiStatus.textContent = 'Load failed (need admin API key).';
+        aiStatus.className = "status err";
+        aiStatus.textContent = "Load failed (need admin API key).";
       }
     }
+
     async function saveAi() {
       const body = {
-        provider: document.getElementById('ai_provider').value,
-        model: document.getElementById('ai_model').value || null,
-        base_url: document.getElementById('ai_base_url').value || null,
+        provider: document.getElementById("ai_provider").value,
+        model: document.getElementById("ai_model").value || null,
+        base_url: document.getElementById("ai_base_url").value || null,
       };
-      const keyVal = document.getElementById('ai_api_key').value;
-      // Only send api_key when user typed something (empty clears)
-      if (document.getElementById('ai_api_key').dataset.touch === '1' || keyVal !== '') {
+      const keyVal = document.getElementById("ai_api_key").value;
+      if (document.getElementById("ai_api_key").dataset.touch === "1" || keyVal !== "") {
         body.api_key = keyVal;
       }
-      const r = await api('/v1/ai/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+      const r = await api("/v1/ai/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       out.textContent = JSON.stringify(r.body, null, 2);
       if (r.status === 200) {
         fillAi(r.body);
-        aiStatus.className = 'status ok';
-        aiStatus.textContent = 'Saved (persisted under user config dir, chmod 600).';
+        aiStatus.className = "status ok";
+        aiStatus.textContent = "Saved (persisted under user config dir, chmod 600).";
       } else {
-        aiStatus.className = 'status err';
-        aiStatus.textContent = 'Save failed.';
+        aiStatus.className = "status err";
+        aiStatus.textContent = "Save failed.";
       }
     }
+
     async function testAi() {
-      const r = await api('/v1/ai/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const r = await api("/v1/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ spend: false }),
       });
       out.textContent = JSON.stringify(r.body, null, 2);
       if (r.status === 200 && r.body && r.body.ok) {
-        aiStatus.className = 'status ok';
-        aiStatus.textContent = r.body.detail || 'Test OK';
+        aiStatus.className = "status ok";
+        aiStatus.textContent = r.body.detail || "Test OK";
       } else {
-        aiStatus.className = 'status err';
-        aiStatus.textContent = (r.body && r.body.detail) || 'Test failed';
+        aiStatus.className = "status err";
+        aiStatus.textContent = (r.body && r.body.detail) || "Test failed";
       }
     }
-    document.getElementById('ai_api_key').addEventListener('input', () => {
-      document.getElementById('ai_api_key').dataset.touch = '1';
+
+    document.getElementById("ai_api_key").addEventListener("input", function () {
+      document.getElementById("ai_api_key").dataset.touch = "1";
     });
-    // Best-effort preload (admin key may differ)
-    loadAi().catch(() => {});
+
+    renderOsLayer();
+    loadAi().catch(function () {});
   </script>
 </body>
 </html>

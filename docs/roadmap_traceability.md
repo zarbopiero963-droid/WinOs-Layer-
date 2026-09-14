@@ -364,3 +364,14 @@ pytest tests/unit/test_mcp_n021.py tests/unit/test_mcp_n020.py tests/unit/test_m
 ```
 
 Full installed W/L H63-N021 not claimed PASS here (MANUAL / #21).
+
+
+## N022 — Control Center tab OS/App/API e catalogo
+
+Contratto (#67 / H63-N022, B-UI, Q13): shell a tab **Dashboard | OS Layer | Apps | API**; discover reale con stato adapter ``nessuno`` / ``unbound`` / ``bound`` (``bound`` se ``list_adapters.bound`` o ``hwnd`` presente; ``unbound`` se adapter senza hwnd / disk-restored); catalogo e dettaglio con **API solo VERIFIED** (``GET /v1/apis?status=VERIFIED``); filtri ``q``/method/source/application_id; metadata ostile via ``textContent`` (anti-XSS); API Key UI **non** precompilata. Try it → N023; Create→Verify→Publish → N024. Coverage: R40 W092 L092 S61-10–S61-11 S61-25 G28 G29.
+
+```bash
+pytest tests/unit/test_control_center_n022.py -q
+```
+
+Full installed W/L H63-N022 not claimed PASS here (MANUAL / #21).
