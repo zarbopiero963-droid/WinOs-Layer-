@@ -769,7 +769,9 @@ comandi arbitrari a questo endpoint deve registrarli.
 python scripts/forensic_audit.py
 ```
 
-Fails if any `DONE` claim in `docs/forensic_audit.json` lacks files/tests.
+Fails if any `DONE` claim in `docs/forensic_audit.json` lacks files/tests/**evidence**,
+or if a status is unknown/corrupt. File existence alone is not DONE — see
+`docs/roadmap_traceability.md` (N001).
 
 ## MCP
 

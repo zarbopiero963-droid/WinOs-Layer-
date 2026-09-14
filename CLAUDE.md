@@ -175,6 +175,14 @@ Una nuova PR si apre solo dopo merge/close della precedente, salvo policy esplic
 
 ---
 
+## ROADMAP TRACEABILITY (N001)
+
+Stati lotto / esito test / capability sono famiglie distinte.
+`DONE` forense richiede evidence; esistenza file ≠ CLOSED.
+Contratto: `docs/roadmap_traceability.md`. Audit: `python scripts/forensic_audit.py`.
+
+---
+
 ## CURRENT HEAD
 
 Lavora esclusivamente sul current head della PR.

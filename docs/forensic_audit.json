@@ -1,7 +1,7 @@
 [
   {
     "pr": 1,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Project structure + pyproject + package layout",
     "files": [
       "pyproject.toml",
@@ -12,11 +12,11 @@
     "tests": [
       "tests/unit/test_permissions.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 2,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "/v1/health /v1/system /v1/capabilities",
     "files": [
       "windows_os_api/api/rest/health.py",
@@ -25,11 +25,11 @@
     "tests": [
       "tests/integration/test_api_core.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 3,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Security core: API keys, RBAC, audit, rate limit",
     "files": [
       "windows_os_api/core/security/auth.py",
@@ -41,11 +41,11 @@
       "tests/unit/test_security_core.py",
       "tests/integration/test_api_core.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 4,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "System info/resources/uptime/power",
     "files": [
       "windows_os_api/os/system/service.py",
@@ -55,11 +55,11 @@
       "tests/integration/test_api_core.py",
       "tests/unit/test_fake_backend.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 5,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Processes CRUD/start/terminate",
     "files": [
       "windows_os_api/os/processes/service.py",
@@ -69,11 +69,11 @@
       "tests/integration/test_api_core.py",
       "tests/unit/test_fake_backend.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 6,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "App discovery (FakeBackend + Windows registry/paths + Linux .desktop)",
     "files": [
       "windows_os_api/apps/discovery/service.py",
@@ -90,11 +90,11 @@
       "tests/integration/test_service_control_api.py",
       "tests/windows/test_registry_write_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 7,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Windows manager APIs",
     "files": [
       "windows_os_api/os/windows/service.py",
@@ -114,11 +114,11 @@
       "tests/unit/test_window_focus_close_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 8,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "UI Automation tree + FakeBackend CRM + real Windows UIA",
     "files": [
       "windows_os_api/apps/ui_inspector/service.py",
@@ -131,11 +131,11 @@
       "tests/unit/test_adapter_engine.py",
       "tests/windows/test_uia_hard.py"
     ],
-    "remaining": "GHA may skip requires_display UIA/screenshot without interactive desktop"
+    "remaining": "GHA may skip requires_display UIA/screenshot without interactive desktop | N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 9,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Mouse/keyboard input",
     "files": [
       "windows_os_api/os/input/service.py",
@@ -152,11 +152,11 @@
       "tests/unit/test_input_validation_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 10,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Clipboard",
     "files": [
       "windows_os_api/os/input/service.py",
@@ -166,11 +166,11 @@
       "tests/integration/test_api_os_layers.py",
       "tests/unit/test_fake_backend.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 11,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Displays/screenshots",
     "files": [
       "windows_os_api/os/display/service.py",
@@ -179,11 +179,11 @@
     "tests": [
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 12,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Filesystem + sandbox policy",
     "files": [
       "windows_os_api/os/filesystem/service.py",
@@ -194,11 +194,11 @@
       "tests/integration/test_api_os_layers.py",
       "tests/security/test_security_hard.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 13,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Storage/drives",
     "files": [
       "windows_os_api/os/storage/service.py",
@@ -207,11 +207,11 @@
     "tests": [
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 14,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Network interfaces/connections + routes, DNS, ping",
     "files": [
       "windows_os_api/os/network/service.py",
@@ -228,11 +228,11 @@
       "tests/unit/test_network_probes_contract.py",
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 15,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Services control",
     "files": [
       "windows_os_api/os/services/service.py",
@@ -258,11 +258,11 @@
       "tests/linux/test_service_listing_honesty_linux.py",
       "tests/security/test_service_control_unsupported.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 16,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Audio devices/volume",
     "files": [
       "windows_os_api/os/audio/service.py",
@@ -277,11 +277,11 @@
       "tests/linux/test_capability_envelope_linux.py",
       "tests/windows/test_capability_envelope_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 17,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Devices enumeration",
     "files": [
       "windows_os_api/os/devices/service.py",
@@ -301,11 +301,11 @@
       "tests/linux/test_capability_envelope_linux.py",
       "tests/windows/test_capability_envelope_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 18,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Printers",
     "files": [
       "windows_os_api/os/printers/service.py",
@@ -325,11 +325,11 @@
       "tests/linux/test_capability_envelope_linux.py",
       "tests/windows/test_capability_envelope_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 19,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Users/sessions",
     "files": [
       "windows_os_api/os/users/service.py",
@@ -338,11 +338,11 @@
     "tests": [
       "tests/integration/test_api_os_layers.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 20,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Registry + policy",
     "files": [
       "windows_os_api/os/registry/service.py",
@@ -359,11 +359,11 @@
       "tests/security/test_registry_read_denylist.py",
       "tests/windows/test_registry_read_denylist_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 21,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Terminal execute ALLOW|DENY|ADMIN",
     "files": [
       "windows_os_api/os/terminal/service.py",
@@ -374,11 +374,11 @@
       "tests/integration/test_api_os_layers.py",
       "tests/security/test_security_hard.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 22,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Universal Adapter engine",
     "files": [
       "windows_os_api/apps/adapters/engine.py",
@@ -389,11 +389,11 @@
       "tests/integration/test_api_adapter_automation.py",
       "tests/unit/test_app_id_required_contract.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 23,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "App inspector (UI tree flatten/find)",
     "files": [
       "windows_os_api/apps/ui_inspector/service.py"
@@ -401,11 +401,11 @@
     "tests": [
       "tests/unit/test_adapter_engine.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 24,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Semantic mapper",
     "files": [
       "windows_os_api/apps/semantic/mapper.py"
@@ -414,11 +414,11 @@
       "tests/unit/test_adapter_engine.py",
       "tests/e2e/test_universal_adapter_e2e.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 25,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Action discovery",
     "files": [
       "windows_os_api/apps/automation/actions.py"
@@ -426,11 +426,11 @@
     "tests": [
       "tests/integration/test_api_adapter_automation.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 26,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Workflow recorder",
     "files": [
       "windows_os_api/apps/workflows/recorder.py",
@@ -439,11 +439,11 @@
     "tests": [
       "tests/unit/test_workflows_agent.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 27,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Adapter planner",
     "files": [
       "windows_os_api/apps/planner/service.py"
@@ -452,11 +452,11 @@
       "tests/unit/test_workflows_agent.py",
       "tests/integration/test_api_adapter_automation.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 28,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "AI UI reasoning (offline + LLM interface)",
     "files": [
       "windows_os_api/apps/reasoning/offline.py"
@@ -464,11 +464,11 @@
     "tests": [
       "tests/unit/test_workflows_agent.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 29,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Auto workflow gen confidence/risk/rollback",
     "files": [
       "windows_os_api/apps/workflows/generator.py"
@@ -477,11 +477,11 @@
       "tests/unit/test_workflows_agent.py",
       "tests/e2e/test_universal_adapter_e2e.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 30,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Self-healing selectors",
     "files": [
       "windows_os_api/apps/healing/service.py"
@@ -489,11 +489,11 @@
     "tests": [
       "tests/unit/test_workflows_agent.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 31,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "API schema generation",
     "files": [
       "windows_os_api/apps/schema/generator.py"
@@ -501,11 +501,11 @@
     "tests": [
       "tests/unit/test_adapter_engine.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 32,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Per-app OpenAPI",
     "files": [
       "windows_os_api/apps/adapters/engine.py",
@@ -515,11 +515,11 @@
       "tests/integration/test_api_adapter_automation.py",
       "tests/e2e/test_universal_adapter_e2e.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 33,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "/v1/apps registry",
     "files": [
       "windows_os_api/apps/discovery/service.py",
@@ -534,11 +534,11 @@
       "tests/integration/test_service_control_api.py",
       "tests/windows/test_registry_write_windows.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 34,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Intent engine",
     "files": [
       "windows_os_api/apps/intent/engine.py"
@@ -547,11 +547,11 @@
       "tests/unit/test_workflows_agent.py",
       "tests/integration/test_api_adapter_automation.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 35,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Computer agent",
     "files": [
       "windows_os_api/apps/agent/computer.py",
@@ -563,11 +563,11 @@
       "tests/e2e/test_universal_adapter_e2e.py",
       "tests/unit/test_app_id_required_contract.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 36,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "MCP JSON-RPC server",
     "files": [
       "windows_os_api/api/mcp/server.py"
@@ -576,11 +576,11 @@
       "tests/unit/test_mcp.py",
       "tests/unit/test_app_id_required_contract.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 37,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "WebSocket event bus",
     "files": [
       "windows_os_api/api/websocket/bus.py",
@@ -589,11 +589,11 @@
     "tests": [
       "tests/unit/test_event_bus.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 38,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Remote access policy (localhost default)",
     "files": [
       "windows_os_api/core/runtime/config.py",
@@ -603,11 +603,11 @@
     "tests": [
       "tests/integration/test_api_core.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 39,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Windows service installer scripts/module",
     "files": [
       "windows_os_api/installer/service.py",
@@ -624,11 +624,11 @@
       "tests/unit/test_windows_backend_guard.py",
       "tests/unit/test_windows_service_lifecycle.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 40,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Control Center HTML dashboard",
     "files": [
       "windows_os_api/control_center/index.html",
@@ -637,7 +637,7 @@
     "tests": [
       "tests/e2e/test_universal_adapter_e2e.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 41,
@@ -661,7 +661,7 @@
   },
   {
     "pr": 42,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Comprehensive automated tests",
     "files": [
       "tests/conftest.py",
@@ -677,11 +677,11 @@
       "tests/e2e/test_universal_adapter_e2e.py",
       "tests/windows/test_windows_backend_hard.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 43,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "GHA CI workflow Linux + windows-latest",
     "files": [
       ".github/workflows/ci.yml"
@@ -691,11 +691,11 @@
       "tests/windows/",
       "tests/linux/"
     ],
-    "remaining": "Linux job: fake suite + linux marker + live smoke"
+    "remaining": "Linux job: fake suite + linux marker + live smoke | N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 44,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Release workflow with checksums",
     "files": [
       ".github/workflows/release.yml",
@@ -704,11 +704,11 @@
     "tests": [
       "tests/unit/test_build_installer.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 45,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Auto-update verify/backup/rollback",
     "files": [
       "windows_os_api/update/manager.py"
@@ -716,11 +716,11 @@
     "tests": [
       "tests/unit/test_update_manager.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 46,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Security tests injection/path traversal",
     "files": [
       "tests/security/test_security_hard.py"
@@ -728,11 +728,11 @@
     "tests": [
       "tests/security/test_security_hard.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 47,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Adapter sandbox permissions",
     "files": [
       "windows_os_api/apps/sandbox/permissions.py",
@@ -745,11 +745,11 @@
       "tests/integration/test_api_adapter_automation.py",
       "tests/security/test_sandbox_ui_primitives.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 48,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Signed adapter trust levels",
     "files": [
       "windows_os_api/apps/trust/signing.py",
@@ -758,11 +758,11 @@
     "tests": [
       "tests/unit/test_trust_and_sandbox.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 49,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "Observability metrics endpoint",
     "files": [
       "windows_os_api/observability/metrics.py",
@@ -771,11 +771,11 @@
     "tests": [
       "tests/integration/test_api_adapter_automation.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   },
   {
     "pr": 50,
-    "status": "DONE",
+    "status": "PARTIAL",
     "title": "E2E universal adapter path, incluso EXE sconosciuto reale",
     "files": [
       "windows_os_api/backends/fake.py",
@@ -802,6 +802,6 @@
       "tests/unit/test_generic_semantic_pipeline.py",
       "tests/windows/test_unknown_exe_e2e.py"
     ],
-    "remaining": null
+    "remaining": "N001: reclassified from DONE — file/test presence is not CLOSED. Need IMPLEMENTED + REAL SYSTEM TEST + SECURITY BLOCK + FAILURE/RECOVERY evidence per docs/roadmap_traceability.md / #63 / #21."
   }
 ]

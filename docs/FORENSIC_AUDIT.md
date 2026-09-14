@@ -1,12 +1,14 @@
 # Forensic Audit — WinOs-Layer-
 Generated for roadmap PRs #1–#50. Status: `DONE` | `PARTIAL` | `NOT_STARTED`.
-Run: `python scripts/forensic_audit.py` (fails if DONE claims lack files/tests).
-Tests: `pytest -q -m "not windows"` (fake fixtures via conftest + `tests/linux/` real LinuxBackend).
-Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/live_linux_ui_control_smoke.py`.
-**Linux parity:** `LinuxBackend` is default on Linux (`WINOS_BACKEND=auto`); FakeBackend only when forced.
+Run: `python scripts/forensic_audit.py` (fails if DONE lacks files/tests/**evidence**, or status is unknown/corrupt).
+
+**N001 (2026-09-14):** File existence alone is **not** DONE. `DONE` requires non-empty `evidence`.
+Historical rows that only listed files/tests were reclassified to `PARTIAL` (still open) —
+see `docs/roadmap_traceability.md` and issue #67 N001. PR41 kept `DONE` (had evidence).
 
 ## PR1: Project structure + pyproject + package layout
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `pyproject.toml`
   - `windows_os_api/__init__.py`
@@ -17,7 +19,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_permissions.py -q`
 
 ## PR2: /v1/health /v1/system /v1/capabilities
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/api/rest/health.py`
   - `windows_os_api/os/system/service.py`
@@ -26,7 +29,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_core.py -q`
 
 ## PR3: Security core: API keys, RBAC, audit, rate limit
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/core/security/auth.py`
   - `windows_os_api/core/security/audit.py`
@@ -38,7 +42,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_security_core.py -q`
 
 ## PR4: System info/resources/uptime/power
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/system/service.py`
   - `windows_os_api/api/rest/health.py`
@@ -48,7 +53,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_core.py -q`
 
 ## PR5: Processes CRUD/start/terminate
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/processes/service.py`
   - `windows_os_api/api/rest/processes.py`
@@ -58,7 +64,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_core.py -q`
 
 ## PR6: App discovery (FakeBackend + Windows registry/paths + Linux .desktop)
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/discovery/service.py`
   - `windows_os_api/backends/fake.py`
@@ -70,7 +77,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_fake_backend.py -q`
 
 ## PR7: Windows manager APIs
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/windows/service.py`
   - `windows_os_api/os/windows/geometry.py` — validation, one home, applied by
@@ -112,7 +120,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   asynchronous, so returning without error never meant the window had closed.
 
 ## PR8: UI Automation tree + FakeBackend CRM + real Windows UIA
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/ui_inspector/service.py`
   - `windows_os_api/apps/ui_inspector/uia_windows.py`
@@ -126,7 +135,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Notes:** Windows UIA is **implemented** (uiautomation → comtypes → pywinauto). GHA `windows-latest` may lack a full interactive desktop; mark UI tests `requires_display` and skip when session 0.
 
 ## PR9: Mouse/keyboard input
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/input/service.py`
   - `windows_os_api/os/input/validation.py` — button/scroll/key/chord/steps
@@ -165,7 +175,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   tests aim at is MEASURED rather than assumed to be the one that was requested.
 
 ## PR10: Clipboard
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/input/service.py`
   - `windows_os_api/api/rest/ui.py`
@@ -175,7 +186,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR11: Displays/screenshots
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/display/service.py`
   - `windows_os_api/api/rest/ui.py`
@@ -184,7 +196,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR12: Filesystem + sandbox policy
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/filesystem/service.py`
   - `windows_os_api/api/rest/filesystem.py`
@@ -195,7 +208,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR13: Storage/drives
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/storage/service.py`
   - `windows_os_api/api/rest/filesystem.py`
@@ -204,7 +218,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR14: Network interfaces/connections + routes, DNS, ping
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/network/service.py`
   - `windows_os_api/os/network/validation.py` — host/IP/ping-bounds validation,
@@ -232,7 +247,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   `-`, which removes the class.
 
 ## PR15: Services control
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/services/service.py`
   - `windows_os_api/api/rest/services.py`
@@ -241,7 +257,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR16: Audio devices/volume
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/audio/service.py`
   - `windows_os_api/api/rest/services.py`
@@ -250,7 +267,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR17: Devices enumeration
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/devices/service.py`
   - `windows_os_api/api/rest/services.py`
@@ -259,7 +277,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR18: Printers
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/printers/service.py`
   - `windows_os_api/api/rest/services.py`
@@ -268,7 +287,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR19: Users/sessions
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/users/service.py`
   - `windows_os_api/api/rest/services.py`
@@ -277,7 +297,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_os_layers.py -q`
 
 ## PR20: Registry + policy
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/registry/service.py`
   - `windows_os_api/os/registry/allowlist.py` — scrittura: allowlist di prefissi
@@ -316,7 +337,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   specifico del nome che vuole intercettare non intercetta niente.
 
 ## PR21: Terminal execute ALLOW|DENY|ADMIN
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/os/terminal/allowlist.py` — command registry; commands run as
     argv with `shell=False`, anything unregistered is refused
@@ -337,7 +359,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   as blocking execution.
 
 ## PR22: Universal Adapter engine
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/adapters/engine.py`
 - **Tests:**
@@ -346,7 +369,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_adapter_engine.py -q`
 
 ## PR23: App inspector (UI tree flatten/find)
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/ui_inspector/service.py`
 - **Tests:**
@@ -354,7 +378,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_adapter_engine.py -q`
 
 ## PR24: Semantic mapper
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/semantic/mapper.py`
 - **Tests:**
@@ -363,7 +388,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_adapter_engine.py -q`
 
 ## PR25: Action discovery
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/automation/actions.py`
 - **Tests:**
@@ -371,7 +397,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
 ## PR26: Workflow recorder
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/workflows/recorder.py`
   - `windows_os_api/api/rest/workflows.py`
@@ -380,7 +407,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR27: Adapter planner
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/planner/service.py`
 - **Tests:**
@@ -389,7 +417,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR28: AI UI reasoning (offline + LLM interface)
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/reasoning/offline.py`
 - **Tests:**
@@ -397,7 +426,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR29: Auto workflow gen confidence/risk/rollback
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/workflows/generator.py`
 - **Tests:**
@@ -406,7 +436,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR30: Self-healing selectors
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/healing/service.py`
 - **Tests:**
@@ -414,7 +445,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR31: API schema generation
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/schema/generator.py`
 - **Tests:**
@@ -422,7 +454,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_adapter_engine.py -q`
 
 ## PR32: Per-app OpenAPI
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/adapters/engine.py`
   - `windows_os_api/api/rest/apps.py`
@@ -432,7 +465,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
 ## PR33: /v1/apps registry
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/discovery/service.py`
   - `windows_os_api/api/rest/apps.py`
@@ -441,7 +475,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
 ## PR34: Intent engine
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/intent/engine.py`
 - **Tests:**
@@ -450,7 +485,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_workflows_agent.py -q`
 
 ## PR35: Computer agent
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/agent/computer.py`
   - `windows_os_api/apps/agent/gate.py` — the explicit execution gate
@@ -482,7 +518,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   threshold was deliberately not lowered to make execution happen.
 
 ## PR36: MCP JSON-RPC server
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/api/mcp/server.py`
 - **Tests:**
@@ -490,7 +527,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_mcp.py -q`
 
 ## PR37: WebSocket event bus
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/api/websocket/bus.py`
   - `windows_os_api/core/events/bus.py`
@@ -499,7 +537,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_event_bus.py -q`
 
 ## PR38: Remote access policy (localhost default)
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/core/runtime/config.py`
   - `windows_os_api/core/runtime/app.py`
@@ -509,7 +548,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_core.py -q`
 
 ## PR39: Windows service installer scripts/module
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/installer/service.py`
   - `installer/service_scripts/install_nssm.bat`
@@ -530,7 +570,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_windows_backend_guard.py tests/unit/test_windows_service_lifecycle.py -q`; Windows artifact gate: `python scripts/installer_smoke.py`
 
 ## PR40: Control Center HTML dashboard
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/control_center/index.html`
   - `windows_os_api/core/runtime/app.py`
@@ -555,7 +596,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **Evidence:** `validate` + checksum unit tests pass on Linux; Linux PyInstaller portable smoke via `build-portable`; GHA `windows-latest` builds `winos-api.exe`, portable zip, and Inno `Setup.exe` (ISCC via chocolatey). Setup.exe is **not** produced on Linux by design — Windows GHA is the release path.
 
 ## PR42: Comprehensive automated tests
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `tests/conftest.py`
   - `tests/unit/`
@@ -570,7 +612,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest -m "not windows" -q` (Linux); `pytest -m windows -q` (Windows GHA)
 
 ## PR43: GHA CI workflow Linux + windows-latest
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `.github/workflows/ci.yml`
 - **Tests:**
@@ -581,7 +624,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `python scripts/forensic_audit.py`
 
 ## PR44: Release workflow with checksums
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `.github/workflows/release.yml`
   - `scripts/build_installer.py`
@@ -590,7 +634,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_build_installer.py -q`
 
 ## PR45: Auto-update verify/backup/rollback
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/update/manager.py`
 - **Tests:**
@@ -598,7 +643,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_update_manager.py -q`
 
 ## PR46: Security tests injection/path traversal
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `tests/security/test_security_hard.py`
 - **Tests:**
@@ -606,7 +652,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/security/test_security_hard.py -q`
 
 ## PR47: Adapter sandbox permissions
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/sandbox/permissions.py` — policy model and `check_action`
   - `windows_os_api/api/rest/security_routes.py` — `PUT/GET /v1/sandbox/policy`
@@ -638,7 +685,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
   passa — non era coperto da nessuna policy nemmeno prima.
 
 ## PR48: Signed adapter trust levels
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/apps/trust/signing.py`
   - `windows_os_api/api/rest/security_routes.py`
@@ -647,7 +695,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/unit/test_trust_and_sandbox.py -q`
 
 ## PR49: Observability metrics endpoint
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/observability/metrics.py`
   - `windows_os_api/api/rest/security_routes.py`
@@ -656,7 +705,8 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 - **How to run:** `pytest tests/integration/test_api_adapter_automation.py -q`
 
 ## PR50: E2E universal adapter path, incluso EXE sconosciuto reale
-- **Status:** DONE
+- **Status:** PARTIAL
+- **Remaining:** N001 — evidence chain for CLOSED still missing (file/test presence is not DONE). See docs/roadmap_traceability.md.
 - **Files:**
   - `windows_os_api/backends/fake.py`
   - `tests/fixtures/crm_ui_tree.json`
@@ -744,7 +794,7 @@ Live smoke: `python scripts/live_linux_smoke.py` / `DISPLAY=:2 python scripts/li
 
 ## Gate 7: Universal Test Farm multi-framework
 
-- **Status:** DONE
+- **Status:** PARTIAL
 - **Files:**
   - `tests/windows/test_universal_test_farm.py`
   - `.github/workflows/test-farm.yml`
