@@ -336,7 +336,7 @@ Full installed W/L H63-N018 not claimed PASS here (MANUAL / #21).
 
 ## N019 — OpenAPI deterministico e mapping CRUD reale
 
-Contratto (#67 / H63-N019, B-API, Q09): rich OpenAPI (input/output/errors/scopes/risk/auth/version); **CRUD only if verified**; stable canonical export (prefer zero volatile fields) with **unique operationIds** (include ``app_id`` / ``api_id``); unverified capabilities absent; invalid schema rejected; ``app_openapi`` fail-closed (no implicit ``create_adapter``); registry ``GET /v1/apis/openapi.json`` exports VERIFIED records only. Coverage: R31 R32 W061-W064 W067 L061-L064 L067 S61-08 S61-23 G28 G29. MCP dinamico → N020.
+Contratto (#67 / H63-N019, B-API, Q09): rich OpenAPI (input/output/errors/scopes/risk/auth/version); **CRUD only if verified**; stable canonical export (prefer zero volatile fields) with **unique operationIds** (include ``app_id`` / ``api_id``); unverified capabilities absent; invalid schema rejected; ``app_openapi`` fail-closed (no implicit ``create_adapter``); registry ``GET /v1/apis/openapi.json`` exports VERIFIED records only; VERIFIED registry paths are merged into root ``/openapi.json``. Coverage: R31 R32 W061-W064 W067 L061-L064 L067 S61-08 S61-23 G28 G29. MCP dinamico → N020.
 
 ```bash
 pytest tests/unit/test_api_registry_n019.py tests/unit/test_api_registry_n018.py -q
