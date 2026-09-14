@@ -457,17 +457,45 @@ def event_recorder(window_manager, tmp_path):
 
 @pytest.fixture()
 def linux_backend(tmp_path, monkeypatch):
+    """Real LinuxBackend with N002 singleton/store isolation resets."""
     monkeypatch.setenv("WINOS_BACKEND", "linux")
+    monkeypatch.setenv("WINOS_ALLOW_FAKE_FALLBACK", "false")
     monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(tmp_path / "sandbox"))
+    adapter_store = tmp_path / "adapters"
+    adapter_store.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("WINOS_ADAPTER_STORE", str(adapter_store))
     from windows_os_api.core.runtime.config import get_settings
     from windows_os_api.backends.factory import reset_backend
     from windows_os_api.backends.linux import LinuxBackend
+    from windows_os_api.backends.fake import FakeBackend
+    from windows_os_api.apps.adapters.engine import reset_adapters
+    from windows_os_api.apps.adapters.store import clear_adapter_store
+    from windows_os_api.apps.workflows.recorder import reset_workflows
+    from windows_os_api.apps.sandbox.permissions import reset_policies
+    from windows_os_api.core.security.audit import reset_audit_logger
+    from windows_os_api.core.events.bus import reset_event_bus
+    from windows_os_api.observability.metrics import reset_metrics
+    from windows_os_api.api.rest.deps import reset_limiter
 
-    get_settings.cache_clear()
-    reset_backend()
+    def _reset():
+        get_settings.cache_clear()
+        reset_backend()
+        reset_adapters()
+        reset_workflows()
+        reset_policies()
+        reset_audit_logger()
+        reset_event_bus()
+        reset_metrics()
+        reset_limiter()
+        clear_adapter_store()
+
+    _reset()
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir(parents=True, exist_ok=True)
     b = LinuxBackend(sandbox_root=str(sandbox))
-    yield b
-    get_settings.cache_clear()
-    reset_backend()
+    if isinstance(b, FakeBackend):
+        raise RuntimeError("linux_backend fixture rejects FakeBackend")
+    try:
+        yield b
+    finally:
+        _reset()

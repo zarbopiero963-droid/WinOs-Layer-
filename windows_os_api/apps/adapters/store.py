@@ -198,3 +198,17 @@ def load_all() -> tuple[list[dict[str, Any]], list[SkippedManifest]]:
         elif manifest is not None:
             loaded.append(manifest)
     return loaded, skipped
+
+def clear_adapter_store() -> None:
+    """Remove manifest files under ``store_dir()``.
+
+    Intended for test teardown when ``WINOS_ADAPTER_STORE`` points at a
+    temporary directory. Does not recreate the directory.
+    """
+    directory = store_dir()
+    if not directory.exists():
+        return
+    for path in directory.iterdir():
+        if path.is_file():
+            path.unlink()
+

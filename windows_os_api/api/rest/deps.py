@@ -14,6 +14,12 @@ def get_limiter(settings: Settings = Depends(get_settings)) -> RateLimiter:
         _limiter = RateLimiter(settings.rate_limit_per_minute)
     return _limiter
 
+
+def reset_limiter() -> None:
+    """Drop the process-wide rate limiter so hit windows do not leak across tests."""
+    global _limiter
+    _limiter = None
+
 def rate_limited(
     request: Request,
     auth: AuthContext = Depends(authenticate),

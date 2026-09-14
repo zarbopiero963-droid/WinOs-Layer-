@@ -49,3 +49,9 @@ def get_metrics() -> Metrics:
     if _metrics is None:
         _metrics = Metrics()
     return _metrics
+
+
+def reset_metrics() -> None:
+    """Drop the process-wide metrics collector (counters/timings)."""
+    global _metrics
+    _metrics = None
