@@ -9,13 +9,14 @@ from windows_os_api.api.rest.deps import audit
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.adapters.engine import (
     create_adapter,
-    get_adapter,
-    invoke_action,
     list_adapters,
     verify_and_record,
 )
+from windows_os_api.apps.api_registry.gateway import (
+    execute_via_gateway,
+    gateway_http_status,
+)
 from windows_os_api.apps.schema.generator import app_openapi
-from windows_os_api.apps.sandbox.permissions import check_action, get_policy
 from windows_os_api.apps.automation.actions import discover_actions
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -79,18 +80,31 @@ def actions(app_id: str, auth: AuthContext = Depends(require_permission(Permissi
 
 @router.post("/{app_id}/actions/{action_name}")
 def invoke(app_id: str, action_name: str, body: InvokeBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    """Invoke via shared N017 gateway — never creates adapters implicitly."""
     ensure_app_access(auth, app_id)
-    adapter = get_adapter(app_id)
-    if not adapter:
-        create_adapter(app_id)
-        adapter = get_adapter(app_id)
-    action = next((a for a in adapter.actions if a.name == action_name), None)
-    risk = action.risk if action else "low"
-    gate = check_action(app_id, action_name, risk)
-    if not gate["allowed"]:
-        audit("adapter.invoke", auth, resource=f"{app_id}/{action_name}", outcome="denied", detail=gate)
-        raise HTTPException(403, gate["reason"])
-    result = invoke_action(app_id, action_name, body.params)
+    outcome = execute_via_gateway(
+        app_id=app_id,
+        action_name=action_name,
+        params=body.params,
+    )
+    http_status = gateway_http_status(outcome)
+    if not outcome.get("ok"):
+        audit(
+            "adapter.invoke",
+            auth,
+            resource=f"{app_id}/{action_name}",
+            outcome="denied" if outcome.get("block_kind") == "security" else "failure",
+            detail=outcome,
+        )
+        detail = {
+            "code": outcome.get("code"),
+            "block_kind": outcome.get("block_kind"),
+            "error": outcome.get("error") or outcome.get("message"),
+            "denied": bool(outcome.get("denied")),
+        }
+        raise HTTPException(http_status, detail=detail)
+    # Prefer nested engine result when present (gateway wraps it)
+    result = outcome.get("result") if isinstance(outcome.get("result"), dict) else outcome
     audit("adapter.invoke", auth, resource=f"{app_id}/{action_name}", detail=result)
     return result
 
