@@ -163,3 +163,38 @@ pytest tests/integration/test_capability_envelope_api.py -q
 **Out of scope (deferred):** Windows `terminate_process` ownership (N047/N048);
 full installed W/L H63-N004; MANUAL_ONLY desktop. Phase 0:
 https://github.com/zarbopiero963-droid/WinOs-Layer-/issues/67#issuecomment-5668178895
+
+## N006 — Scrittura registry: default D2 stretto e migrazione
+
+Contratto (#67 / H63-N006, D2 in #64): `DEFAULT_PREFIXES` = only
+`HKCU\\Software\\WinOsLayer\\`. Extend via `WINOS_REGISTRY_ALLOWLIST`.
+Immutable denylist (`HKLM\\SYSTEM|SECURITY|SAM`) remains non-reopenable by ADMIN/env.
+
+```bash
+pytest tests/security/test_registry_write_allowlist.py -q
+pytest tests/integration/test_service_control_api.py -q -k registry
+```
+
+**Migration:** callers that wrote under generic `HKCU\\Software\\<Other>` must
+set `WINOS_REGISTRY_ALLOWLIST`. Full installed W/L H63-N006 not claimed PASS here.
+
+## N005 — Lettura registry fail-closed D6
+
+Contratto (#67 / H63-N005, famiglie Q04) — **allowlist read + denylist + value filter**:
+
+1. `check_read` deny-by-default: `DEFAULT_READ_PREFIXES = HKCU\\SOFTWARE\\` (include
+   WinOsLayer) + `WINOS_REGISTRY_READ_ALLOWLIST`; immutable `FORBIDDEN_READ_PREFIXES`;
+   `SECRET_VALUE_TERMS` / `filter_values` as additional defence.
+2. Gate in `service.read` before backend/`OpenKey`. Outside allowlist →
+   `REGISTRY_READ_NOT_ALLOWED`; denylist → `REGISTRY_READ_FORBIDDEN`.
+3. Migration: historical HKLM/HKCR reads that passed under denylist-only are denied.
+
+```bash
+pytest tests/security/test_registry_read_denylist.py -q
+pytest tests/security/test_registry_write_allowlist.py -q
+```
+
+**Out of scope:** N006 write default WinOsLayer; full installed W/L H63-N005;
+MANUAL_ONLY desktop. Phase 0:
+https://github.com/zarbopiero963-droid/WinOs-Layer-/issues/67#issuecomment-5668375357
+

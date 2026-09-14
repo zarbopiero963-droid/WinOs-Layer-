@@ -12,21 +12,13 @@ from windows_os_api.os.registry.allowlist import (
 
 
 def read(path: str, name: str | None = None) -> dict[str, Any]:
-    """Lettura — fuori dalle aree vietate (decisione owner D6).
+    """Lettura fail-closed — allowlist + denylist + filtro valori (D6 / N005).
 
-    Fino a questa patch non c'era **nessun** controllo: si leggeva qualunque
-    hive, e `registry.read` e' una permission che ha anche `VIEWER`, il ruolo
-    piu' basso. Bastava chiedere il percorso giusto per farsi restituire il
-    `DefaultPassword` dell'autologon o l'`HKCU` di un altro utente.
+    `check_read` gira **prima** di qualunque backend/`OpenKey`: percorso fuori
+    allowlist o in denylist non raggiunge il registro. `registry.read` resta
+    anche a VIEWER: la permission non supera la policy di percorso (#64 D6).
 
-    L'owner ha scelto la **denylist**, non l'allowlist simmetrica alla
-    scrittura: le letture esistenti continuano a funzionare, e cio' che nessuno
-    ha elencato resta leggibile. Il compromesso e' scritto per esteso in
-    `allowlist.py`.
-
-    Il controllo sta qui e non nella route per la stessa ragione della
-    scrittura: questo e' il punto che ogni superficie attraversa, e un controllo
-    che il chiamante puo' dimenticare non e' un controllo (#13).
+    Il controllo sta qui e non nella route (#13).
     """
     try:
         canonical = check_read(path, name)

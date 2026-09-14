@@ -54,6 +54,7 @@ REGISTRY_PATH_NOT_ALLOWED = "REGISTRY_PATH_NOT_ALLOWED"
 REGISTRY_PATH_FORBIDDEN = "REGISTRY_PATH_FORBIDDEN"
 REGISTRY_PATH_INVALID = "REGISTRY_PATH_INVALID"
 REGISTRY_READ_FORBIDDEN = "REGISTRY_READ_FORBIDDEN"
+REGISTRY_READ_NOT_ALLOWED = "REGISTRY_READ_NOT_ALLOWED"
 REGISTRY_VALUE_FORBIDDEN = "REGISTRY_VALUE_FORBIDDEN"
 
 # Il default sicuro: le impostazioni di un'applicazione per l'utente corrente.
@@ -211,55 +212,33 @@ def rejection(exc: RegistryPathRejected, path: str, name: str) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Lettura — decisione owner D6, issue #6 (2026-09-09): DENYLIST
+# Lettura — decisione owner D6 (#64 DEC-D1–D8 / N005): ALLOWLIST + DENYLIST
 # ---------------------------------------------------------------------------
-# Quello che c'era prima: niente. `registry_read` leggeva qualunque hive, e la
-# permission `registry.read` e' assegnata anche a `VIEWER`, il ruolo piu' basso
-# (`core/permissions/model.py`). Il ruolo NON e' stato alzato: e' una scelta
-# esplicita dell'owner, che ha preferito filtrare i percorsi invece dei ruoli.
+# Storia: PR #34 / issue #6 aveva una denylist fail-open. Il registro decisioni
+# #64 **sostituisce** quella scelta: lettura fail-closed — prefissi espliciti +
+# denylist immutabile + filtro sui nomi di valore. `registry.read` resta anche
+# a VIEWER: la permission non supera la policy di percorso.
 #
-# **Una denylist e' fail-open per costruzione.** Protegge solo cio' che qualcuno
-# ha pensato di elencare: una chiave sensibile non prevista resta leggibile.
-# L'alternativa era l'allowlist simmetrica alla scrittura (D2-B), che nega tutto
-# per default; l'owner ha scelto la denylist per non rompere nessuna lettura
-# esistente, sapendo il compromesso. Sta scritto qui perche' chi legge questo
-# file dopo sappia che il buco e' noto e accettato, non dimenticato.
+# Ordine in `check_read` (nessun accesso prima della policy):
+#   1. path invalid / traversal
+#   2. denylist immutabile (anche se presente nell'allowlist env)
+#   3. allowlist di prefissi (default + WINOS_REGISTRY_READ_ALLOWLIST)
+#   4. filtro nome valore (SECRET_VALUE_TERMS)
+#
+# Migrazione: letture storiche fuori HKCU\Software\ (HKLM\SOFTWARE\…, HKCR\…)
+# che passavano con la sola denylist sono ora rifiutate. Estendere solo via env
+# dopo canonicalizzazione. Default include HKCU\Software\WinOsLayer\ (sotto
+# HKCU\SOFTWARE\). Restrizione write a solo WinOsLayer = N006 (fuori scope).
 
-# Le tre aree gia' vietate in scrittura, piu' due che riguardano solo la
-# lettura. Riusare `FORBIDDEN_PREFIXES` rende esplicito il rapporto: cio' che non
-# si puo' scrivere non si puo' nemmeno leggere.
-#
-# `HKLM\SYSTEM\` intero, non il solo `...\Control\Lsa\`: `CurrentControlSet` e'
-# un collegamento a `ControlSet001`, quindi una regola sul solo nome corrente si
-# aggira scrivendo `ControlSet001`. Vietare il sottoalbero toglie il gioco degli
-# alias; la configurazione dei servizi ha comunque il suo endpoint dedicato.
+ENV_VAR_READ = "WINOS_REGISTRY_READ_ALLOWLIST"
+
+DEFAULT_READ_PREFIXES = ("HKCU\\SOFTWARE\\",)
+
 FORBIDDEN_READ_PREFIXES = FORBIDDEN_PREFIXES + (
-    # `DefaultPassword` in chiaro quando l'autologon e' attivo.
     "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\WINLOGON\\",
-    # `HKU\<SID>` e' l'`HKCU` di un ALTRO utente. Il proprio resta raggiungibile
-    # come `HKCU\`, quindi vietare l'hive non toglie nulla a chi chiede il suo.
     "HKU\\",
 )
 
-# Termini cercati come sottostringa nel NOME del valore, ovunque compaia: un
-# programma qualunque puo' tenere una password sotto `HKCU\Software\<suo nome>\`,
-# che nessun elenco di percorsi prevedera' mai.
-#
-# Il costo e' dichiarato: e' una sottostringa, quindi rifiuta anche nomi innocui
-# che la contengono — `PasswordExpiryDays`, `TokenLifetime`. Un rifiuto e'
-# rumoroso e si corregge; una credenziale che esce e' silenziosa. Il rifiuto dice
-# quale termine ha fatto scattare il blocco, cosi' l'errore si vede subito.
-#
-# Non c'e' dentro tutto: `TOKEN` si', `KEY` da solo no (rifiuterebbe meta' del
-# registro). Il confine e' arbitrario, ed e' esattamente il limite di una
-# denylist.
-#
-# Ogni voce e' lo STEM della famiglia, non un nome preciso. La differenza l'ha
-# trovata CI su Windows vero: il termine era `DIGITALPRODUCTID`, e
-# `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` contiene un valore che si
-# chiama `ProductId` — un nome piu' corto, che quindi NON conteneva il termine, e
-# usciva. `PRODUCTID` copre entrambi. Un termine piu' specifico del nome che
-# vuole intercettare non intercetta niente.
 SECRET_VALUE_TERMS = (
     "PASSWORD",
     "PASSWD",
@@ -278,18 +257,27 @@ def _is_read_forbidden(key: str) -> bool:
     return any(target.startswith(bad) for bad in FORBIDDEN_READ_PREFIXES)
 
 
-def secret_term_in(name: object) -> str | None:
-    """Il termine che rende segreto questo nome di valore, o `None`.
+def allowed_read_prefixes() -> tuple[str, ...]:
+    """I prefissi leggibili: default piu' WINOS_REGISTRY_READ_ALLOWLIST.
 
-    Restituisce il termine invece di un booleano perche' il rifiuto deve poter
-    dire PERCHE': «`ProxyPassword` contiene PASSWORD» si corregge, «negato» no.
-
-    Il confronto ignora tutto cio' che non e' una lettera o una cifra, cosi'
-    `API_KEY`, `Proxy-Password` e `default.password` sono lo stesso nome di
-    `ApiKey`, `ProxyPassword` e `DefaultPassword`. Senza, la denylist si
-    aggirerebbe con un trattino: chi sceglie il nome del valore e' il programma
-    che ci ha messo dentro la password, non noi.
+    Voci malformate o in denylist sono scartate: l'env estende, non sovrascrive.
     """
+    extra: list[str] = []
+    for part in os.environ.get(ENV_VAR_READ, "").split(","):
+        if not part.strip():
+            continue
+        try:
+            prefix = _as_prefix(part)
+        except RegistryPathRejected:
+            continue
+        if _is_read_forbidden(prefix):
+            continue
+        extra.append(prefix)
+    return tuple(DEFAULT_READ_PREFIXES) + tuple(extra)
+
+
+def secret_term_in(name: object) -> str | None:
+    """Termine che rende segreto il nome valore, o None."""
     if not isinstance(name, str):
         return None
     flattened = "".join(ch for ch in name.upper() if ch.isalnum())
@@ -300,10 +288,9 @@ def secret_term_in(name: object) -> str | None:
 
 
 def check_read(path: object, name: object = None) -> str:
-    """Autorizza una lettura, o solleva `RegistryPathRejected`.
+    """Autorizza una lettura, o solleva RegistryPathRejected.
 
-    Due controlli distinti, perche' sono due modi diversi di chiedere la stessa
-    cosa: l'area (il percorso) e il nome del valore.
+    Ordine: denylist → allowlist prefissi → filtro nome. Nessun OpenKey prima.
     """
     normalized = normalize(path)
     key = comparison_key(path)
@@ -314,6 +301,16 @@ def check_read(path: object, name: object = None) -> str:
             f"{normalized!r} e' in un'area del registro non leggibile da questa API "
             f"({forbidden})",
             code=REGISTRY_READ_FORBIDDEN,
+        )
+
+    prefixes = allowed_read_prefixes()
+    target = key if key.endswith("\\") else key + "\\"
+    if not any(target.startswith(p) for p in prefixes):
+        raise RegistryPathRejected(
+            f"{normalized!r} non e' sotto nessun prefisso di lettura autorizzato. "
+            f"Consentiti: {', '.join(prefixes)}. "
+            f"Estendibili con {ENV_VAR_READ}.",
+            code=REGISTRY_READ_NOT_ALLOWED,
         )
 
     term = secret_term_in(name)
@@ -327,16 +324,7 @@ def check_read(path: object, name: object = None) -> str:
 
 
 def filter_values(values: Any) -> tuple[dict[str, Any], list[str]]:
-    """Toglie dai valori enumerati quelli il cui NOME e' una credenziale.
-
-    Senza questo il controllo sul nome sarebbe aggirabile in un passaggio: si
-    chiede la chiave senza `name`, il backend restituisce TUTTI i valori, e la
-    password esce insieme agli altri.
-
-    I nomi tolti vengono restituiti al chiamante, non nascosti: una risposta a
-    cui manca silenziosamente un pezzo e' peggio di un rifiuto, perche' chi legge
-    conclude che il valore non esiste.
-    """
+    """Toglie dai valori enumerati quelli il cui NOME e' una credenziale."""
     if not isinstance(values, dict):
         return {}, []
     kept: dict[str, Any] = {}
