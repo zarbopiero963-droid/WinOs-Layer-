@@ -60,9 +60,9 @@ def control_service(name: str, body: ServiceAction, auth: AuthContext = Depends(
     if unsupported:
         # 501, non 403. «Non ti e' permesso» e «non so farlo» sono due risposte
         # a due domande diverse, e portano il chiamante a due azioni diverse:
-        # sul 403 puo' chiedere un'autorizzazione, sul 501 no. Decisione owner
-        # D5-B: su Windows il controllo dei servizi e' dichiaratamente non
-        # implementato.
+        # sul 403 puo' chiedere un'autorizzazione, sul 501 no. Su Windows N007
+        # abilita service_control quando win32service e' presente; 501 resta
+        # per backend/capability assenti.
         raise HTTPException(501, result.get("error") or "service control not supported")
     if denied:
         # 403, come per il rifiuto della policy sandbox in apps.py: un rifiuto

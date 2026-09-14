@@ -177,50 +177,55 @@ def test_capabilities_report_services_and_printers(backend):
 
 
 # ---------------------------------------------------------------------------
-# Controllo servizi: dichiarato non implementato (decisione owner D5-B)
+# Controllo servizi: N007 — query OK; mai stop di servizi di sistema del runner
 # ---------------------------------------------------------------------------
-def test_service_control_is_declared_unsupported_on_the_real_backend(backend):
-    """Su Windows vero: `supported: false`, e nessuna operazione privilegiata.
-
-    Rispondeva "service control requires elevated pywin32" — un messaggio che
-    sembra un problema di permessi risolvibile elevando il processo. Non lo era:
-    la chiamata non tentava nulla, nemmeno da amministratore, e il runner GitHub
-    gira elevato — quindi questo test lo dimostra su una macchina che i
-    privilegi ce li ha.
-    """
-    from windows_os_api.os.capability import CAPABILITY_NOT_SUPPORTED
-
-    out = backend.control_service("Spooler", "stop")
-    assert out["ok"] is False, out
-    assert out["supported"] is False, out
-    assert out["error_code"] == CAPABILITY_NOT_SUPPORTED, out
-    assert "elevat" not in out["error"].lower(), out
-
-
-def test_listing_still_works_while_controlling_does_not(backend):
-    """Le due capability sono separate, e si vede sul sistema vero.
-
-    Elencare i servizi funziona (PR #27); controllarli no. Un flag solo direbbe
-    «servizi: si'» e lascerebbe credere che anche start/stop vada.
-    """
+def test_service_control_capability_is_on_when_win32service_present(backend):
+    """N007: service_control tracks win32service (not permanently unsupported)."""
     flags = backend.capability_flags()
     assert flags["services"] is True, flags
-    assert flags["service_control"] is False, flags
-    assert len(backend.list_services()) > 10, "l'elenco deve continuare a funzionare"
+    assert flags["service_control"] is True, flags
+    assert "service_control" not in backend.NOT_IMPLEMENTED
 
 
-def test_the_spooler_is_not_stopped_by_asking(backend):
-    """La prova che conta: il servizio resta com'era.
+def test_listing_and_status_query_work_on_real_scm(backend):
+    """Enumeration + status query are allowed; never stop Spooler here."""
+    services = backend.list_services()
+    assert len(services) > 10, "l'elenco deve continuare a funzionare"
+    # Prefer a known-present service for status-only; fall back to first row.
+    names = {s["name"] for s in services}
+    target = "Spooler" if "Spooler" in names else services[0]["name"]
+    out = backend.control_service(target, "status")
+    assert out.get("ok") is True, out
+    assert out.get("status"), out
+    assert "elevat" not in str(out.get("error", "")).lower()
 
-    `Spooler` esiste su ogni Windows. Se `control_service` tentasse davvero
-    l'operazione — e il runner e' elevato — lo stato cambierebbe.
+
+def test_os_layer_empty_allowlist_still_blocks_spooler_stop(backend, monkeypatch):
+    """D1-B: even with real SCM, empty allowlist must not mutate Spooler.
+
+    Goes through ``os.services.service.control`` (allowlist) — never calls
+    backend stop on Spooler from this test directly.
     """
+    from windows_os_api.os.services import service as svc
+    from windows_os_api.os.services.allowlist import ENV_VAR, ALLOWLIST_EMPTY
+    from windows_os_api.backends.factory import reset_backend
+    from windows_os_api.core.runtime.config import get_settings
+
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.setenv("WINOS_BACKEND", "windows")
+    get_settings.cache_clear()
+    reset_backend()
+
     before = {s["name"]: s["status"] for s in backend.list_services()}
-    backend.control_service("Spooler", "stop")
+    out = svc.control("Spooler", "stop")
+    assert out["ok"] is False, out
+    assert out.get("denied") is True, out
+    assert out.get("code") == ALLOWLIST_EMPTY, out
     after = {s["name"]: s["status"] for s in backend.list_services()}
     if "Spooler" in before:
         assert after.get("Spooler") == before["Spooler"], (
-            f"lo stato di Spooler e' cambiato: {before['Spooler']} -> {after.get('Spooler')}"
+            f"Spooler mutated despite empty allowlist: "
+            f"{before['Spooler']} -> {after.get('Spooler')}"
         )
 
 

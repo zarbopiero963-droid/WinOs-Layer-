@@ -1,8 +1,10 @@
-"""Windows dichiara di non controllare i servizi, invece di fingere un errore.
+"""Capability vs allowlist for service control (D5-B order + N007 Windows SCM).
 
-Decisione owner D5-B, issue #6 (2026-09-08): «control_service su Windows
-dichiarato supported=false per ora. Meglio una capability esplicitamente non
-supportata che uno stub che sembra un'implementazione funzionante.»
+Storico D5-B (issue #6): Windows dichiarava ``service_control`` non supportato
+invece di uno stub «requires elevation». N007 (#67 / H63-N007) implementa lo
+SCM reale dietro allowlist vuota (D1-B); questi test restano sul contratto
+dell'ordine capability→allowlist e sulla distinzione 501 vs 403 per i backend
+che ancora NON supportano il controllo.
 
 Cosa c'era prima
 ----------------
@@ -116,31 +118,23 @@ def test_the_message_no_longer_blames_elevation(not_supported):
 # ---------------------------------------------------------------------------
 # Non si e' aggiunta nessuna superficie privilegiata
 # ---------------------------------------------------------------------------
-def test_the_windows_backend_does_not_call_the_service_control_manager():
-    """Decisione D5-B: niente `OpenSCManager`/`ControlService` in questa fase.
+def test_windows_scm_control_lives_in_windows_services_module():
+    """N007: real SCM calls are in windows_services, reached via the backend.
 
-    Verificato sul sorgente perche' il punto e' l'ASSENZA di una superficie:
-    un test comportamentale non puo' dimostrare che una API non viene usata.
+    The old D5-B stub forbade OpenService in WindowsBackend.control_service.
+    N007 implements them in ``windows_services.control_service`` and the
+    backend delegates — still behind D1-B empty allowlist + RBAC.
     """
     from windows_os_api.backends import windows as win
+    from windows_os_api.backends import windows_services as wsvc
 
-    import ast
-    import textwrap
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(win.WindowsBackend.control_service)))
-    # Sul CODICE, non sul testo: la docstring del metodo NOMINA quelle API per
-    # spiegare cosa servirebbe implementarle, e un controllo testuale
-    # costringerebbe a cancellare la spiegazione per far passare il test.
-    used = (
-        {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-        | {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-    )
-    for api in ("OpenService", "ControlService", "StartService", "SC_MANAGER_ALL_ACCESS"):
-        assert api not in used, (
-            f"control_service usa {api}: D5-B dice di NON aggiungere la "
-            f"superficie privilegiata adesso — servirebbe una PR dedicata con "
-            f"allowlist, privilege gate, verifica e audit"
-        )
+    source = inspect.getsource(win.WindowsBackend.control_service)
+    assert "windows_services" in source
+    assert "service control requires elevated pywin32" not in source
+    assert hasattr(wsvc, "control_service")
+    module_src = inspect.getsource(wsvc)
+    for api in ("OpenService", "ControlService", "StartService", "QueryServiceStatus"):
+        assert api in module_src, api
 
 
 def test_the_old_stub_message_is_gone():
@@ -150,24 +144,25 @@ def test_the_old_stub_message_is_gone():
     assert "service control requires elevated pywin32" not in source
 
 
-def test_windows_declares_service_control_as_never_implemented():
-    """Come dato, non come commento: e' cio' che distingue 501 da 403."""
+def test_windows_no_longer_lists_service_control_as_never_implemented():
+    """N007: service_control is implemented when win32service is present."""
     from windows_os_api.backends.windows import WindowsBackend
 
-    assert "service_control" in WindowsBackend.NOT_IMPLEMENTED
+    assert "service_control" not in WindowsBackend.NOT_IMPLEMENTED
+    assert "audio" in WindowsBackend.NOT_IMPLEMENTED
 
 
 def test_listing_and_controlling_are_separate_capabilities():
-    """Un flag solo direbbe «servizi: si'» e lascerebbe credere che start/stop vada.
+    """Two flags remain: enumeration vs control, both gated on win32service.
 
-    Su Windows elencare i servizi FUNZIONA (PR #27) e controllarli no: due
-    capability, due flag.
+    A single flag would still blur the two surfaces; N007 turns control on
+    without collapsing the distinction.
     """
     from windows_os_api.backends.windows import WindowsBackend
 
     source = inspect.getsource(WindowsBackend._probe_capabilities)
     assert '"services"' in source
-    assert '"service_control": False' in source
+    assert '"service_control": self._win32service is not None' in source
 
 
 def test_linux_says_unavailable_not_unsupported_when_systemctl_is_missing():
