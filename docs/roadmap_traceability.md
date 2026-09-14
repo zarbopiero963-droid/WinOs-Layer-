@@ -311,3 +311,14 @@ pytest tests/unit/test_api_registry_n016.py tests/unit/test_api_registry_n015.py
 ```
 
 Full installed W/L H63-N016 not claimed PASS here (MANUAL / #21).
+
+## N017 — Execution gateway unico e policy non autoassegnabile
+
+Contratto (#67 / H63-N017, B-API, Q02/Q08): shared `authorize_execution` / `execute_via_gateway` for REST (and MCP/GUI later); **no implicit `create_adapter` on invoke**; DISABLED / revoked / ERROR / RESTRICTED / UNSUPPORTED / stale VERIFIED refuse execute as **security** blocks; absent adapter is **operational** (404); engine sandbox deny remains security via gated path; does not auto-assign permissions/policy. Coverage: R32 R35 R36 R47 W065 L065 S61-06 S61-12 G08 G13 G20 G29. Verified result → N018.
+
+```bash
+pytest tests/unit/test_api_registry_n017.py tests/unit/test_api_registry_n016.py tests/unit/test_api_registry_n015.py tests/unit/test_api_registry_n014.py -q
+```
+
+Full installed W/L H63-N017 not claimed PASS here (MANUAL / #21).
+

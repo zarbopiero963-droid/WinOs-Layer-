@@ -1,7 +1,7 @@
-"""N014/N015/N016 — API Registry model, persistence, projections, and catalog.
+"""N014–N017 — API Registry model, persistence, projections, catalog, gateway.
 
-Public surface for in-memory + crash-safe registry and read-only catalog
-queries. Execution gateway (N017) remains out of scope.
+Public surface for in-memory + crash-safe registry, read-only catalog queries,
+and the shared execution gateway (authorize + execute; no implicit create).
 """
 from __future__ import annotations
 
@@ -13,6 +13,14 @@ from windows_os_api.apps.api_registry.catalog import (
     get_catalog_record,
     list_catalog,
     resolve_registry,
+)
+from windows_os_api.apps.api_registry.gateway import (
+    AuthorizationDecision,
+    ExecutionCode,
+    authorize_execution,
+    execute_via_gateway,
+    find_api_for_action,
+    gateway_http_status,
 )
 from windows_os_api.apps.api_registry.model import (
     API_REGISTRY_SCHEMA_VERSION,
@@ -50,8 +58,10 @@ __all__ = [
     "ApiRecord",
     "ApiRegistry",
     "ApiStatus",
+    "AuthorizationDecision",
     "CatalogPage",
     "CatalogScopeDenied",
+    "ExecutionCode",
     "LoadReport",
     "PersistentApiRegistry",
     "RegistrationRejected",
@@ -60,9 +70,13 @@ __all__ = [
     "SkippedStore",
     "WINOS_API_REGISTRY_STORE_ENV",
     "apply_projections",
+    "authorize_execution",
     "clear_registry_store",
     "compute_api_id",
+    "execute_via_gateway",
     "filter_records",
+    "find_api_for_action",
+    "gateway_http_status",
     "get_api_registry",
     "get_catalog_record",
     "list_catalog",
