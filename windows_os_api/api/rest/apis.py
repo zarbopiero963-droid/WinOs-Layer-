@@ -1,4 +1,4 @@
-"""N016/N018 — REST API catalog + API Test.
+"""N016/N018/N019 — REST API catalog + API Test + OpenAPI export.
 
 Catalog: GET /v1/apis list + detail over PersistentApiRegistry / ApiRegistry.
 Pagination uses ``limit``/``offset``. Missing record → 404; registry
@@ -22,6 +22,13 @@ from windows_os_api.apps.api_registry.catalog import (
     get_catalog_record,
     list_catalog,
     resolve_registry,
+)
+from windows_os_api.apps.api_registry.model import ApiStatus
+from windows_os_api.apps.schema.openapi_export import (
+    OpenAPISchemaRejected,
+    assemble_openapi_document,
+    build_registry_operation,
+    finalize_openapi_export,
 )
 from windows_os_api.core.permissions.model import Permission, Role
 from windows_os_api.core.security.auth import (
@@ -98,6 +105,68 @@ def list_apis(
 
     audit("apis.list", auth, detail={"total": page.total, "limit": page.limit, "offset": page.offset})
     return page.to_dict()
+
+
+def _registry_openapi_document(*, visible_app_ids: frozenset[str] | None) -> dict:
+    """Export OpenAPI for VERIFIED registry records only (N019 / S61-08)."""
+    try:
+        registry = resolve_registry()
+    except RegistryUnavailable:
+        raise
+    paths: dict = {}
+    for rec in registry.list():
+        if rec.status is not ApiStatus.VERIFIED:
+            continue
+        if not rec.verification_id:
+            continue
+        if visible_app_ids is not None and rec.application_id:
+            if rec.application_id not in visible_app_ids:
+                continue
+        method = (rec.method or "POST").strip().lower()
+        path = rec.path
+        if not path.startswith("/"):
+            continue
+        op = build_registry_operation(rec.to_dict())
+        item = paths.setdefault(path, {})
+        if method in item:
+            # Collision on same path+method: reject rather than silently overwrite.
+            raise OpenAPISchemaRejected(
+                f"duplicate registry path operation {method.upper()} {path}"
+            )
+        item[method] = op
+    doc = assemble_openapi_document(
+        title="WinOS API Registry (VERIFIED only)",
+        paths=paths,
+        description=(
+            "Authoritative registry export: only VERIFIED records with "
+            "verification_id. Method/path reflect real CRUD mapping."
+        ),
+    )
+    return finalize_openapi_export(doc)
+
+
+@router.get("/openapi.json")
+def export_registry_openapi(
+    auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ)),
+):
+    """N019: deterministic OpenAPI export of VERIFIED registry APIs."""
+    visible = _visible_app_ids(auth)
+    try:
+        doc = _registry_openapi_document(visible_app_ids=visible)
+    except RegistryUnavailable as exc:
+        audit("apis.openapi", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+    except OpenAPISchemaRejected as exc:
+        audit("apis.openapi", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid OpenAPI schema: {exc}",
+        ) from exc
+    audit("apis.openapi", auth, detail={"paths": len(doc.get("paths") or {})})
+    return doc
 
 
 @router.get("/{api_id}")

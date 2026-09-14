@@ -16,7 +16,8 @@ from windows_os_api.apps.api_registry.gateway import (
     execute_via_gateway,
     gateway_http_status,
 )
-from windows_os_api.apps.schema.generator import app_openapi
+from windows_os_api.apps.schema.generator import AdapterOpenAPINotFound, app_openapi
+from windows_os_api.apps.schema.openapi_export import OpenAPISchemaRejected
 from windows_os_api.apps.automation.actions import discover_actions
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -134,5 +135,11 @@ def verify(
 
 @router.get("/{app_id}/openapi.json")
 def openapi_for_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    """N019: deterministic Virtual API export; never creates adapters on read."""
     ensure_app_access(auth, app_id)
-    return app_openapi(app_id)
+    try:
+        return app_openapi(app_id)
+    except AdapterOpenAPINotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except OpenAPISchemaRejected as exc:
+        raise HTTPException(400, f"invalid OpenAPI schema: {exc}") from exc

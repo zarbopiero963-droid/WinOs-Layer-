@@ -439,61 +439,55 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     return {"ok": True, "action": action_name, "element": action.automation_id}
 
 def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
-    """Genera il contratto per-app dalle sole capability verificate.
+    """Genera il contratto per-app dalle sole capability verificate (N018/N019).
 
     ``verification`` arriva anche dai manifest persistiti, quindi il controllo
     e' intenzionalmente stretto: deve essere un oggetto e il suo stato deve
     essere esattamente ``VERIFIED`` **and** carry a non-empty
     ``verification_id`` (N018). Dati mancanti o malformati restano fuori
     dalla superficie pubblicata (fail-closed).
+
+    N019: rich input/output/errors/scopes/risk/auth/version; unique
+    ``operationId`` (includes ``app_id``); deterministic path order; CRUD
+    semantic via ``x-crud`` only for verified actions. No volatile timestamps.
     """
+    from windows_os_api.apps.schema.openapi_export import (
+        assemble_openapi_document,
+        build_action_operation,
+        finalize_openapi_export,
+        is_action_verified_for_openapi,
+    )
+
     paths: dict[str, Any] = {}
     for a in adapter.actions:
-        # N018: VERIFIED alone is not enough — require independent verification_id.
-        if not (
-            isinstance(a.verification, dict)
-            and a.verification.get("state") == "VERIFIED"
-            and isinstance(a.verification.get("verification_id"), str)
-            and bool(str(a.verification.get("verification_id")).strip())
-        ):
+        if not is_action_verified_for_openapi(a.verification):
             continue
         path = f"/v1/apps/{adapter.app_id}/actions/{a.name}"
-        props = {p: {"type": "string"} for p in a.params}
-        params_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": props,
-            "additionalProperties": False,
-        }
-        if a.params:
-            params_schema["required"] = list(a.params)
-        body_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": {"params": params_schema},
-            "additionalProperties": False,
-        }
-        if a.params:
-            body_schema["required"] = ["params"]
         paths[path] = {
-            "post": {
-                "summary": a.description,
-                "operationId": a.name,
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": body_schema}},
-                },
-                "responses": {
-                    "200": {"description": "Action result"},
-                    "403": {"description": "Denied by RBAC or sandbox policy"},
-                },
-                "x-risk": a.risk,
-                "x-verification-state": "VERIFIED",
-            }
+            "post": build_action_operation(
+                app_id=adapter.app_id,
+                action_name=a.name,
+                description=a.description,
+                params=list(a.params),
+                risk=a.risk,
+                control_type=a.control_type,
+                verification_id=(
+                    str(a.verification.get("verification_id")).strip()
+                    if isinstance(a.verification, dict)
+                    else None
+                ),
+            )
         }
-    return {
-        "openapi": "3.0.3",
-        "info": {"title": f"{adapter.app_name} Virtual API", "version": "1.0.0"},
-        "paths": paths,
-    }
+    doc = assemble_openapi_document(
+        title=f"{adapter.app_name} Virtual API",
+        paths=paths,
+        description=(
+            "Per-app Virtual API: only VERIFIED capabilities with verification_id. "
+            "Invoke remains POST; x-crud documents verified CRUD semantics."
+        ),
+    )
+    # Validate before publish; never return garbage.
+    return finalize_openapi_export(doc)
 
 def reset_adapters() -> None:
     _adapters.clear()
