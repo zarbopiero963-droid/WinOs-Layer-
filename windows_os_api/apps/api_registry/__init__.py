@@ -1,10 +1,15 @@
-"""N014–N017 — API Registry model, persistence, projections, catalog, gateway.
+"""N014–N018 — API Registry model, persistence, projections, catalog, gateway, API Test.
 
 Public surface for in-memory + crash-safe registry, read-only catalog queries,
-and the shared execution gateway (authorize + execute; no implicit create).
+the shared execution gateway (authorize + execute; no implicit create), and
+N018 API Test (execution + independent postcondition + verification_id).
 """
 from __future__ import annotations
 
+from windows_os_api.apps.api_registry.api_test import (
+    observe_edit_value,
+    run_api_test,
+)
 from windows_os_api.apps.api_registry.catalog import (
     CatalogPage,
     CatalogScopeDenied,
@@ -91,4 +96,6 @@ __all__ = [
     "save_registry",
     "store_dir",
     "store_path",
+    "observe_edit_value",
+    "run_api_test",
 ]

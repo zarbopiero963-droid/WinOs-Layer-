@@ -185,7 +185,9 @@ def load_persisted_adapters() -> dict[str, Any]:
                     control_type=a.get("control_type", ""),
                     params=list(a.get("params") or []),
                     risk=a.get("risk", "low"),
-                    verification=a.get("verification"),
+                    verification=store.sanitize_action_verification(
+                        a.get("verification")
+                    ),
                 )
                 for a in manifest["actions"]
                 if isinstance(a, dict)
@@ -252,6 +254,7 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
             persisted = False
             adapter.persist_error = str(exc)
         verified = verdict.get("state") == "VERIFIED"
+        verification_id = verdict.get("verification_id") if verified else None
         return {
             "ok": bool(verified and persisted),
             "recorded": True,
@@ -259,6 +262,8 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
             "app_id": app_id,
             "action": action_name,
             "verification": verdict,
+            # N018: independent proof id only when VERIFIED (else None)
+            "verification_id": verification_id,
         }
 
 
@@ -438,14 +443,18 @@ def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
 
     ``verification`` arriva anche dai manifest persistiti, quindi il controllo
     e' intenzionalmente stretto: deve essere un oggetto e il suo stato deve
-    essere esattamente ``VERIFIED``. Dati mancanti o malformati restano fuori
+    essere esattamente ``VERIFIED`` **and** carry a non-empty
+    ``verification_id`` (N018). Dati mancanti o malformati restano fuori
     dalla superficie pubblicata (fail-closed).
     """
     paths: dict[str, Any] = {}
     for a in adapter.actions:
+        # N018: VERIFIED alone is not enough — require independent verification_id.
         if not (
             isinstance(a.verification, dict)
             and a.verification.get("state") == "VERIFIED"
+            and isinstance(a.verification.get("verification_id"), str)
+            and bool(str(a.verification.get("verification_id")).strip())
         ):
             continue
         path = f"/v1/apps/{adapter.app_id}/actions/{a.name}"

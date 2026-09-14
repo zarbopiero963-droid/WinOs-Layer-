@@ -98,13 +98,30 @@ def _wait_for_value(
         time.sleep(0.05)
 
 
+def _mint_verification_id() -> str:
+    """Stable id for an observed VERIFIED verdict (never for PARTIAL/FAILED)."""
+    return f"ver_{uuid.uuid4().hex}"
+
+
 def _verdict(state: str, evidence: str, **extra: Any) -> dict[str, Any]:
-    return {
+    """Build a verdict. ``verification_id`` is minted only for ``VERIFIED``.
+
+    Non-VERIFIED outcomes must not carry a success verification_id (N018):
+    ambiguous or failed evidence must never look like an independent proof id.
+    """
+    out: dict[str, Any] = {
         "state": state,
         "evidence": evidence,
         "checked_at": time.time(),
         **extra,
     }
+    if state == VERIFIED:
+        vid = out.get("verification_id")
+        if not (isinstance(vid, str) and vid.strip()):
+            out["verification_id"] = _mint_verification_id()
+    else:
+        out.pop("verification_id", None)
+    return out
 
 
 def verify_action(app_id: str, action_name: str) -> dict[str, Any]:
