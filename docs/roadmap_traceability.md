@@ -280,3 +280,13 @@ pytest tests/unit/test_remote_rate_n013.py tests/unit/test_security_core.py -q
 ```
 
 Full installed W/L H63-N013 not claimed PASS here (MANUAL / #21).
+
+## N014 — API Registry: modello e stati autorevoli
+
+Contratto (#67 / H63-N014, B-API, Q08): in-memory API registry schema (#61) with six authoritative statuses VERIFIED · PARTIAL · RESTRICTED · UNSUPPORTED · ERROR · DISABLED; **GENERATED ≠ VERIFIED**; missing/false/stale verification metadata never yields VERIFIED; deterministic duplicate ids; `schema_version`; D3/lifecycle → status mapping helpers. Coverage: R31 R33 W061 W070 L061 L070 S61-01–S61-03 G28 G29. Persistence → N015; GET /v1/apis → N016; execution → N017.
+
+```bash
+pytest tests/unit/test_api_registry_n014.py -q
+```
+
+Full installed W/L H63-N014 not claimed PASS here (MANUAL / #21).
