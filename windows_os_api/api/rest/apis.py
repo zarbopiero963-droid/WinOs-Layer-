@@ -1,22 +1,35 @@
-"""N016 — REST API catalog: GET /v1/apis list + detail.
+"""N016/N018 — REST API catalog + API Test.
 
-Read-only surface over PersistentApiRegistry / ApiRegistry. Pagination uses
-``limit``/``offset``. Missing record → 404; registry unavailable → 503.
-Cross-app filter outside caller scopes → 403.
+Catalog: GET /v1/apis list + detail over PersistentApiRegistry / ApiRegistry.
+Pagination uses ``limit``/``offset``. Missing record → 404; registry
+unavailable → 503. Cross-app filter outside caller scopes → 403.
+
+N018: ``POST /v1/apis/{api_id}/test`` runs gateway execute + independent
+postcondition; HTTP 200 alone is never verified success.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from windows_os_api.api.rest.deps import audit
+from windows_os_api.apps.api_registry.api_test import run_api_test
 from windows_os_api.apps.api_registry.catalog import (
     CatalogScopeDenied,
     RegistryUnavailable,
     get_catalog_record,
     list_catalog,
+    resolve_registry,
 )
 from windows_os_api.core.permissions.model import Permission, Role
-from windows_os_api.core.security.auth import AuthContext, get_auth_registry, require_permission
+from windows_os_api.core.security.auth import (
+    AuthContext,
+    ensure_app_access,
+    get_auth_registry,
+    require_permission,
+)
 
 router = APIRouter(prefix="/apis", tags=["apis"])
 
@@ -109,3 +122,60 @@ def get_api(
 
     audit("apis.get", auth, resource=api_id)
     return rec.to_dict()
+
+
+class ApiTestBody(BaseModel):
+    """Optional params for API Test execution + postcondition."""
+
+    params: dict[str, Any] = Field(default_factory=dict)
+    update_registry_on_pass: bool = True
+
+
+@router.post("/{api_id}/test")
+def test_api_route(
+    api_id: str,
+    body: ApiTestBody | None = None,
+    auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE)),
+):
+    """N018 API Test: execute via gateway + independent postcondition.
+
+    Returns HTTP 200 with a body where ``success`` / ``verification.verified``
+    reflect observed effect — never treat transport 200 as operational success
+    (H63-N018 / #61 §20). Missing API → 404. Registry down → 503.
+    """
+    body = body or ApiTestBody()
+    try:
+        resolve_registry()
+    except RegistryUnavailable as exc:
+        audit("apis.test", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+
+    visible = _visible_app_ids(auth)
+    try:
+        rec = get_catalog_record(api_id, visible_app_ids=visible)
+    except RegistryUnavailable as exc:
+        audit("apis.test", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+    if rec is None:
+        audit("apis.test", auth, resource=api_id, outcome="failure", detail={"reason": "not_found"})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API not found")
+
+    if rec.application_id:
+        ensure_app_access(auth, rec.application_id)
+
+    result = run_api_test(
+        rec.id,
+        params=body.params,
+        update_registry_on_pass=body.update_registry_on_pass,
+    )
+    outcome = "success" if result.get("success") else "failure"
+    if (result.get("verification") or {}).get("status") == "BLOCKED":
+        outcome = "denied"
+    audit("apis.test", auth, resource=api_id, outcome=outcome, detail=result)
+    return result

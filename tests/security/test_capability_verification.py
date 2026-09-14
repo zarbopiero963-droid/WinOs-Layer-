@@ -114,6 +114,7 @@ def test_a_field_is_verified_by_reading_it_back(adapter):
     )["value"]
     verdict = verif.verify_action(APP, _edit_action(adapter))
     assert verdict["state"] == verif.VERIFIED, verdict
+    assert isinstance(verdict.get("verification_id"), str) and verdict["verification_id"].startswith("ver_")
     assert verdict["observed"] == {
         "probe_observed": True,
         "rollback_observed": True,
@@ -293,6 +294,7 @@ def test_a_failed_rollback_invalidates_an_observed_probe(adapter, monkeypatch):
 
     assert verdict["state"] == verif.FAILED, verdict
     assert verdict["code"] == "ROLLBACK_FAILED", verdict
+    assert "verification_id" not in verdict
     assert verdict["observed"]["rollback_observed"] is False, verdict
 
 

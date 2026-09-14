@@ -39,7 +39,11 @@ def test_only_an_exact_verified_verdict_enters_the_virtual_api(tmp_sandbox):
     adapter = create_adapter(APP, hwnd=1001)
     states = [VERIFIED, "FAILED", "BLOCKED", "UNSUPPORTED", "UNSTABLE"]
     for action, state in zip(adapter.actions, states, strict=False):
-        action.verification = {"state": state, "checked_at": 123.0}
+        payload = {"state": state, "checked_at": 123.0}
+        # N018: VERIFIED requires an independent verification_id to publish.
+        if state == VERIFIED:
+            payload["verification_id"] = "ver_test_exact_001"
+        action.verification = payload
     if len(adapter.actions) > len(states):
         adapter.actions[len(states)].verification = "VERIFIED"  # malformato
 
@@ -51,6 +55,13 @@ def test_only_an_exact_verified_verdict_enters_the_virtual_api(tmp_sandbox):
     assert set(schema["paths"]) == expected
     operation = schema["paths"].popitem()[1]["post"]
     assert operation["x-verification-state"] == VERIFIED
+
+
+def test_verified_without_verification_id_is_not_published(tmp_sandbox):
+    adapter = create_adapter(APP, hwnd=1001)
+    action = next(a for a in adapter.actions if a.control_type == "Edit")
+    action.verification = {"state": VERIFIED, "checked_at": 123.0}  # no id
+    assert generate_adapter_openapi(adapter)["paths"] == {}
 
 
 def test_http_virtual_api_appears_after_real_verification_and_matches_the_route(

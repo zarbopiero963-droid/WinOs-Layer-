@@ -149,6 +149,38 @@ def delete(app_id: str) -> bool:
     return True
 
 
+def sanitize_action_verification(verification: Any) -> dict[str, Any] | None:
+    """Fail-closed: VERIFIED without verification_id cannot survive reload (N018).
+
+    Manifests may be hand-edited or forged. A persisted ``state=VERIFIED`` without
+    an independent ``verification_id`` is demoted so Virtual API / registry never
+    treat it as observed proof.
+    """
+    if verification is None:
+        return None
+    if not isinstance(verification, dict):
+        return None
+    state = verification.get("state")
+    if state != "VERIFIED":
+        # Strip any forged success id from non-VERIFIED payloads
+        if "verification_id" in verification:
+            cleaned = dict(verification)
+            cleaned.pop("verification_id", None)
+            return cleaned
+        return verification
+    vid = verification.get("verification_id")
+    if isinstance(vid, str) and vid.strip():
+        return verification
+    demoted = dict(verification)
+    demoted["state"] = "FAILED"
+    demoted["code"] = "VERIFICATION_ID_MISSING"
+    prior = str(demoted.get("evidence") or "").strip()
+    note = "VERIFIED senza verification_id: demoted at load (N018)"
+    demoted["evidence"] = f"{prior}; {note}" if prior else note
+    demoted.pop("verification_id", None)
+    return demoted
+
+
 def _read_manifest(path: Path) -> tuple[dict[str, Any] | None, SkippedManifest | None]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -196,6 +228,19 @@ def load_all() -> tuple[list[dict[str, Any]], list[SkippedManifest]]:
         if problem is not None:
             skipped.append(problem)
         elif manifest is not None:
+            actions = manifest.get("actions")
+            if isinstance(actions, list):
+                cleaned_actions = []
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    item = dict(action)
+                    item["verification"] = sanitize_action_verification(
+                        item.get("verification")
+                    )
+                    cleaned_actions.append(item)
+                manifest = dict(manifest)
+                manifest["actions"] = cleaned_actions
             loaded.append(manifest)
     return loaded, skipped
 

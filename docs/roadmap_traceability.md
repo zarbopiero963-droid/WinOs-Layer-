@@ -322,3 +322,13 @@ pytest tests/unit/test_api_registry_n017.py tests/unit/test_api_registry_n016.py
 
 Full installed W/L H63-N017 not claimed PASS here (MANUAL / #21).
 
+
+## N018 — Risultato verificato e API Test
+
+Contratto (#67 / H63-N018, B-VERIFY, Q07/Q08): execution linked to **independent postcondition** + **verification_id**; ``POST /v1/apis/{api_id}/test`` returns ``success`` only when effect is observed; insufficient proof → ``PARTIAL`` / ``verified=false``; HTTP 200 / invoke ``ok`` alone is **not** success when state unchanged; failed rollback blocks VERIFIED and must not mint ``verification_id``; forged VERIFIED without id demoted on adapter load. Coverage: R25 R32 W066-W067 L066-L067 S61-07 S61-20-S61-21 G12 G29. Audit/idempotency → N019.
+
+```bash
+pytest tests/unit/test_api_registry_n018.py tests/security/test_capability_verification.py -q
+```
+
+Full installed W/L H63-N018 not claimed PASS here (MANUAL / #21).
