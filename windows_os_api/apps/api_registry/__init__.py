@@ -1,4 +1,4 @@
-"""N014–N018 — API Registry model, persistence, projections, catalog, gateway, API Test.
+"""N014–N019 — API Registry model, persistence, projections, catalog, gateway, API Test.
 
 Public surface for in-memory + crash-safe registry, read-only catalog queries,
 the shared execution gateway (authorize + execute; no implicit create), and

@@ -429,6 +429,44 @@ def finalize_openapi_export(doc: Mapping[str, Any] | dict[str, Any]) -> dict[str
 
 
 
+
+
+def merge_registry_paths_into_fastapi_schema(
+    base_schema: Mapping[str, Any],
+    registry_doc: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge VERIFIED registry paths into FastAPI ``/openapi.json``.
+
+    Live framework operations win on path+method collision; registry-only
+    virtual paths are added. Does not re-validate the FastAPI 3.1 base with
+    the stricter registry exporter rules.
+    """
+    out = json.loads(json.dumps(base_schema))
+    base_paths = out.setdefault("paths", {})
+    reg_paths = registry_doc.get("paths") or {}
+    if not isinstance(reg_paths, Mapping):
+        raise OpenAPISchemaRejected("registry_doc.paths must be an object")
+    for path in sorted(reg_paths.keys()):
+        item = reg_paths[path]
+        if not isinstance(item, Mapping):
+            continue
+        bucket = base_paths.setdefault(path, {})
+        for method, op in item.items():
+            if method in bucket:
+                if isinstance(bucket[method], dict) and isinstance(op, dict):
+                    bucket[method].setdefault("x-api-id", op.get("x-api-id"))
+                    bucket[method].setdefault(
+                        "x-verification-state", op.get("x-verification-state")
+                    )
+                    bucket[method].setdefault("x-crud", op.get("x-crud"))
+                continue
+            bucket[method] = op
+    components = out.setdefault("components", {})
+    schemes = components.setdefault("securitySchemes", {})
+    if "ApiKeyAuth" not in schemes:
+        schemes["ApiKeyAuth"] = _security_schemes()["ApiKeyAuth"]
+    return out
+
 def is_action_verified_for_openapi(verification: Any) -> bool:
     """N018+N019 gate: VERIFIED + non-empty verification_id."""
     return (

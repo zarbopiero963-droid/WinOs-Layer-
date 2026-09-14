@@ -196,6 +196,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(ws_router)
 
+    # N019: merge VERIFIED registry paths into root /openapi.json (S61-08 / L9/W7).
+    def custom_openapi():
+        # Rebuild each call so newly VERIFIED registry APIs appear (N019).
+        from fastapi.openapi.utils import get_openapi
+
+        from windows_os_api.api.rest.apis import _registry_openapi_document
+        from windows_os_api.apps.schema.openapi_export import (
+            merge_registry_paths_into_fastapi_schema,
+        )
+
+        base = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+        try:
+            registry_doc = _registry_openapi_document(visible_app_ids=None)
+            base = merge_registry_paths_into_fastapi_schema(base, registry_doc)
+        except Exception:  # noqa: BLE001 — never break /openapi.json on registry issues
+            pass
+        return base
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
+
     cc_dir = Path(__file__).resolve().parents[2] / "control_center"
     index = cc_dir / "index.html"
     if index.exists():
