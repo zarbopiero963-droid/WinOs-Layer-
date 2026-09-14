@@ -241,3 +241,21 @@ pytest tests/unit/test_capability_flags_contract.py -q
 
 Full installed W/L H63-N010 not claimed PASS here (needs dedicated audio device / MANUAL).
 
+## N011 — Identità e ruoli assegnabili a tutti gli ingressi
+
+Contratto (#67 / H63-N011, B-AUTH): stable principal via shared
+``build_auth_context`` / ``resolve_role``; four assignable roles
+(VIEWER/OPERATOR/AUTOMATOR/ADMIN) through distinct key lists; secure
+``secrets.compare_digest`` key compare; release defaults carry **no**
+baked-in keys; documentation placeholders refused unless
+``WINOS_ALLOW_PLACEHOLDER_API_KEYS=true``; ``require_auth=false`` yields
+anonymous **VIEWER** (never anonymous ADMIN). WS uses the same resolve
+as REST. MCP tool-level gating remains N020 (helper is shared).
+
+```bash
+pytest tests/unit/test_auth_n011.py tests/unit/test_permissions.py -q
+pytest tests/security/test_security_hard.py -q
+```
+
+Full installed W/L H63-N011 not claimed PASS here (MANUAL / #21).
+

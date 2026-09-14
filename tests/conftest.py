@@ -16,8 +16,12 @@ from fastapi.testclient import TestClient
 # Force fake backend + known keys before imports mutate cache
 os.environ["WINOS_BACKEND"] = "fake"
 os.environ["WINOS_REQUIRE_AUTH"] = "true"
+# Suite may use documentation placeholder strings; release path refuses them (N011).
+os.environ["WINOS_ALLOW_PLACEHOLDER_API_KEYS"] = "true"
 os.environ["WINOS_API_KEYS"] = '["dev-key-change-me"]'
 os.environ["WINOS_ADMIN_API_KEYS"] = '["admin-key-change-me"]'
+os.environ["WINOS_VIEWER_API_KEYS"] = '["viewer-key-n011"]'
+os.environ["WINOS_OPERATOR_API_KEYS"] = '["operator-key-n011"]'
 # Gli adapter ora si salvano su disco, e il loro default e' la cartella di
 # configurazione dell'utente: senza questo, far girare la suite lascerebbe
 # manifest nel profilo di chi la lancia. Impostato prima degli import, come il
@@ -149,3 +153,13 @@ def auth_headers():
 @pytest.fixture()
 def admin_headers():
     return {"X-API-Key": "admin-key-change-me"}
+
+
+@pytest.fixture()
+def viewer_headers():
+    return {"X-API-Key": "viewer-key-n011"}
+
+
+@pytest.fixture()
+def operator_headers():
+    return {"X-API-Key": "operator-key-n011"}
