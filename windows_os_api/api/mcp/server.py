@@ -4,6 +4,12 @@ N020: ``tools/list`` merges stable platform tools with VERIFIED registry tools;
 runtime revoke (DISABLED / demoted) removes tools and fails ``tools/call``;
 ``invoke_action`` never implicitly ``create_adapter`` (N017); protocol
 negotiation accepts known versions only.
+
+N021: ``resources/list`` / ``resources/read`` expose VERIFIED registry state
+(``winos://api/{id}``) without secrets; ``resources.listChanged`` capability +
+pending ``notifications/resources/list_changed`` (and tools twin) on snapshot
+drift; optional ``params._meta.app_scopes`` for cross-user parity with REST
+catalog; ``handle_message`` maps malformed JSON to ``-32700``.
 """
 from __future__ import annotations
 
@@ -18,6 +24,11 @@ from windows_os_api.apps.adapters.engine import (
     verify_and_record,
 )
 from windows_os_api.apps.api_registry.gateway import execute_via_gateway
+from windows_os_api.apps.api_registry.mcp_resources import (
+    list_registry_mcp_resources,
+    read_registry_mcp_resource,
+    resource_snapshot_uris,
+)
 from windows_os_api.apps.api_registry.mcp_tools import (
     REGISTRY_TOOL_PREFIX,
     call_registry_mcp_tool,
@@ -88,6 +99,75 @@ PLATFORM_TOOLS: list[dict[str, Any]] = [
 # Back-compat alias for tests that import TOOLS (platform baseline only).
 TOOLS = PLATFORM_TOOLS
 
+# --- N021 notification / snapshot state (process-local MCP session) ---
+_pending_notifications: list[dict[str, Any]] = []
+_last_resource_snapshot: tuple[str, ...] | None = None
+_last_tool_snapshot: tuple[str, ...] | None = None
+
+
+def take_pending_notifications() -> list[dict[str, Any]]:
+    """Drain server→client notifications queued since the last take (N021)."""
+    global _pending_notifications
+    out = list(_pending_notifications)
+    _pending_notifications = []
+    return out
+
+
+def reset_mcp_session_state() -> None:
+    """Clear notification queue and listChanged snapshots (tests / restart)."""
+    global _pending_notifications, _last_resource_snapshot, _last_tool_snapshot
+    _pending_notifications = []
+    _last_resource_snapshot = None
+    _last_tool_snapshot = None
+
+
+def _enqueue_notification(method: str, params: dict[str, Any] | None = None) -> None:
+    _pending_notifications.append({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params or {},
+    })
+
+
+def _visible_app_ids_from_params(params: Any) -> frozenset[str] | None:
+    """Optional MCP ``params._meta.app_scopes`` → catalog-style visibility.
+
+    ``None`` = unrestricted (default, matches ADMIN / unbound REST principals).
+    A list/tuple (even empty) = scoped allowlist.
+    """
+    if not isinstance(params, dict):
+        return None
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    if "app_scopes" not in meta:
+        return None
+    scopes = meta.get("app_scopes")
+    if scopes is None:
+        return None
+    if isinstance(scopes, str):
+        scopes = [scopes]
+    if not isinstance(scopes, (list, tuple, set, frozenset)):
+        return frozenset()
+    return frozenset(str(s).strip() for s in scopes if str(s).strip())
+
+
+def _tool_snapshot() -> tuple[str, ...]:
+    return tuple(t["name"] for t in list_all_tools())
+
+
+def _maybe_emit_list_changed(visible: frozenset[str] | None) -> None:
+    """Compare snapshots and enqueue list_changed notifications (N021)."""
+    global _last_resource_snapshot, _last_tool_snapshot
+    res_now = resource_snapshot_uris(visible_app_ids=visible)
+    tools_now = _tool_snapshot()
+    if _last_resource_snapshot is not None and res_now != _last_resource_snapshot:
+        _enqueue_notification("notifications/resources/list_changed")
+    if _last_tool_snapshot is not None and tools_now != _last_tool_snapshot:
+        _enqueue_notification("notifications/tools/list_changed")
+    _last_resource_snapshot = res_now
+    _last_tool_snapshot = tools_now
+
 
 def list_all_tools() -> list[dict[str, Any]]:
     """Platform tools + VERIFIED registry tools (stable order)."""
@@ -96,6 +176,27 @@ def list_all_tools() -> list[dict[str, Any]]:
     platform_names = {t["name"] for t in PLATFORM_TOOLS}
     dyn = [t for t in dyn if t["name"] not in platform_names]
     return list(PLATFORM_TOOLS) + dyn
+
+
+def handle_message(raw: str | bytes) -> dict[str, Any]:
+    """Parse a raw JSON-RPC line and dispatch (N021 malformed → -32700)."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        req = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32700, "message": "Parse error"},
+        }
+    if not isinstance(req, dict):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+    return handle_request(req)
 
 
 def handle_request(req: dict[str, Any]) -> dict[str, Any]:
@@ -122,14 +223,19 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
         negotiated = client_ver or DEFAULT_PROTOCOL_VERSION
         return ok({
             "protocolVersion": negotiated,
-            "capabilities": {"tools": {"listChanged": True}},
+            "capabilities": {
+                "tools": {"listChanged": True},
+                "resources": {"listChanged": True, "subscribe": False},
+            },
             "serverInfo": {"name": "winos-mcp", "version": "1.0.0"},
         })
     if method == "tools/list":
+        visible = _visible_app_ids_from_params(params)
+        _maybe_emit_list_changed(visible)
         return ok({"tools": list_all_tools()})
     if method == "tools/call":
-        name = params.get("name")
-        arguments = params.get("arguments") or {}
+        name = params.get("name") if isinstance(params, dict) else None
+        arguments = (params.get("arguments") or {}) if isinstance(params, dict) else {}
         try:
             result = call_tool(name, arguments)
             # Security denials from gateway / revoke → JSON-RPC error (not fake success).
@@ -138,6 +244,22 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
             return ok({"content": [{"type": "text", "text": json.dumps(result)}]})
         except Exception as e:  # noqa: BLE001
             return err(-32000, str(e))
+    if method == "resources/list":
+        visible = _visible_app_ids_from_params(params)
+        _maybe_emit_list_changed(visible)
+        return ok({"resources": list_registry_mcp_resources(visible_app_ids=visible)})
+    if method == "resources/read":
+        if not isinstance(params, dict):
+            return err(-32602, "resources/read: params must be an object")
+        uri = params.get("uri")
+        if not uri:
+            return err(-32602, "resources/read: uri is required")
+        visible = _visible_app_ids_from_params(params)
+        _maybe_emit_list_changed(visible)
+        outcome = read_registry_mcp_resource(str(uri), visible_app_ids=visible)
+        if outcome.get("ok") is False and outcome.get("denied"):
+            return err(-32001, outcome.get("error") or "resource denied")
+        return ok({"contents": outcome.get("contents") or []})
     if method == "ping":
         return ok({"ok": True})
     return err(-32601, f"Method not found: {method}")
@@ -202,13 +324,10 @@ def main() -> None:
         line = line.strip()
         if not line:
             continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError:
-            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}) + "\n")
-            sys.stdout.flush()
-            continue
-        resp = handle_request(req)
+        resp = handle_message(line)
+        # Flush any pending notifications before the response (N021 events).
+        for note in take_pending_notifications():
+            sys.stdout.write(json.dumps(note) + "\n")
         sys.stdout.write(json.dumps(resp) + "\n")
         sys.stdout.flush()
 
