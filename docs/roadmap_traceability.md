@@ -290,3 +290,14 @@ pytest tests/unit/test_api_registry_n014.py -q
 ```
 
 Full installed W/L H63-N014 not claimed PASS here (MANUAL / #21).
+
+## N015 — API Registry: persistenza atomica e proiezioni
+
+Contratto (#67 / H63-N015, B-API, Q08/Q15): versioned crash-safe store (`api_registry.json` + `.bak`, `WINOS_API_REGISTRY_STORE`); atomic tmp→rename; fail-closed on truncated/corrupt/wrong version; bak recovery; id/natural-key mismatch rejected; reload re-runs VERIFIED gate (never trust persisted status or adapter/workflow **manifest** alone). Projections for native / adapter / workflow|plugin → honest non-VERIFIED unless registry evidence. Coverage: R33 W070 L070 S61-13 S61-22 G29. Catalog → N016; gateway → N017.
+
+```bash
+pytest tests/unit/test_api_registry_n015.py tests/unit/test_api_registry_n014.py -q
+```
+
+Full installed W/L H63-N015 not claimed PASS here (MANUAL / #21).
+
