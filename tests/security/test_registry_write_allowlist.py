@@ -71,14 +71,6 @@ def test_wide_hkcu_software_requires_explicit_env_extension(monkeypatch):
     assert check(r"HKCU\Software\LegacyApp\Settings")
 
 
-def test_wide_hkcu_software_requires_explicit_env_extension(monkeypatch):
-    """N006 migration: old wide default is gone; extend via WINOS_REGISTRY_ALLOWLIST."""
-    with pytest.raises(RegistryPathRejected):
-        check(r"HKCU\Software\LegacyApp\Settings")
-    monkeypatch.setenv(ENV_VAR, r"HKCU\Software\LegacyApp")
-    assert check(r"HKCU\Software\LegacyApp\Settings")
-
-
 def test_a_path_under_the_default_prefix_is_authorised():
     assert check(r"HKCU\Software\WinOsLayer") == r"HKCU\Software\WinOsLayer"
     assert check(r"HKCU\Software\WinOsLayer\Product\Settings")
