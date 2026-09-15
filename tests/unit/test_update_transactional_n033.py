@@ -199,8 +199,15 @@ def test_h63_n033_ambiguous_health_is_not_success(tmp_path: Path):
     assert not (install / "new.so").exists()
 
 
-def test_h63_n033_permission_denied_fail_closed_no_orphans(tmp_path: Path):
-    """Permissions denied → fail closed before replace; no orphans; clear error."""
+def test_h63_n033_permission_denied_fail_closed_no_orphans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Permissions denied → fail closed before replace; no orphans; clear error.
+
+    Portable: monkeypatch the writable preflight (Windows chmod on dirs is not
+    equivalent to POSIX non-writable; production path still uses os.access +
+    probe write).
+    """
     install = tmp_path / "install"
     backup = tmp_path / "backup"
     install.mkdir()
@@ -209,12 +216,53 @@ def test_h63_n033_permission_denied_fail_closed_no_orphans(tmp_path: Path):
     expected = _snapshot(install)
     pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.so": b"SO"})
 
-    # Make install_dir not writable (owner read+execute only).
+    monkeypatch.setattr(
+        mgr,
+        "_install_dir_writable",
+        lambda: (False, f"permissions denied: install_dir not writable: {install}"),
+    )
+
+    called_stop = {"n": 0}
+
+    def stop() -> dict[str, Any]:
+        called_stop["n"] += 1
+        return {"ok": True}
+
+    result = mgr.apply_linux_transactional(
+        pkg,
+        stop_service=stop,
+        start_service=lambda: {"ok": True},
+        health_check=lambda: {"ok": True, "status": "ok"},
+    )
+
+    assert result["ok"] is False
+    assert result.get("stage") == "permissions"
+    err = result.get("error", "").lower()
+    assert "permission" in err or "writable" in err or "denied" in err
+    assert result.get("rolled_back") is False
+    assert called_stop["n"] == 0  # never reached stop/replace
+    assert "journal" in result
+    assert any("permissions" in j for j in result["journal"])
+    assert _snapshot(install) == expected
+    assert not (install / "new.so").exists()
+    assert (install / "app.txt").read_text(encoding="utf-8") == "vA"
+    assert mgr.version == "1.0.0"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX chmod non-writable dirs only")
+def test_h63_n033_permission_denied_via_chmod_posix(tmp_path: Path):
+    """Real POSIX: chmod install_dir not writable → fail closed, no orphans."""
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    expected = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.so": b"SO"})
+
     mode_before = install.stat().st_mode
     install.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
-        # Also ensure os.access reports not writable when possible.
-        assert not os.access(install, os.W_OK) or True  # platform nuance OK
         result = mgr.apply_linux_transactional(
             pkg,
             stop_service=lambda: {"ok": True},
@@ -226,15 +274,9 @@ def test_h63_n033_permission_denied_fail_closed_no_orphans(tmp_path: Path):
 
     assert result["ok"] is False
     assert result.get("stage") == "permissions"
-    err = result.get("error", "").lower()
-    assert "permission" in err or "writable" in err or "denied" in err
     assert result.get("rolled_back") is False
-    assert "journal" in result
-    assert any("permissions" in j for j in result["journal"])
     assert _snapshot(install) == expected
     assert not (install / "new.so").exists()
-    assert (install / "app.txt").read_text(encoding="utf-8") == "vA"
-    assert mgr.version == "1.0.0"
 
 
 def test_h63_n033_rollback_deletes_files_introduced_by_update(tmp_path: Path):
