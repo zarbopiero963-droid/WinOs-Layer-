@@ -1,4 +1,7 @@
 """Integration: health, system, security, processes, apps."""
+import sys
+
+
 def test_health_no_auth_required(client):
     r = client.get("/v1/health")
     assert r.status_code == 200
@@ -33,11 +36,24 @@ def test_processes(client, auth_headers):
     r = client.get("/v1/processes", headers=auth_headers)
     assert r.status_code == 200
     assert len(r.json()["processes"]) >= 1
-    started = client.post("/v1/processes", headers=auth_headers, json={"command": "tool.exe", "args": ["a"]})
+    # N047: un nome che non si risolve in un eseguibile reale non viene avviato.
+    # Prima bastava chiederlo — `tool.exe` partiva e rispondeva 200.
+    refused = client.post(
+        "/v1/processes", headers=auth_headers, json={"command": "tool.exe", "args": ["a"]}
+    )
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "EXECUTABLE_NOT_FOUND"
+
+    started = client.post(
+        "/v1/processes",
+        headers=auth_headers,
+        json={"command": sys.executable, "args": ["-V"]},
+    )
     assert started.status_code == 200
     pid = started.json()["pid"]
     got = client.get(f"/v1/processes/{pid}", headers=auth_headers)
     assert got.status_code == 200
+    # Avviato da questa API: l'identità è registrata, quindi non serve altro.
     term = client.delete(f"/v1/processes/{pid}", headers=auth_headers)
     assert term.json()["ok"] is True
 

@@ -727,3 +727,48 @@ pytest tests/unit/test_runtime_budget_n046.py -q
 ```
 
 Full installed W/L H63-N046 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N047 — Process identity e launch autorizzato
+
+Contratto (#67 / H63-N047, B-OS, Q04): policy eseguibile/argv **separata dal
+terminale**; identità `PID + create_time + exe/owner`; nessun avvio arbitrario
+da ingressi alternativi. Coverage: R05 R21 W007 W008 L007 L008 G08 G20 G21.
+Out of scope: N048+, N005 D6, chiusura #67/#63/#21, claim H63-N047 installed
+W/L PASS.
+
+**Due moduli, due domande.** `os/processes/exec_policy.py` risponde a «questo
+avvio è permesso?», `os/processes/identity.py` a «questo PID è ancora il
+processo che credo?». Il gate sta nel **service**, non nei chiamanti: un
+secondo ingresso che chiamasse il backend direttamente salterebbe la policy.
+
+**Policy di avvio.** Non è un'allowlist di programmi — questo prodotto esiste
+per pilotare le applicazioni installate, elencarle una per una lo renderebbe
+inutile senza renderlo sicuro. Chiude invece le forme arbitrarie *per
+costruzione*: interpreti con codice inline (`sh -c`, `python -c`, `cmd /c`;
+`python3.11` riconosciuto come `python`), eseguibili in aree scrivibili da
+chiunque (`/tmp`, `%TEMP%`, Downloads), percorsi relativi o con `..`, e la
+risoluzione del `PATH` allo spawn invece che alla decisione (TOCTOU: al backend
+arriva il percorso **già risolto** da `authorize`). Argomenti validati: solo
+stringhe, niente NUL, massimo 64 argomenti da 4096 caratteri.
+
+**Identità.** `get_process` espone ora `create_time`, `exe` e `owner`
+(additivi, Linux e Windows via psutil; il backend finto li espone perché il
+gate sia collaudabile nella suite portabile). `start_process` registra
+l'identità alla nascita. `terminate_process` verifica **prima** dell'effetto:
+processo nostro e ancora sé stesso → terminato; nostro ma con `create_time`
+diverso → `PROCESS_IDENTITY_MISMATCH` (PID riciclato) e record dimenticato;
+non nostro → serve `expect_create_time` o `expect_name` che combaci, e deve
+appartenere allo stesso utente. `pid <= 1` non è terminabile
+(`PROCESS_PROTECTED`): `kill(-1)` colpirebbe tutto ciò che l'utente possiede.
+
+REST: un rifiuto di policy o identità è **403**, non un `ok: False` sepolto nel
+corpo; `PROCESS_NOT_FOUND` resta nel corpo, perché «non c'è più» non è un
+divieto. `DELETE /v1/processes/{pid}` accetta `expect_create_time` e
+`expect_name` (additivi).
+
+```bash
+pytest tests/unit/test_process_identity_n047.py -q
+```
+
+Full installed W/L H63-N047 not claimed PASS here (MANUAL_ONLY / #21).

@@ -314,7 +314,10 @@ class LinuxBackend:
             return None
         try:
             p = self._psutil.Process(pid)
-            return {
+            # N047: `create_time`, `exe` e `owner` sono l'identita' del processo.
+            # Senza di loro il chiamante ha solo il PID, che il kernel ricicla:
+            # chi verifica «e' ancora lui?» non avrebbe niente da confrontare.
+            info: dict[str, Any] = {
                 "pid": pid,
                 "name": p.name(),
                 "status": p.status(),
@@ -322,6 +325,18 @@ class LinuxBackend:
                 "memory_mb": round(p.memory_info().rss / 1e6, 2),
                 "running": p.is_running(),
             }
+            for key, getter in (
+                ("create_time", p.create_time),
+                ("exe", p.exe),
+                ("owner", p.username),
+            ):
+                try:
+                    info[key] = getter()
+                except (self._psutil.Error, OSError):
+                    # Un processo di un altro utente nega `exe`: il campo manca,
+                    # e chi verifica l'identita' lo tratta come "non provato".
+                    info[key] = None
+            return info
         except self._psutil.Error:
             return None
 

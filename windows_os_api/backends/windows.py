@@ -472,13 +472,26 @@ class WindowsBackend:
             return None
         try:
             p = self._psutil.Process(pid)
-            return {
+            # N047: identita' del processo, non solo il numero. Windows riassegna
+            # i PID come Linux: senza create_time/exe/owner non c'e' modo di
+            # distinguere il processo avviato da uno che ne ha ereditato il PID.
+            info: dict[str, Any] = {
                 "pid": pid,
                 "name": p.name(),
                 "status": p.status(),
                 "cpu_percent": p.cpu_percent(interval=0.0),
                 "memory_mb": round(p.memory_info().rss / 1e6, 2),
             }
+            for key, getter in (
+                ("create_time", p.create_time),
+                ("exe", p.exe),
+                ("owner", p.username),
+            ):
+                try:
+                    info[key] = getter()
+                except (self._psutil.Error, OSError):
+                    info[key] = None
+            return info
         except self._psutil.Error:
             return None
 
