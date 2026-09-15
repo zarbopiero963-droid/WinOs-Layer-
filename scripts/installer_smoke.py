@@ -77,8 +77,19 @@ def verify_installed_layout(install_dir: Path) -> None:
             f"install incomplete, missing {missing} in {install_dir} (present: {present})"
         )
     key_file = install_dir / "api_key.txt"
-    if not key_file.read_text(encoding="utf-8", errors="replace").strip():
+    # N034 ACL may deny the smoke runner (not SYSTEM/Administrators/LocalService).
+    # Presence + non-zero size proves the installer wrote a key; content read is best-effort.
+    try:
+        size = key_file.stat().st_size
+    except OSError as exc:
+        raise InstallerSmokeError(f"api_key.txt unstatable: {exc}") from exc
+    if size <= 0:
         raise InstallerSmokeError("api_key.txt was created but is empty")
+    try:
+        if not key_file.read_text(encoding="utf-8", errors="replace").strip():
+            raise InstallerSmokeError("api_key.txt was created but is empty")
+    except PermissionError:
+        pass  # ACL-hardened key file is expected after N034
 
 
 def verify_removed(install_dir: Path) -> None:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Uninstall WinOs-Layer Linux portable install.
 #
-# Linux package runs FakeBackend / OS-portable API server for non-Windows hosts.
+# Linux package runs LinuxBackend / real OS API server for non-Windows hosts.
 # Windows EXE uses WindowsBackend when on Win32.
 #
 # Usage:
