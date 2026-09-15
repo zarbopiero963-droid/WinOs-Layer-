@@ -52,6 +52,21 @@ def _canonical_payload(manifest: dict[str, Any]) -> bytes:
         "hwnd",
     }
     body = {k: v for k, v in manifest.items() if k not in skip}
+    # Derived verification evidence must not bind the publisher signature (N030).
+    actions = body.get("actions")
+    if isinstance(actions, list):
+        cleaned = []
+        for item in actions:
+            if not isinstance(item, dict):
+                continue
+            cleaned.append(
+                {
+                    k: v
+                    for k, v in item.items()
+                    if k != "verification"
+                }
+            )
+        body["actions"] = cleaned
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
@@ -208,3 +223,74 @@ def require_trust(
         "required": required,
         "reason": None if allowed else f"trust insufficient: have {level}, need {required}",
     }
+
+
+def adapter_signing_manifest(adapter: Any) -> dict[str, Any]:
+    """Build the canonical signed body from a live Adapter (N030)."""
+    actions = []
+    for action in getattr(adapter, "actions", []) or []:
+        item = {
+            "name": getattr(action, "name", ""),
+            "description": getattr(action, "description", ""),
+            "automation_id": getattr(action, "automation_id", ""),
+            "control_type": getattr(action, "control_type", ""),
+            "params": list(getattr(action, "params", []) or []),
+            "risk": getattr(action, "risk", "low"),
+        }
+        # verification evidence is *derived* — not part of publisher signature
+        actions.append(item)
+    body: dict[str, Any] = {
+        "app_id": getattr(adapter, "app_id", ""),
+        "app_name": getattr(adapter, "app_name", "") or getattr(adapter, "app_id", ""),
+        "actions": actions,
+    }
+    publisher = getattr(adapter, "publisher", None)
+    if publisher:
+        body["publisher"] = publisher
+    # Include manifest_version when present on adapter/store convention
+    mv = getattr(adapter, "manifest_version", None)
+    if mv is not None:
+        body["manifest_version"] = mv
+    return body
+
+
+def revalidate_adapter_trust(adapter: Any, *, required: str = "verified") -> dict[str, Any]:
+    """Re-verify signature over current adapter content (tamper → deny).
+
+    Used before invoke (N030). Unsigned adapters without an ed25519/production
+    claim remain allowed. Returns gate dict like ``require_trust``.
+    """
+    sig = getattr(adapter, "signature", None) or ""
+    level = getattr(adapter, "trust_level", "unsigned") or "unsigned"
+    needs = level in {"verified", "publisher"} or str(sig).startswith("ed25519:")
+    if not needs:
+        return {
+            "allowed": True,
+            "trust_level": level,
+            "required": required,
+            "reason": None,
+            "tampered": False,
+        }
+    manifest = adapter_signing_manifest(adapter)
+    # Prefer store manifest_version if actions were loaded from disk
+    from windows_os_api.apps.adapters.store import MANIFEST_VERSION
+
+    manifest.setdefault("manifest_version", MANIFEST_VERSION)
+    crypto_ok = bool(sig) and verify_adapter_signature(manifest, sig)
+    resolved = resolve_trust_level(manifest, sig if sig else None)
+    allowed = crypto_ok and trust_allows(resolved, required)
+    return {
+        "allowed": allowed,
+        "trust_level": resolved,
+        "required": required,
+        "reason": None
+        if allowed
+        else (
+            "adapter content no longer matches signature (tamper or revoked key)"
+            if not crypto_ok
+            else f"trust insufficient: have {resolved}, need {required}"
+        ),
+        "tampered": not crypto_ok,
+        "resolved": resolved,
+    }
+

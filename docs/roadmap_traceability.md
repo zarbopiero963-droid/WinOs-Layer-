@@ -446,3 +446,13 @@ pytest tests/unit/test_trust_n029.py tests/unit/test_trust_and_sandbox.py -q
 
 Full installed W/L H63-N029 not claimed PASS here (MANUAL / #21).
 
+## N030 — Enforcement trust su load ed esecuzione
+
+Contratto (#67 / H63-N030, B-VERIFY, Q08/Q14): riverifica firma sul contenuto adapter corrente (actions incluse) prima di invoke; tamper → ``TRUST_INSUFFICIENT`` + demote VERIFIED→INVALID; reload firma valida ripristina uso; claim production su disco non riverificabile → skip load. Coverage: R22 R33 R48 W032 W097 L032 L097 G19 G20. Release discovery → N031.
+
+```bash
+pytest tests/unit/test_trust_n030.py tests/unit/test_trust_n029.py -q
+```
+
+Full installed W/L H63-N030 not claimed PASS here (MANUAL / #21).
+
