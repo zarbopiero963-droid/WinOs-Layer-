@@ -8,10 +8,15 @@ N031: HTTPS release discovery + verified staged download.
 N032: transactional Windows apply — always verify on the distributed path;
 stop → replace → start → health with injectable hooks; rollback deletes files
 newly introduced by a failed/partial update (Phase 0 gap closed).
+
+N033: transactional Linux apply — same state machine for systemd/user + Linux
+install tree; permission preflight fail-closed; journal/stages trail; injectable
+stop/start/health hooks (no live systemctl required in CI).
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -211,6 +216,170 @@ class UpdateManager:
             return False, str(result.get("error") or f"{kind} failed")
         return False, f"ambiguous {kind} result (not success): {dict(result)!r}"
 
+    def _install_dir_writable(self) -> tuple[bool, str]:
+        """Return (ok, error). Fail closed if install_dir is not writable."""
+        install = self.install_dir
+        try:
+            if not install.exists() or not install.is_dir():
+                return False, f"install_dir missing or not a directory: {install}"
+            if not os.access(install, os.W_OK):
+                return False, f"permissions denied: install_dir not writable: {install}"
+            probe = install / ".winos_update_write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True, ""
+        except OSError as exc:
+            return False, f"permissions denied on install_dir: {exc}"
+
+    def _apply_os_transactional(
+        self,
+        package: UpdatePackage,
+        *,
+        stop_service: Hook | None = None,
+        start_service: Hook | None = None,
+        health_check: Hook | None = None,
+        check_writable: bool = False,
+        include_journal: bool = False,
+        platform: str = "os",
+    ) -> dict[str, Any]:
+        """Shared transactional apply (N032 Windows / N033 Linux).
+
+        Stages: preflight verify → [permissions] → backup → stop → replace →
+        start → health. Always verifies. On failure after backup (or stop with
+        need_rollback), rollback deletes files newly introduced by the update.
+        Ambiguous health ≠ success. Injectable hooks — no live SCM/systemctl.
+        """
+        stages: list[str] = ["preflight"]
+        journal: list[str] = ["preflight: verify"]
+
+        def _result(
+            *,
+            ok: bool,
+            stage: str,
+            error: str = "",
+            backup: Path | None = None,
+            rolled_back: bool = False,
+            replaced: bool = False,
+            version: str | None = None,
+        ) -> dict[str, Any]:
+            out: dict[str, Any] = {
+                "ok": ok,
+                "stage": stage,
+                "stages": list(stages),
+                "rolled_back": rolled_back,
+                "platform": platform,
+            }
+            if error:
+                out["error"] = error
+            if backup is not None:
+                out["backup"] = str(backup)
+            if ok:
+                out["version"] = version or package.version
+                out["replaced"] = replaced
+            if include_journal:
+                out["journal"] = list(journal)
+            return out
+
+        if not self.verify(package):
+            journal.append("preflight: checksum verification failed")
+            return _result(
+                ok=False,
+                stage="preflight",
+                error="checksum verification failed",
+            )
+
+        journal.append("preflight: ok")
+
+        if check_writable:
+            stages.append("permissions")
+            journal.append("permissions: check install_dir writable")
+            ok_w, err_w = self._install_dir_writable()
+            if not ok_w:
+                journal.append(f"permissions: fail — {err_w}")
+                return _result(ok=False, stage="permissions", error=err_w)
+            journal.append("permissions: ok")
+
+        backup = self.backup_current()
+        stages.append("backup")
+        journal.append(f"backup: {backup}")
+        rolled_past_replace = False
+
+        def _fail(stage: str, error: str, *, need_rollback: bool) -> dict[str, Any]:
+            rolled = False
+            journal.append(f"{stage}: fail — {error}")
+            if need_rollback:
+                rb = self.rollback()
+                rolled = bool(rb.get("ok"))
+                if rolled:
+                    journal.append("rollback: ok")
+                else:
+                    journal.append(f"rollback: fail — {rb.get('error')}")
+                    error = f"{error}; rollback also failed: {rb.get('error')}"
+            return _result(
+                ok=False,
+                stage=stage,
+                error=error,
+                backup=backup,
+                rolled_back=rolled,
+            )
+
+        # stop (systemd/user or Windows SCM via injectable hook)
+        stages.append("stop")
+        journal.append("stop: begin")
+        if stop_service is not None:
+            ok, err = self._hook_succeeded(stop_service(), kind="stop")
+            if not ok:
+                # No tree change yet — still rollback to restore consistent state/version
+                return _fail("stop", err, need_rollback=True)
+            journal.append("stop: ok")
+        else:
+            journal.append("stop: skipped (no hook)")
+
+        # replace
+        stages.append("replace")
+        journal.append("replace: begin")
+        try:
+            self._replace_install_tree(package)
+            rolled_past_replace = True
+            self._state["version"] = package.version
+            self._state["last_backup"] = str(backup)
+            self._save_state()
+            journal.append("replace: ok")
+        except Exception as exc:  # noqa: BLE001 — boundary: any replace failure → rollback
+            return _fail("replace", f"replace failed: {exc}", need_rollback=True)
+
+        # start
+        stages.append("start")
+        journal.append("start: begin")
+        if start_service is not None:
+            ok, err = self._hook_succeeded(start_service(), kind="start")
+            if not ok:
+                return _fail("start", err, need_rollback=True)
+            journal.append("start: ok")
+        else:
+            journal.append("start: skipped (no hook)")
+
+        # health
+        stages.append("health")
+        journal.append("health: begin")
+        if health_check is not None:
+            ok, err = self._hook_succeeded(health_check(), kind="health")
+            if not ok:
+                return _fail("health", err, need_rollback=True)
+            journal.append("health: ok")
+        else:
+            journal.append("health: skipped (no hook)")
+
+        stages.append("done")
+        journal.append("done")
+        return _result(
+            ok=True,
+            stage="done",
+            backup=backup,
+            replaced=rolled_past_replace,
+            version=package.version,
+        )
+
     def apply_windows_transactional(
         self,
         package: UpdatePackage,
@@ -226,79 +395,42 @@ class UpdateManager:
         including deletion of files newly introduced by the update.
         Injectable hooks avoid live Windows SCM in CI.
         """
-        stages: list[str] = ["preflight"]
-        if not self.verify(package):
-            return {
-                "ok": False,
-                "error": "checksum verification failed",
-                "stage": "preflight",
-                "stages": stages,
-                "rolled_back": False,
-            }
+        return self._apply_os_transactional(
+            package,
+            stop_service=stop_service,
+            start_service=start_service,
+            health_check=health_check,
+            check_writable=False,
+            include_journal=False,
+            platform="windows",
+        )
 
-        backup = self.backup_current()
-        stages.append("backup")
-        rolled_past_replace = False
+    def apply_linux_transactional(
+        self,
+        package: UpdatePackage,
+        *,
+        stop_service: Hook | None = None,
+        start_service: Hook | None = None,
+        health_check: Hook | None = None,
+    ) -> dict[str, Any]:
+        """Transactional Linux update (N033 / H63-N033).
 
-        def _fail(stage: str, error: str, *, need_rollback: bool) -> dict[str, Any]:
-            rolled = False
-            if need_rollback:
-                rb = self.rollback()
-                rolled = bool(rb.get("ok"))
-                if not rolled:
-                    error = f"{error}; rollback also failed: {rb.get('error')}"
-            return {
-                "ok": False,
-                "error": error,
-                "stage": stage,
-                "stages": stages,
-                "rolled_back": rolled,
-                "backup": str(backup),
-            }
-
-        # stop
-        stages.append("stop")
-        if stop_service is not None:
-            ok, err = self._hook_succeeded(stop_service(), kind="stop")
-            if not ok:
-                # No tree change yet — still rollback to restore consistent state/version
-                return _fail("stop", err, need_rollback=True)
-
-        # replace
-        stages.append("replace")
-        try:
-            self._replace_install_tree(package)
-            rolled_past_replace = True
-            self._state["version"] = package.version
-            self._state["last_backup"] = str(backup)
-            self._save_state()
-        except Exception as exc:  # noqa: BLE001 — boundary: any replace failure → rollback
-            return _fail("replace", f"replace failed: {exc}", need_rollback=True)
-
-        # start
-        stages.append("start")
-        if start_service is not None:
-            ok, err = self._hook_succeeded(start_service(), kind="start")
-            if not ok:
-                return _fail("start", err, need_rollback=True)
-
-        # health
-        stages.append("health")
-        if health_check is not None:
-            ok, err = self._hook_succeeded(health_check(), kind="health")
-            if not ok:
-                return _fail("health", err, need_rollback=True)
-
-        stages.append("done")
-        return {
-            "ok": True,
-            "version": package.version,
-            "backup": str(backup),
-            "stage": "done",
-            "stages": stages,
-            "rolled_back": False,
-            "replaced": rolled_past_replace,
-        }
+        Same state machine as N032 for systemd/user + Linux install tree:
+        preflight verify → permissions → backup → stop → replace → start →
+        health. Always verifies. Permission denied fail closed before replace
+        (no orphans). Journal + stages trail. Injectable hooks named for
+        systemd (stop_service/start_service/health_check) — no live systemctl
+        required in CI. Ambiguous health ≠ success.
+        """
+        return self._apply_os_transactional(
+            package,
+            stop_service=stop_service,
+            start_service=start_service,
+            health_check=health_check,
+            check_writable=True,
+            include_journal=True,
+            platform="linux",
+        )
 
     def rollback(self) -> dict[str, Any]:
         """Restore latest backup and delete install files not present in it.
