@@ -1,0 +1,70 @@
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 4bb3c80..n037000 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -48,6 +48,18 @@ jobs:
+       - run: pip install -e ".[dev,windows]" pyinstaller
+       - run: python scripts/build_installer.py build-portable
+       - run: python scripts/build_installer.py build-installer
++      # N037: optional Authenticode when repo secrets present; always attest.
++      # Secrets (optional): WINOS_SIGN_PFX_B64, WINOS_SIGN_PFX_PASSWORD,
++      # WINOS_RELEASE_SIGNING_KEY, WINOS_RELEASE_PUBLISHER, WINOS_SIGN_TIMESTAMP_URL.
++      - name: Sign + attest Windows artifacts (N037, optional cert)
++        env:
++          WINOS_SIGN_PFX_B64: ${{ secrets.WINOS_SIGN_PFX_B64 }}
++          WINOS_SIGN_PFX_PASSWORD: ${{ secrets.WINOS_SIGN_PFX_PASSWORD }}
++          WINOS_RELEASE_SIGNING_KEY: ${{ secrets.WINOS_RELEASE_SIGNING_KEY }}
++          WINOS_RELEASE_PUBLISHER: ${{ secrets.WINOS_RELEASE_PUBLISHER }}
++          WINOS_SIGN_TIMESTAMP_URL: ${{ vars.WINOS_SIGN_TIMESTAMP_URL }}
++        run: |
++          python scripts/build_installer.py sign-artifacts
+       - run: python scripts/build_installer.py checksums
+       - name: Upload Windows artifacts
+         uses: actions/upload-artifact@v4
+@@ -105,20 +117,32 @@ jobs:
+       - name: Stage release files
+         run: |
+           mkdir -p release-dist
+           cp -a dist/. release-dist/ || true
+           find artifacts-windows -type f \( \
+-            -name '*.exe' -o -name '*.zip' -o -name 'checksums.txt' -o -name 'SHA256SUMS.txt' \
++            -name '*.exe' -o -name '*.zip' -o -name 'checksums.txt' -o -name 'SHA256SUMS.txt' \
++            -o -name 'RELEASE_ATTESTATION.json' \
+           \) -exec cp -t release-dist {} +
+           find artifacts-linux -type f \( \
+             -name 'winos-api-portable-linux.zip' \
+             -o -name 'winos-api-portable-linux.tar.gz' \
+             -o -name 'checksums-linux.txt' \
+             -o -name 'winos-api' \
++            -o -name 'RELEASE_ATTESTATION.json' \
+           \) -exec cp -t release-dist {} +
+-          cd release-dist
+-          sha256sum * > SHA256SUMS.txt || true
+-          cat SHA256SUMS.txt
+-          ls -la
++          # N028: fail-closed checksums without self-hash (prefer helper script).
++          bash scripts/stage_release_checksums.sh release-dist
++          # N037: attest staged artifacts (Ed25519 if secret present) + verify.
++          python scripts/build_installer.py attest-release \
++            $(find release-dist -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'RELEASE_ATTESTATION.json' | sort) \
++            -o release-dist/RELEASE_ATTESTATION.json || true
++          # Re-run without || true when WINOS_RELEASE_SIGNING_KEY is configured:
++          if [ -n "${WINOS_RELEASE_SIGNING_KEY:-}" ]; then
++            python scripts/build_installer.py attest-release \
++              $(find release-dist -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'RELEASE_ATTESTATION.json' | sort) \
++              -o release-dist/RELEASE_ATTESTATION.json
++            python scripts/build_installer.py verify-release release-dist/RELEASE_ATTESTATION.json \
++              --root release-dist --require-attestation-signature
++          else
++            python scripts/build_installer.py verify-release release-dist/RELEASE_ATTESTATION.json \
++              --root release-dist || true
++          fi
++          cat release-dist/SHA256SUMS.txt
++          ls -la release-dist
++        env:
++          WINOS_RELEASE_SIGNING_KEY: ${{ secrets.WINOS_RELEASE_SIGNING_KEY }}
++          WINOS_RELEASE_PUBLISHER: ${{ secrets.WINOS_RELEASE_PUBLISHER }}
++          WINOS_RELEASE_VERIFY_KEY: ${{ secrets.WINOS_RELEASE_VERIFY_KEY }}
+       - name: Upload checksums artifact
+         uses: actions/upload-artifact@v4
+         with:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Installer packaging helper: validate, build-portable, build-installer, package-linux, checksums.
+"""Installer packaging helper: validate, build-portable, build-installer, package-linux, checksums,
+sign-artifacts, attest-release, verify-release (N037).
 
 On Linux: validate + checksums always work; build-portable produces a Linux one-file
 smoke binary (or documents windows-only if PyInstaller missing). package-linux wraps
@@ -253,6 +254,47 @@ def validate(verbose: bool = True) -> dict[str, Any]:
         checks["linux_uninstall_keep_data"] = "--keep-data" in ush
         if not checks["linux_uninstall_keep_data"]:
             errors.append("uninstall.sh must support --keep-data (N036)")
+
+    # N037 — release attestation helpers (no real cert required on Linux CI)
+    att_mod = ROOT / "windows_os_api" / "installer" / "release_attestation.py"
+    checks["n037_release_attestation_module"] = att_mod.is_file()
+    if not att_mod.is_file():
+        errors.append("missing windows_os_api/installer/release_attestation.py (N037)")
+    else:
+        try:
+            from windows_os_api.installer.release_attestation import schema_helpers_present
+
+            helpers = schema_helpers_present()
+            for hk, hv in helpers.items():
+                checks[f"n037_{hk}"] = bool(hv)
+                if not hv:
+                    errors.append(f"N037 schema helper missing/invalid: {hk}")
+        except Exception as exc:  # noqa: BLE001 — validate must surface import errors
+            checks["n037_schema_helpers"] = False
+            errors.append(f"N037 release_attestation import failed: {exc}")
+
+    sign_script = ROOT / "scripts" / "sign_windows_artifacts.py"
+    verify_script = ROOT / "scripts" / "verify_release_artifacts.py"
+    checks["n037_sign_script"] = sign_script.is_file()
+    checks["n037_verify_script"] = verify_script.is_file()
+    if not sign_script.is_file():
+        errors.append("missing scripts/sign_windows_artifacts.py (N037)")
+    if not verify_script.is_file():
+        errors.append("missing scripts/verify_release_artifacts.py (N037)")
+
+    patch_n037 = ROOT / "docs" / "patches" / "n037_release_yml.patch"
+    checks["n037_release_yml_patch"] = patch_n037.is_file()
+    if not patch_n037.is_file():
+        warnings.append("docs/patches/n037_release_yml.patch missing (workflow scope often lacks push)")
+
+    if ISS.is_file():
+        it2 = _read(ISS)
+        # Optional SignTool must be documented/guarded — commented template is OK
+        checks["iss_signtool_optional"] = (
+            "SignTool" in it2 or "N037" in it2 or "Authenticode" in it2 or "signtool" in it2.lower()
+        )
+        if not checks["iss_signtool_optional"]:
+            errors.append("winos-api.iss must document optional SignTool / N037 signing (no hard cert dep)")
 
     # Localhost firewall note in README
     readme = ROOT / "installer" / "README.md"
@@ -681,6 +723,88 @@ def package_linux(
     return 0
 
 
+
+def sign_artifacts(
+    files: list[Path] | None = None,
+    *,
+    require_signature: bool = False,
+    version: str | None = None,
+    publisher: str | None = None,
+    dry_run: bool = False,
+    output: Path | None = None,
+) -> int:
+    """Optional Authenticode + always write RELEASE_ATTESTATION.json (N037)."""
+    # Load sibling module by path (scripts/ is not a package)
+    import importlib.util
+
+    sp = Path(__file__).resolve().parent / "sign_windows_artifacts.py"
+    spec = importlib.util.spec_from_file_location("sign_windows_artifacts", sp)
+    if not spec or not spec.loader:
+        print("missing scripts/sign_windows_artifacts.py", file=sys.stderr)
+        return 1
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.run(
+        artifacts=files,
+        out=output,
+        require_signature=require_signature,
+        version=version,
+        publisher=publisher,
+        dry_run=dry_run,
+    )
+
+
+def attest_release(
+    files: list[Path] | None = None,
+    *,
+    version: str | None = None,
+    publisher: str | None = None,
+    output: Path | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Write attestation without requiring Authenticode (hashes + optional Ed25519)."""
+    return sign_artifacts(
+        files,
+        require_signature=False,
+        version=version,
+        publisher=publisher,
+        dry_run=dry_run,
+        output=output,
+    )
+
+
+def verify_release(
+    attestation: Path | None = None,
+    *,
+    root: Path | None = None,
+    publisher: str | None = None,
+    require_attestation_signature: bool = False,
+    require_authenticode: bool = False,
+) -> int:
+    """Independent verify for release attestation (N037)."""
+    import importlib.util
+
+    sp = Path(__file__).resolve().parent / "verify_release_artifacts.py"
+    spec = importlib.util.spec_from_file_location("verify_release_artifacts", sp)
+    if not spec or not spec.loader:
+        print("missing scripts/verify_release_artifacts.py", file=sys.stderr)
+        return 1
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    argv: list[str] = []
+    if attestation is not None:
+        argv.append(str(attestation))
+    if root is not None:
+        argv.extend(["--root", str(root)])
+    if publisher is not None:
+        argv.extend(["--publisher", publisher])
+    if require_attestation_signature:
+        argv.append("--require-attestation-signature")
+    if require_authenticode:
+        argv.append("--require-authenticode")
+    return mod.main(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="WinOs-Layer installer build helper")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without building")
@@ -725,6 +849,35 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory that relative labels resolve against (default: manifest parent)",
     )
 
+    p_sign = sub.add_parser(
+        "sign-artifacts",
+        help="Optional Authenticode + write RELEASE_ATTESTATION.json (N037)",
+    )
+    p_sign.add_argument("files", nargs="*", help="Artifact paths (default dist/ + installer/output/)")
+    p_sign.add_argument("-o", "--output", default=None, help="Attestation JSON path")
+    p_sign.add_argument("--require-signature", action="store_true")
+    p_sign.add_argument("--version", default=None)
+    p_sign.add_argument("--publisher", default=None)
+
+    p_att = sub.add_parser(
+        "attest-release",
+        help="Write release attestation (hashes; optional Ed25519; no cert required)",
+    )
+    p_att.add_argument("files", nargs="*", help="Artifact paths")
+    p_att.add_argument("-o", "--output", default=None)
+    p_att.add_argument("--version", default=None)
+    p_att.add_argument("--publisher", default=None)
+
+    p_vre = sub.add_parser(
+        "verify-release",
+        help="Independently verify RELEASE_ATTESTATION.json (N037)",
+    )
+    p_vre.add_argument("attestation", nargs="?", default=None)
+    p_vre.add_argument("--root", default=None)
+    p_vre.add_argument("--publisher", default=None)
+    p_vre.add_argument("--require-attestation-signature", action="store_true")
+    p_vre.add_argument("--require-authenticode", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "validate":
@@ -755,6 +908,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "verify-checksums":
         root = Path(args.root) if args.root else None
         return verify_checksums(Path(args.manifest), root=root)
+    if args.cmd == "sign-artifacts":
+        files = [Path(f) for f in args.files] if args.files else None
+        out = Path(args.output) if args.output else None
+        return sign_artifacts(
+            files,
+            require_signature=args.require_signature,
+            version=args.version,
+            publisher=args.publisher,
+            dry_run=args.dry_run,
+            output=out,
+        )
+    if args.cmd == "attest-release":
+        files = [Path(f) for f in args.files] if args.files else None
+        out = Path(args.output) if args.output else None
+        return attest_release(
+            files,
+            version=args.version,
+            publisher=args.publisher,
+            output=out,
+            dry_run=args.dry_run,
+        )
+    if args.cmd == "verify-release":
+        att = Path(args.attestation) if args.attestation else None
+        root = Path(args.root) if args.root else None
+        return verify_release(
+            att,
+            root=root,
+            publisher=args.publisher,
+            require_attestation_signature=args.require_attestation_signature,
+            require_authenticode=args.require_authenticode,
+        )
     return 1
 
 

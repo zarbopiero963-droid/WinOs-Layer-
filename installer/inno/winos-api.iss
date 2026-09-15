@@ -28,6 +28,20 @@ WizardStyle=modern
 SetupMutex={#MySetupMutex}
 AppMutex={#MyAppMutex}
 
+; ---------------------------------------------------------------------------
+; N037 — Optional Authenticode (owner-provided cert only; do NOT purchase here)
+; Builds MUST succeed without a certificate. Leave SignTool commented unless
+; CI/local env defines a working signtool alias (e.g. via iscc /S...).
+;
+; Example (uncomment ONLY when WINOS_SIGN_PFX_* secrets + signtool exist):
+;   SignTool=signtool
+; And register before ISCC, e.g.:
+;   iscc /Ssigntool="signtool.exe sign /f %WINOS_SIGN_PFX_PATH% /p %WINOS_SIGN_PFX_PASSWORD% /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com $f" winos-api.iss
+;
+; Prefer scripts/sign_windows_artifacts.py after ISCC so Linux CI validate()
+; never requires a cert. Never claim signed without verify evidence.
+; ---------------------------------------------------------------------------
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
