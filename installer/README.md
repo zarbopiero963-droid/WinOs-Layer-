@@ -66,6 +66,11 @@ python scripts/build_installer.py package-linux --format deb rpm appimage
 
 # SHA-256 of dist/ artifacts
 python scripts/build_installer.py checksums
+
+# N037 optional sign + attest + verify
+python scripts/build_installer.py sign-artifacts
+python scripts/build_installer.py attest-release
+python scripts/build_installer.py verify-release
 ```
 
 ## Linux portable (LinuxBackend real OS)
@@ -152,6 +157,44 @@ that invalid registration and directs users to NSSM.
 
 Default is **localhost only**. Do not open firewall ports unless you deliberately
 enable remote access (`WINOS_REMOTE_ACCESS=true`) and understand the risk.
+
+
+
+## N037 — Optional signing + release attestation
+
+**No certificate purchase.** Authenticode runs only when the owner provides
+signing secrets. Without secrets, PE files remain `unsigned` and CI still
+passes.
+
+### Secrets / env (optional)
+
+| Variable | Purpose |
+|----------|---------|
+| `WINOS_SIGN_PFX_PATH` or `WINOS_SIGN_PFX_B64` + `WINOS_SIGN_PFX_PASSWORD` | Authenticode PFX (Windows + signtool) |
+| `WINOS_SIGN_TIMESTAMP_URL` | Optional RFC3161 timestamp URL |
+| `WINOS_RELEASE_SIGNING_KEY` | Ed25519 private key (hex/base64/PEM) for attestation signature |
+| `WINOS_RELEASE_VERIFY_KEY` | Matching public key for independent verify |
+| `WINOS_RELEASE_PUBLISHER` | Publisher identity string (default `WinOs-Layer`) |
+
+### Commands
+
+```bash
+# Optional Authenticode (leave unsigned if no cert) + write RELEASE_ATTESTATION.json
+python scripts/build_installer.py sign-artifacts
+# Attest hashes only (never requires a code-signing cert)
+python scripts/build_installer.py attest-release
+# Independent verify: sha256 + optional Ed25519; Authenticode on Linux → pe_verify=unavailable/presence_only
+python scripts/build_installer.py verify-release dist/RELEASE_ATTESTATION.json --root dist
+```
+
+Altered bytes after attestation, unexpected publisher, or bad attestation
+signature → non-zero. Never claim installed Authenticode/SmartScreen PASS
+without a real cert and Windows verify evidence.
+
+Workflow wiring for `.github/workflows/release.yml` lives in
+`docs/patches/n037_release_yml.patch` (apply with owner `workflow` OAuth scope;
+same carry-forward as N028). Prefer `scripts/stage_release_checksums.sh` for
+SHA256SUMS.
 
 ## CI
 

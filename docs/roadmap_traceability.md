@@ -523,3 +523,18 @@ python scripts/build_installer.py package-linux --format deb rpm appimage
 ```
 
 Full installed L H63-N036 (ogni formato su distro reale) not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N037 — Firma EXE/Setup e artifact release
+
+Contratto (#67 / H63-N037, B-PKG, Q14/#10): attestation/manifest (version, publisher, sha256, signing_status ``unsigned|authenticode|attested``); optional Ed25519 publisher binding via ``WINOS_RELEASE_SIGNING_KEY``; optional Authenticode via owner PFX secrets only (**no cert purchase**); independent ``verify-release`` fail-closed on tamper / wrong publisher / bad signature; Inno SignTool documented but optional so ISCC works without cert; release.yml wiring via ``docs/patches/n037_release_yml.patch`` (workflow scope). Coverage: R44 R48 W093 W100 L100 G05 G09. Out of scope: Flatpak, N005 D6, N038+, chiusura #67/#63/#21, claim installed Authenticode PASS senza cert.
+
+```bash
+pytest tests/unit/test_release_signing_n037.py -q
+python scripts/build_installer.py validate
+python scripts/build_installer.py attest-release
+python scripts/build_installer.py verify-release
+```
+
+Full installed W H63-N037 Authenticode/SmartScreen not claimed PASS here (MANUAL_ONLY / #21 / #10).
+
