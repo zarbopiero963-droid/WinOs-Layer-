@@ -328,17 +328,6 @@ class EventRecorder:
             pytest.fail("event_recorder has no hwnd to focus")
         hwnd = self.hwnd
         title = self.title
-        # Alzare la finestra bersaglio PRIMA di controllare il focus, sempre, non
-        # solo quando il focus risulta perso. Il caso che sfuggiva: il controllo
-        # del focus passa, un'altra finestra mappata dopo si stacka sopra, e il
-        # click finisce su di lei — xev registra zero ButtonPress e il log mostra
-        # il FocusOut. Riprodotto: con una finestra che si sovrappone dopo il
-        # controllo, l'iniezione arriva a 0 press; alzando e riattivando subito
-        # prima dell'iniezione arriva a 2. Non cambia nessuna asserzione: cambia
-        # solo quanto e' affidabile la consegna che il test misura.
-        if self.managed:
-            xdo(["windowraise", str(hwnd)], timeout=5)
-            xdo(["windowactivate", "--sync", str(hwnd)], timeout=5)
         if wait_for_focus(hwnd, timeout=1.0, title=title):
             return
         for attempt in range(attempts):
