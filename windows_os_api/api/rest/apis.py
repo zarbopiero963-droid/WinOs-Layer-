@@ -1,4 +1,4 @@
-"""N016/N018/N019/N023 — REST API catalog + API Test + OpenAPI + disable.
+"""N016/N018/N019/N023/N024 — REST API catalog + test + disable + create/publish.
 
 Catalog: GET /v1/apis list + detail over PersistentApiRegistry / ApiRegistry.
 Pagination uses ``limit``/``offset``. Missing record → 404; registry
@@ -9,6 +9,10 @@ postcondition; HTTP 200 alone is never verified success.
 
 N023: ``POST /v1/apis/{api_id}/disable`` sets registry status DISABLED
 (ADAPTER_MANAGE); gateway then fail-closes Try it / execute.
+
+N024: ``POST /v1/apis`` creates a PARTIAL candidate; verify attaches evidence
+without publishing; ``POST /v1/apis/{api_id}/publish`` promotes to VERIFIED
+only with fresh verification evidence (no implicit GUI consent).
 """
 from __future__ import annotations
 
@@ -26,7 +30,11 @@ from windows_os_api.apps.api_registry.catalog import (
     list_catalog,
     resolve_registry,
 )
-from windows_os_api.apps.api_registry.model import ApiStatus
+from windows_os_api.apps.api_registry.model import (
+    ApiStatus,
+    RegistrationRejected,
+    authorize_verified_status,
+)
 from windows_os_api.apps.schema.openapi_export import (
     OpenAPISchemaRejected,
     assemble_openapi_document,
@@ -108,6 +116,86 @@ def list_apis(
 
     audit("apis.list", auth, detail={"total": page.total, "limit": page.limit, "offset": page.offset})
     return page.to_dict()
+
+
+class CreateApiBody(BaseModel):
+    """N024: create registry candidate (always PARTIAL; never VERIFIED on create)."""
+
+    name: str
+    method: str
+    path: str
+    description: str = ""
+    source: str
+    application_id: str = ""
+    adapter_id: str = ""
+    capability: str
+    permissions: list[str] = Field(default_factory=list)
+    authentication_required: bool = True
+    # Accepted for forward-compat / UI form; not persisted on ApiRecord yet.
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+
+
+@router.post("")
+def create_api_route(
+    body: CreateApiBody,
+    auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE)),
+):
+    """N024: register a PARTIAL candidate API (never VERIFIED on create).
+
+    Requires ADAPTER_MANAGE. App scope checked when ``application_id`` is set.
+    Registry unavailable → 503. RegistrationRejected → 422.
+    """
+    try:
+        registry = resolve_registry()
+    except RegistryUnavailable as exc:
+        audit("apis.create", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+
+    app_id = (body.application_id or "").strip()
+    if app_id:
+        ensure_app_access(auth, app_id)
+
+    payload: dict[str, Any] = {
+        "name": body.name,
+        "method": body.method,
+        "path": body.path,
+        "description": body.description,
+        "source": body.source,
+        "application_id": app_id,
+        "adapter_id": (body.adapter_id or "").strip(),
+        "capability": body.capability,
+        "permissions": list(body.permissions or []),
+        "authentication_required": bool(body.authentication_required),
+        # Force candidate — ignore any client attempt to publish on create.
+        "status": ApiStatus.PARTIAL.value,
+        "verification_id": None,
+        "last_verified_at": None,
+    }
+    try:
+        rec = registry.register(payload)
+    except RegistrationRejected as exc:
+        audit("apis.create", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # Defense in depth: create must never yield VERIFIED.
+    if rec.status is ApiStatus.VERIFIED:
+        rec = registry.set_status(rec.id, ApiStatus.PARTIAL)
+
+    audit(
+        "apis.create",
+        auth,
+        resource=rec.id,
+        outcome="success",
+        detail={"status": rec.status.value, "path": rec.path, "method": rec.method},
+    )
+    return rec.to_dict()
 
 
 def _registry_openapi_document(*, visible_app_ids: frozenset[str] | None) -> dict:
@@ -301,3 +389,133 @@ def disable_api_route(
         detail={"status": updated.status.value},
     )
     return updated.to_dict()
+
+@router.post("/{api_id}/publish")
+def publish_api_route(
+    api_id: str,
+    auth: AuthContext = Depends(require_permission(Permission.ADAPTER_MANAGE)),
+):
+    """N024: promote PARTIAL candidate to VERIFIED when fresh evidence exists.
+
+    Requires ADAPTER_MANAGE. Missing/stale evidence or DISABLED → 409 Conflict
+    (recovery = re-verify with update_registry_on_pass=false, then publish).
+    """
+    try:
+        registry = resolve_registry()
+    except RegistryUnavailable as exc:
+        audit("apis.publish", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+
+    visible = _visible_app_ids(auth)
+    try:
+        rec = get_catalog_record(api_id, visible_app_ids=visible)
+    except RegistryUnavailable as exc:
+        audit("apis.publish", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+    if rec is None:
+        audit("apis.publish", auth, resource=api_id, outcome="failure", detail={"reason": "not_found"})
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API not found")
+
+    if rec.application_id:
+        ensure_app_access(auth, rec.application_id)
+
+    if rec.status is ApiStatus.DISABLED:
+        audit(
+            "apis.publish",
+            auth,
+            resource=api_id,
+            outcome="failure",
+            detail={"reason": "disabled_needs_recovery"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "API is DISABLED; recovery requires re-verify "
+                "(POST /test with update_registry_on_pass=false) then publish"
+            ),
+        )
+
+    if not rec.verification_id or rec.last_verified_at is None:
+        audit(
+            "apis.publish",
+            auth,
+            resource=api_id,
+            outcome="failure",
+            detail={"reason": "missing_verification_evidence"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Missing verification evidence; run Verify "
+                "(POST /v1/apis/{id}/test with update_registry_on_pass=false) first"
+            ),
+        )
+
+    gated = authorize_verified_status(
+        status=ApiStatus.VERIFIED,
+        verification_id=rec.verification_id,
+        last_verified_at=rec.last_verified_at,
+    )
+    if gated is not ApiStatus.VERIFIED:
+        audit(
+            "apis.publish",
+            auth,
+            resource=api_id,
+            outcome="failure",
+            detail={
+                "reason": "verification_evidence_not_authoritative",
+                "gated_status": gated.value,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Verification evidence is missing, false, or stale; "
+                "re-verify before publish"
+            ),
+        )
+
+    payload = rec.to_dict()
+    payload["status"] = ApiStatus.VERIFIED.value
+    payload["verification_id"] = rec.verification_id
+    payload["last_verified_at"] = rec.last_verified_at
+    try:
+        updated = registry.register(payload)
+    except RegistrationRejected as exc:
+        audit("apis.publish", auth, resource=api_id, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if updated.status is not ApiStatus.VERIFIED:
+        audit(
+            "apis.publish",
+            auth,
+            resource=api_id,
+            outcome="failure",
+            detail={"reason": "register_demoted", "status": updated.status.value},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Publish refused: registry demoted status (evidence gate)",
+        )
+
+    audit(
+        "apis.publish",
+        auth,
+        resource=api_id,
+        outcome="success",
+        detail={
+            "status": updated.status.value,
+            "verification_id": updated.verification_id,
+        },
+    )
+    return updated.to_dict()
+

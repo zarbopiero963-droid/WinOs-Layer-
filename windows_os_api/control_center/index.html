@@ -188,6 +188,51 @@
         </table>
         <p id="api_list_note" class="note"></p>
         <div id="api_detail" aria-live="polite">Seleziona una riga per il dettaglio.</div>
+        <div class="card" id="api_cvp" style="margin-top:.5rem">
+          <h2>Create → Verify → Publish (N024)</h2>
+          <p class="muted">Candidato sempre <code>PARTIAL</code>. Verify → <code>POST /v1/apis/{id}/test</code> con <code>update_registry_on_pass:false</code> (evidence senza publish). Publish esplicito → <code>POST /v1/apis/{id}/publish</code> (confirm; nessun consenso implicito GUI). Recovery dopo Disable: re-verify poi publish.</p>
+          <div class="row">
+            <label>application_id <input id="cvp_app_id" placeholder="es. example-app"/></label>
+            <label>name <input id="cvp_name" placeholder="API name"/></label>
+            <label>method
+              <select id="cvp_method">
+                <option>POST</option>
+                <option>GET</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option>
+              </select>
+            </label>
+            <label>path <input id="cvp_path" placeholder="/v1/apps/.../actions/..."/></label>
+          </div>
+          <div class="row">
+            <label>capability <input id="cvp_capability" placeholder="app.action"/></label>
+            <label>adapter_id <input id="cvp_adapter_id" placeholder="opzionale"/></label>
+            <label>source <input id="cvp_source" placeholder="virtual_adapter" value=""/></label>
+            <label>permissions CSV <input id="cvp_permissions" placeholder="ui.read,ui.write"/></label>
+          </div>
+          <label>description <input id="cvp_description" placeholder="descrizione"/></label>
+          <label><input type="checkbox" id="cvp_auth_req" checked/> authentication_required</label>
+          <label>input_schema JSON (opzionale)
+            <textarea id="cvp_input_schema" placeholder='{"type":"object"}'></textarea>
+          </label>
+          <label>output_schema JSON (opzionale)
+            <textarea id="cvp_output_schema" placeholder='{"type":"object"}'></textarea>
+          </label>
+          <label>Verify params JSON (opzionale)
+            <textarea id="cvp_params" placeholder='{"value":"..."}'></textarea>
+          </label>
+          <label>api id (dopo Create / selezionato)
+            <input id="cvp_api_id" placeholder="compilato da Create o dal catalogo"/>
+          </label>
+          <div class="row" style="margin-top:.75rem">
+            <button type="button" id="btn_cvp_create" onclick="cvpCreate()">Create</button>
+            <button type="button" id="btn_cvp_verify" class="secondary" onclick="cvpVerify()">Verify</button>
+            <button type="button" id="btn_cvp_publish" onclick="cvpPublish()">Publish</button>
+          </div>
+          <p id="cvp_status" class="status muted"></p>
+          <div id="cvp_out" aria-live="polite">Create → Verify → Publish (nessun auto-publish).</div>
+        </div>
         <div class="card" id="api_diagnose" style="margin-top:.5rem">
           <h2>Try it / diagnosi (N023)</h2>
           <p class="muted">Auth via <code>X-API-Key</code> (#key). Try it → <code>POST /v1/apis/{id}/test</code> (gateway N018). Success solo se <code>success</code>/<code>verification.verified</code> — mai HTTP 200 da solo.</p>
@@ -213,7 +258,9 @@
        Adapter status: bound when list_adapters.bound||hwnd; unbound when adapter
        exists with hwnd null (disk restore); nessuno when no adapter.
        Catalog UI always requests status=VERIFIED. Hostile metadata → textContent.
-       N023: Try it → POST /v1/apis/{id}/test; View workflow/adapter/log; Disable → /disable. */
+       N023: Try it → POST /v1/apis/{id}/test; View workflow/adapter/log; Disable → /disable.
+       N024: Create → POST /v1/apis (PARTIAL); Verify → /test update_registry_on_pass:false;
+             Publish → /publish (explicit confirm; never auto after verify). */
 
     const OS_ENDPOINTS = [
       { method: "GET", path: "/v1/health", area: "health" },
@@ -555,6 +602,8 @@
       const detail = document.getElementById("api_detail");
       _selectedApiId = apiId || "";
       _selectedAppId = "";
+      var cvpIdEl = document.getElementById("cvp_api_id");
+      if (cvpIdEl && apiId) cvpIdEl.value = apiId;
       detail.textContent = "Caricamento " + apiId + "…";
       setDiagStatus(null, "");
       setDiagOut("Pronto per Try it / View workflow / View adapter / View log / Disable su " + apiId);
@@ -704,6 +753,148 @@
         showApiDetail(apiId);
       } else {
         setDiagStatus(false, "Disable fallito HTTP " + r.status + " (serve adapter.manage/admin).");
+      }
+    }
+
+    function setCvpStatus(ok, msg) {
+      var el = document.getElementById("cvp_status");
+      if (!el) return;
+      el.className = "status " + (ok === true ? "ok" : ok === false ? "err" : "muted");
+      el.textContent = msg || "";
+    }
+    function setCvpOut(obj) {
+      var el = document.getElementById("cvp_out");
+      if (!el) return;
+      if (typeof obj === "string") el.textContent = obj;
+      else el.textContent = JSON.stringify(obj, null, 2);
+    }
+    function _parseOptionalJsonObject(raw, label) {
+      var t = (raw || "").trim();
+      if (!t) return null;
+      var v = JSON.parse(t);
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        throw new Error(label + " must be a JSON object");
+      }
+      return v;
+    }
+    function _cvpPermissions() {
+      var raw = document.getElementById("cvp_permissions").value || "";
+      return raw.split(",").map(function (p) { return p.trim(); }).filter(Boolean);
+    }
+
+    async function cvpCreate() {
+      setCvpStatus(null, "Create (POST /v1/apis)…");
+      var body = {
+        name: document.getElementById("cvp_name").value.trim(),
+        method: document.getElementById("cvp_method").value,
+        path: document.getElementById("cvp_path").value.trim(),
+        description: document.getElementById("cvp_description").value.trim(),
+        source: document.getElementById("cvp_source").value.trim() || "virtual_adapter",
+        application_id: document.getElementById("cvp_app_id").value.trim(),
+        adapter_id: document.getElementById("cvp_adapter_id").value.trim(),
+        capability: document.getElementById("cvp_capability").value.trim(),
+        permissions: _cvpPermissions(),
+        authentication_required: !!document.getElementById("cvp_auth_req").checked,
+      };
+      try {
+        var ins = _parseOptionalJsonObject(document.getElementById("cvp_input_schema").value, "input_schema");
+        var outs = _parseOptionalJsonObject(document.getElementById("cvp_output_schema").value, "output_schema");
+        if (ins) body.input_schema = ins;
+        if (outs) body.output_schema = outs;
+      } catch (e) {
+        setCvpStatus(false, "Schema JSON non valido.");
+        setCvpOut(String(e && e.message ? e.message : e));
+        return;
+      }
+      var r = await api("/v1/apis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setCvpOut({ http_status: r.status, body: r.body });
+      if (r.status === 200 || r.status === 201) {
+        var id = (r.body && r.body.id) || "";
+        var st = (r.body && r.body.status) || "";
+        if (id) {
+          document.getElementById("cvp_api_id").value = id;
+          _selectedApiId = id;
+        }
+        if (st === "PARTIAL") {
+          setCvpStatus(true, "Creato candidato PARTIAL (non VERIFIED). id=" + id);
+        } else {
+          setCvpStatus(false, "Creato ma status inatteso: " + st + " (atteso PARTIAL).");
+        }
+      } else {
+        setCvpStatus(false, "Create fallito HTTP " + r.status + " (serve adapter.manage).");
+      }
+    }
+
+    async function cvpVerify() {
+      var apiId = (document.getElementById("cvp_api_id").value || _selectedApiId || "").trim();
+      if (!apiId) {
+        setCvpStatus(false, "Serve api id (Create o selezione catalogo).");
+        setCvpOut("Nessun api id.");
+        return;
+      }
+      var params = {};
+      try {
+        var p = _parseOptionalJsonObject(document.getElementById("cvp_params").value, "params");
+        if (p) params = p;
+      } catch (e) {
+        setCvpStatus(false, "Params JSON non valido.");
+        setCvpOut(String(e && e.message ? e.message : e));
+        return;
+      }
+      setCvpStatus(null, "Verify (POST /test, update_registry_on_pass:false)…");
+      var r = await api("/v1/apis/" + encodeURIComponent(apiId) + "/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ params: params, update_registry_on_pass: false }),
+      });
+      setCvpOut({ http_status: r.status, body: r.body });
+      if (r.status !== 200) {
+        setCvpStatus(false, "Verify HTTP " + r.status + " — candidato resta PARTIAL se già creato.");
+        return;
+      }
+      var body = r.body || {};
+      var verified = !!(body.success === true || (body.verification && body.verification.verified === true));
+      if (verified) {
+        setCvpStatus(true, "Verify PASS (evidence). Status resta candidato finché non Publish. Non auto-publish.");
+      } else {
+        setCvpStatus(false, "Verify fallita/parziale — resta candidate PARTIAL (non VERIFIED).");
+      }
+    }
+
+    async function cvpPublish() {
+      var apiId = (document.getElementById("cvp_api_id").value || _selectedApiId || "").trim();
+      if (!apiId) {
+        setCvpStatus(false, "Serve api id.");
+        setCvpOut("Nessun api id.");
+        return;
+      }
+      if (!window.confirm("Publish API " + apiId + " → VERIFIED? (POST /v1/apis/{id}/publish) — consenso esplicito richiesto.")) {
+        setCvpStatus(null, "Publish annullato (nessun consenso).");
+        return;
+      }
+      setCvpStatus(null, "Publish in corso…");
+      var r = await api("/v1/apis/" + encodeURIComponent(apiId) + "/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      setCvpOut({ http_status: r.status, body: r.body });
+      if (r.status === 200) {
+        var st = (r.body && r.body.status) || "";
+        if (st === "VERIFIED") {
+          setCvpStatus(true, "Pubblicato VERIFIED.");
+          showApiDetail(apiId);
+        } else {
+          setCvpStatus(false, "Publish HTTP 200 ma status=" + st);
+        }
+      } else if (r.status === 409) {
+        setCvpStatus(false, "Publish 409: evidence assente/stale o DISABLED (re-verify).");
+      } else {
+        setCvpStatus(false, "Publish fallito HTTP " + r.status);
       }
     }
 

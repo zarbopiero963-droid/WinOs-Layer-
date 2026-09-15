@@ -277,10 +277,15 @@ def _maybe_update_registry(
     *,
     verification_id: str,
     now: float,
+    status: ApiStatus = ApiStatus.VERIFIED,
 ) -> ApiRecord | None:
-    """Register VERIFIED only with fresh verification_id (never fabricate)."""
+    """Write verification evidence; default status VERIFIED (publish path).
+
+    N024: callers may pass PARTIAL so a passing test with
+    ``update_registry_on_pass=False`` attaches evidence without publishing.
+    """
     payload = record.to_dict()
-    payload["status"] = ApiStatus.VERIFIED.value
+    payload["status"] = status.value
     payload["verification_id"] = verification_id
     payload["last_verified_at"] = now
     try:
@@ -387,13 +392,38 @@ def run_api_test(
 
     verification_id = None
     registry_updated = False
+    evidence_recorded = False
     if post.get("verified") is True and post.get("status") == V_PASS:
         verification_id = _mint_verification_id()
         if update_registry_on_pass:
             updated = _maybe_update_registry(
-                reg, record, verification_id=verification_id, now=clock
+                reg,
+                record,
+                verification_id=verification_id,
+                now=clock,
+                status=ApiStatus.VERIFIED,
             )
             registry_updated = updated is not None and updated.status is ApiStatus.VERIFIED
+        else:
+            # N024: attach evidence while staying a candidate (PARTIAL).
+            # Do not demote an already-VERIFIED record on Try it / verify-only.
+            # DISABLED → PARTIAL so recovery can re-publish after re-verify.
+            if record.status is ApiStatus.VERIFIED:
+                target = ApiStatus.VERIFIED
+            else:
+                target = ApiStatus.PARTIAL
+            updated = _maybe_update_registry(
+                reg,
+                record,
+                verification_id=verification_id,
+                now=clock,
+                status=target,
+            )
+            evidence_recorded = (
+                updated is not None
+                and bool(updated.verification_id)
+                and updated.last_verified_at is not None
+            )
 
     success = bool(
         execution_ok
@@ -438,6 +468,7 @@ def run_api_test(
         },
         "http_ok_alone": False,
         "registry_updated": registry_updated,
+        "evidence_recorded": evidence_recorded,
         "observation": post.get("observation"),
         "app_id": app_id or None,
         "action": action_name,
