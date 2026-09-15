@@ -621,3 +621,22 @@ pytest tests/unit/test_audit_n042.py tests/unit/test_security_core.py -q
 ```
 
 Full installed W/L H63-N042 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N043 — Health/readiness e metriche operative
+
+Contratto (#67 / H63-N043, B-OBS, Q11/Q12): ``GET /v1/live`` = sola liveness
+processo (sempre 200 se il processo risponde); ``/ready`` e ``/health`` =
+readiness backend con ``components.backend`` / ``components.ui`` separati
+(overall ``ready`` = backend); metriche operative a cardinalità fissa
+(CPU/RAM processo, ``http.errors``/2xx/4xx/5xx, ``http.inflight``,
+``bus.dropped``/subscribers, ``ws.clients``, ``verify.holds``,
+``workflow.runs``/``workflow.errors``). Coverage: R02 R49 W095 L095 G18.
+Out of scope: N044 diagnose/crash bundle, N005 D6, chiusura #67/#63/#21,
+claim H63-N043 installed W/L PASS.
+
+```bash
+pytest tests/unit/test_health_metrics_n043.py tests/unit/test_n004_health_and_d3_lists.py -q
+```
+
+Full installed W/L H63-N043 not claimed PASS here (MANUAL_ONLY / #21).

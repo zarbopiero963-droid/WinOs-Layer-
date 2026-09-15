@@ -47,6 +47,8 @@ esiste per risolvere.
 """
 from __future__ import annotations
 
+import threading
+
 import time
 import uuid
 from typing import Any
@@ -67,6 +69,16 @@ VERIFICATION_STATES = frozenset(
 # capisce da dove viene, e diverso a ogni giro, cosi' un campo che conteneva gia'
 # quel testo non fa sembrare riuscita una scrittura che non e' avvenuta.
 _PROBE_PREFIX = "winos-verify-"
+
+# N043 — process-wide count of threads inside verify locks (fixed gauge).
+_verify_holds = 0
+_verify_holds_lock = threading.Lock()
+
+
+def verify_holds_count() -> int:
+    with _verify_holds_lock:
+        return _verify_holds
+
 
 
 def _probe_value() -> str:
@@ -136,8 +148,15 @@ def verify_action(app_id: str, action_name: str) -> dict[str, Any]:
     if adapter is None:
         return _verdict(FAILED, f"nessun adapter registrato per {app_id!r}")
 
+    global _verify_holds
     with adapter._verification_lock:
-        return _verify_action_locked(adapter, action_name)
+        with _verify_holds_lock:
+            _verify_holds += 1
+        try:
+            return _verify_action_locked(adapter, action_name)
+        finally:
+            with _verify_holds_lock:
+                _verify_holds = max(0, _verify_holds - 1)
 
 
 def _verify_action_locked(adapter: Any, action_name: str) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-"""Health / system / capabilities."""
+"""Health / live / ready / system / capabilities (N004 + N043)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from windows_os_api.core.permissions.model import Permission
 from windows_os_api.core.security.auth import AuthContext, require_permission
-from windows_os_api.os.runtime_health import probe_runtime_health
+from windows_os_api.os.runtime_health import probe_liveness, probe_runtime_health
 from windows_os_api.os.system import service as system
 
 router = APIRouter(tags=["health"])
@@ -17,13 +17,22 @@ def _health_payload() -> dict:
     return probe_runtime_health()
 
 
+@router.get("/live")
+def live():
+    """N043 — process liveness only. Always 200 if the process answers.
+
+    Never encodes backend/UI readiness; use /ready or /health for that.
+    """
+    return probe_liveness()
+
+
 @router.get("/health")
 def health():
     """Readiness-aware health: status is not ok when the OS backend is unavailable.
 
-    Additive fields: ready, backend (when ready), error_code/reason (when not).
+    Additive fields: live, ready, components.backend/ui, backend, error_code/reason.
     Version is always present. HTTP 503 when backend cannot be constructed so
-    liveness probes that only check status codes also see the failure.
+    probes that only check status codes also see the failure.
     """
     body = _health_payload()
     if body.get("ready") is False:
@@ -33,7 +42,7 @@ def health():
 
 @router.get("/ready")
 def ready():
-    """Explicit readiness probe (same contract as /health for backend availability)."""
+    """N043 — explicit readiness (backend + UI components; overall = backend)."""
     body = _health_payload()
     if body.get("ready") is False:
         return JSONResponse(status_code=503, content=body)
