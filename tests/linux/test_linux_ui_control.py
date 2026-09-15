@@ -196,18 +196,24 @@ def test_auto_control_mousepad(linux_backend):
             assert r.get("ok") is True or method == "xdotool"
 
         # Read the value back from the application. A window that merely stayed
-        # open does not prove that the write happened.
+        # open does not prove that the write happened. AT-SPI can lag under
+        # Xvfb; re-focus and re-read a few times before failing the job.
         verified = False
         if atspi_ok:
-            tree2 = linux_backend.get_ui_tree()
-            stack = list(tree2.get("children") or [])
-            while stack:
-                n = stack.pop()
-                val = n.get("value") or ""
-                if token in val:
-                    verified = True
+            for _attempt in range(8):
+                linux_backend.focus_window(mp["hwnd"])
+                tree2 = linux_backend.get_ui_tree()
+                stack = list(tree2.get("children") or [])
+                while stack:
+                    n = stack.pop()
+                    val = n.get("value") or ""
+                    if token in val:
+                        verified = True
+                        break
+                    stack.extend(n.get("children") or [])
+                if verified:
                     break
-                stack.extend(n.get("children") or [])
+                time.sleep(0.25)
         assert verified, "Mousepad did not expose the text that was written"
         assert method in ("atspi", "editable_text", "xdotool", "xdotool_fallback")
     finally:

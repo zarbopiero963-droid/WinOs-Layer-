@@ -311,6 +311,50 @@ class EventRecorder:
     def __init__(self, path, start_offset: int):
         self.path = path
         self.start_offset = start_offset
+        self.hwnd: int | None = None
+        self.title: str | None = None
+        self.rect: dict[str, int] | None = None
+        self.center: tuple[int, int] | None = None
+        self.managed: bool = False
+
+    def ensure_focus(self, *, attempts: int = 4) -> None:
+        """Re-acquire input focus right before injecting events.
+
+        Fixture setup can win focus and still lose it to another mapped client
+        before the test body runs (FocusOut under Xvfb+Openbox). Re-raise /
+        activate / focus / click-to-focus so delivery assertions see presses.
+        """
+        if self.hwnd is None:
+            pytest.fail("event_recorder has no hwnd to focus")
+        hwnd = self.hwnd
+        title = self.title
+        if wait_for_focus(hwnd, timeout=1.0, title=title):
+            return
+        for attempt in range(attempts):
+            if self.managed:
+                xdo(["windowraise", str(hwnd)], timeout=5)
+                xdo(["windowactivate", "--sync", str(hwnd)], timeout=5)
+            xdo(["windowfocus", "--sync", str(hwnd)], timeout=5)
+            if wait_for_focus(hwnd, timeout=3.0, title=title):
+                return
+            rect_now = window_geometry(hwnd) or self.rect
+            if rect_now:
+                cx = rect_now["x"] + max(rect_now["width"] // 2, 1)
+                cy = rect_now["y"] + max(rect_now["height"] // 2, 1)
+                xdo(["mousemove", "--sync", str(cx), str(cy)], timeout=5)
+                xdo(["click", "1"], timeout=5)
+                if wait_for_focus(hwnd, timeout=2.0, title=title):
+                    # Advance the log offset past the click-to-focus ButtonPress
+                    # noise so later assertions only count the test's events.
+                    try:
+                        self.start_offset = self.path.stat().st_size
+                    except OSError:
+                        pass
+                    return
+            time.sleep(0.15 * (attempt + 1))
+        pytest.fail(
+            f"the xev window {title!r} lost input focus before the test could inject"
+        )
 
     def text(self) -> str:
         with open(self.path, encoding="utf-8", errors="replace") as fh:
@@ -462,9 +506,13 @@ def event_recorder(window_manager, tmp_path):
         recorder.hwnd = focused_window_id() or found
         recorder.title = title
         recorder.rect = rect
+        recorder.managed = managed
         # Where a test should aim so the event lands INSIDE the recorder.
         recorder.center = (rect["x"] + rect["width"] // 2,
                            rect["y"] + rect["height"] // 2)
+        # One last confirm immediately before the test body — focus often
+        # drains away during the map/expose settle sleep on loaded runners.
+        recorder.ensure_focus()
         try:
             yield recorder
         finally:

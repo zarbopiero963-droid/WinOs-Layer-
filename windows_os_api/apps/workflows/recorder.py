@@ -87,8 +87,20 @@ def play(
     immediately before each invoke. If it raises, the step is recorded as
     denied/failed and play stops.
     """
+    try:
+        from windows_os_api.observability.metrics import get_metrics
+
+        get_metrics().incr("workflow.runs")
+    except Exception:
+        pass
     wf = _workflows.get(wf_id)
     if not wf:
+        try:
+            from windows_os_api.observability.metrics import get_metrics
+
+            get_metrics().incr("workflow.errors")
+        except Exception:
+            pass
         return {"ok": False, "error": "workflow not found"}
     results: list[Any] = []
     failed_at: int | None = None
@@ -124,6 +136,12 @@ def play(
     }
     if failed_at is None:
         return payload
+    try:
+        from windows_os_api.observability.metrics import get_metrics
+
+        get_metrics().incr("workflow.errors")
+    except Exception:
+        pass
     payload["failed_step"] = failed_at
     payload["failed_action"] = wf.steps[failed_at].action
     if not wf.rollback:

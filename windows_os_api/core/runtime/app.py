@@ -171,14 +171,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         metrics = get_metrics()
         metrics.incr("http.requests")
         start = time.perf_counter()
+        response = None
         try:
             response = await call_next(request)
+            return response
+        except Exception:
+            metrics.incr("http.errors")
+            metrics.incr("http.responses.5xx")
+            raise
         finally:
             gate.release()
-        elapsed = (time.perf_counter() - start) * 1000
-        metrics.timing("http.latency_ms", elapsed)
-        response.headers["X-WinOs-Version"] = __version__
-        return response
+            elapsed = (time.perf_counter() - start) * 1000
+            metrics.timing("http.latency_ms", elapsed)
+            if response is not None:
+                code = int(getattr(response, "status_code", 0) or 0)
+                if code >= 500:
+                    metrics.incr("http.errors")
+                    metrics.incr("http.responses.5xx")
+                elif code >= 400:
+                    metrics.incr("http.responses.4xx")
+                elif code >= 200:
+                    metrics.incr("http.responses.2xx")
+                response.headers["X-WinOs-Version"] = __version__
 
     @app.exception_handler(AppIdRejected)
     async def app_id_rejected(request: Request, exc: AppIdRejected) -> Response:

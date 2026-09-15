@@ -49,6 +49,7 @@ def test_mouse_move_refuses_out_of_range_coordinates(linux_backend, window_manag
 # Clicks — counted from what xev received
 # ---------------------------------------------------------------------------
 def test_double_click_delivers_two_presses_not_one(linux_backend, event_recorder):
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     result = linux_backend.double_click(cx, cy)
     assert result["ok"] is True, result
@@ -62,6 +63,7 @@ def test_double_click_delivers_two_presses_not_one(linux_backend, event_recorder
 
 
 def test_double_click_with_the_right_button_delivers_button_3(linux_backend, event_recorder):
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     result = linux_backend.double_click(cx, cy, "right")
     assert result["ok"] is True, result
@@ -78,6 +80,7 @@ def test_a_typo_in_the_button_name_sends_nothing(linux_backend, event_recorder):
     click and reported `{"ok": True, "button": "rihgt"}` — the name asked for,
     next to an action that was something else.
     """
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     result = linux_backend.double_click(cx, cy, "rihgt")
     assert result["ok"] is False, result
@@ -94,6 +97,7 @@ def test_a_typo_in_the_button_name_sends_nothing(linux_backend, event_recorder):
                                               ("left", 6), ("right", 7)])
 def test_scroll_delivers_the_right_wheel_button(linux_backend, event_recorder,
                                                 direction, button):
+    event_recorder.ensure_focus()
     linux_backend.mouse_move(*event_recorder.center)
     result = linux_backend.scroll(direction, 3)
     assert result["ok"] is True, result
@@ -104,6 +108,7 @@ def test_scroll_delivers_the_right_wheel_button(linux_backend, event_recorder,
 
 
 def test_scroll_amount_is_the_number_of_notches_delivered(linux_backend, event_recorder):
+    event_recorder.ensure_focus()
     linux_backend.mouse_move(*event_recorder.center)
     linux_backend.scroll("down", 5)
     event_recorder.wait_for(r"^ButtonPress", at_least=5)
@@ -114,6 +119,7 @@ def test_scroll_amount_is_the_number_of_notches_delivered(linux_backend, event_r
                                               ("down", 101), ("down", -1)])
 def test_scroll_refuses_impossible_requests(linux_backend, event_recorder,
                                             direction, amount):
+    event_recorder.ensure_focus()
     result = linux_backend.scroll(direction, amount)
     assert result["ok"] is False, result
     assert event_recorder.count(r"^ButtonPress") == 0, event_recorder.text()[:2000]
@@ -129,6 +135,7 @@ def test_key_down_and_key_up_are_two_separate_events(linux_backend, event_record
     arrive before key_up was ever called, and holding a modifier across other
     input would be impossible.
     """
+    event_recorder.ensure_focus()
     down = linux_backend.key_down("shift")
     assert down["ok"] is True, down
     assert down["state"] == "down"
@@ -159,6 +166,7 @@ def test_a_held_modifier_changes_the_key_pressed_while_it_is_down(linux_backend,
     came through as capital A, and that lowercase a never appears, is the claim
     that only holds if key_down really left the modifier down.
     """
+    event_recorder.ensure_focus()
     linux_backend.key_down("shift")
     assert event_recorder.wait_for(r"Shift_L", at_least=1) >= 1
 
@@ -176,6 +184,7 @@ def test_a_held_modifier_changes_the_key_pressed_while_it_is_down(linux_backend,
 
 @pytest.mark.parametrize("key", ["", "   ", "a b", "x" * 40])
 def test_key_down_refuses_a_name_that_cannot_be_a_key(linux_backend, event_recorder, key):
+    event_recorder.ensure_focus()
     result = linux_backend.key_down(key)
     assert result["ok"] is False, result
     assert event_recorder.count(r"^KeyPress") == 0, event_recorder.text()[:2000]
@@ -195,6 +204,7 @@ def test_an_unknown_keysym_reports_success_but_delivers_nothing(linux_backend,
     later change starts delivering a stray keystroke for an unknown name, this
     catches it.
     """
+    event_recorder.ensure_focus()
     result = linux_backend.key_down("NotAKeysymAtAll")
     assert result["ok"] is True, result  # xdotool exits 0; the backend reports what it sees
     assert event_recorder.wait_for(r"^KeyPress", at_least=1, timeout=1.0) == 0, \
@@ -205,6 +215,7 @@ def test_an_unknown_keysym_reports_success_but_delivers_nothing(linux_backend,
 # hotkey — a chord, delivered as one
 # ---------------------------------------------------------------------------
 def test_hotkey_delivers_every_key_in_the_chord(linux_backend, event_recorder):
+    event_recorder.ensure_focus()
     result = linux_backend.hotkey(["ctrl", "a"])
     assert result["ok"] is True, result
     assert result["chord"] == "ctrl+a"
@@ -221,6 +232,7 @@ def test_hotkey_delivers_every_key_in_the_chord(linux_backend, event_recorder):
 
 @pytest.mark.parametrize("keys", ["ctrl+a", [], ["a"] * 20, ["a", ""], 42])
 def test_hotkey_refuses_a_malformed_chord(linux_backend, event_recorder, keys):
+    event_recorder.ensure_focus()
     result = linux_backend.hotkey(keys)
     assert result["ok"] is False, result
     assert event_recorder.count(r"^KeyPress") == 0, event_recorder.text()[:2000]
@@ -230,6 +242,7 @@ def test_hotkey_refuses_a_malformed_chord(linux_backend, event_recorder, keys):
 # mouse_drag — parity with WindowsBackend, which had it and Linux did not
 # ---------------------------------------------------------------------------
 def test_drag_presses_moves_and_releases(linux_backend, event_recorder):
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     result = linux_backend.mouse_drag(cx - 60, cy - 60, cx + 60, cy + 40, steps=5)
     assert result["ok"] is True, result
@@ -255,6 +268,7 @@ def test_drag_does_not_leave_the_button_held(linux_backend, event_recorder):
     Presses and releases must balance — the release is in a `finally` for
     exactly this reason.
     """
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     linux_backend.mouse_drag(cx - 40, cy - 40, cx + 40, cy + 40, steps=3)
     event_recorder.wait_for(r"^ButtonRelease", at_least=1)
@@ -272,6 +286,7 @@ def test_drag_does_not_leave_the_button_held(linux_backend, event_recorder):
     ],
 )
 def test_drag_refuses_a_malformed_request(linux_backend, event_recorder, kwargs):
+    event_recorder.ensure_focus()
     cx, cy = event_recorder.center
     result = linux_backend.mouse_drag(cx - 40, cy - 40, cx + 40, cy + 40, **kwargs)
     assert result["ok"] is False, result
