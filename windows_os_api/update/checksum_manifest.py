@@ -1,8 +1,10 @@
 """Reliable checksum manifests for release artifacts and update packages (N028).
 
 Contract (H63-N028 / R44 R45 G05):
-- Never list the manifest path in its own file contents (no self-hash / stale).
-- Unique path labels; duplicate basenames are rejected (fail-closed).
+- Never list the *output* manifest path in its own contents (no self-hash / stale).
+- Unique path labels (relative to an optional root). Duplicate labels fail closed.
+- Without a distinguishing root, colliding basenames fail closed.
+- With a root, unique relative paths (e.g. d1/app.exe + d2/app.exe) are allowed.
 - Missing files fail at generation and at independent verify.
 - Altered files fail independent verify.
 - Atomic write; regenerate-twice is byte-identical for the same inputs.
@@ -16,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
-# Common manifest basenames that must never be hashed into themselves.
+# Known manifest basenames — used only to recognise the *output* file itself.
 MANIFEST_BASENAMES = frozenset(
     {
         "checksums.txt",
@@ -60,15 +62,24 @@ def _label_for(path: Path, *, root: Path | None) -> str:
     return path.name
 
 
-def _is_manifest_path(path: Path, out: Path | None) -> bool:
-    if out is not None:
-        try:
-            if path.expanduser().resolve() == out.expanduser().resolve():
-                return True
-        except OSError:
-            if path.name == out.name:
-                return True
-    return path.name in MANIFEST_BASENAMES
+def _is_output_manifest(path: Path, out: Path | None) -> bool:
+    """True only when ``path`` is the manifest being written (self-hash guard)."""
+    if out is None:
+        return False
+    out_p = Path(out)
+    path_p = Path(path)
+    try:
+        if path_p.expanduser().resolve() == out_p.expanduser().resolve():
+            return True
+    except OSError:
+        pass
+    # out may not exist yet: same parent + same name.
+    if path_p.name != out_p.name:
+        return False
+    try:
+        return path_p.parent.resolve() == out_p.parent.resolve()
+    except OSError:
+        return path_p.parent == out_p.parent
 
 
 def build_checksum_lines(
@@ -77,31 +88,28 @@ def build_checksum_lines(
     out: Path | None = None,
     root: Path | None = None,
 ) -> list[str]:
-    """Return sorted ``sha256  label`` lines; never includes ``out`` / manifest names."""
+    """Return sorted ``sha256  label`` lines; never includes ``out`` itself."""
     resolved: list[Path] = []
     for raw in paths:
         p = Path(raw)
-        if _is_manifest_path(p, out):
+        if _is_output_manifest(p, out):
             continue
         resolved.append(_resolve_file(p))
 
-    unique: dict[Path, Path] = {}
-    for p in resolved:
-        unique[p] = p
-
+    unique = {p: p for p in resolved}
     entries: list[tuple[str, Path]] = []
-    seen_basenames: dict[str, Path] = {}
     seen_labels: set[str] = set()
     for p in unique.values():
         label = _label_for(p, root=root)
-        base = Path(label).name
-        if base in seen_basenames and seen_basenames[base] != p:
-            raise ChecksumManifestError(
-                f"duplicate basename {base!r}: {seen_basenames[base]} vs {p}"
-            )
+        if not label or label in (".", "..") or "\n" in label or label.strip() != label:
+            raise ChecksumManifestError(f"unsafe checksum label: {label!r}")
+        if ".." in Path(label).parts:
+            raise ChecksumManifestError(f"path traversal not allowed: {label!r}")
         if label in seen_labels:
-            raise ChecksumManifestError(f"duplicate path label {label!r}")
-        seen_basenames[base] = p
+            raise ChecksumManifestError(
+                f"duplicate basename {label!r}: collide at {p} "
+                "(pass root= for unique relative paths or remove duplicates)"
+            )
         seen_labels.add(label)
         entries.append((label, p))
 
@@ -142,9 +150,8 @@ def write_checksum_manifest(
 
 
 def parse_checksum_manifest(text: str) -> dict[str, str]:
-    """Parse manifest text → label → sha256 (lower). Rejects duplicate basenames/labels."""
+    """Parse manifest text → label → sha256 (lower). Rejects duplicate labels."""
     mapping: dict[str, str] = {}
-    seen_basenames: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -158,17 +165,10 @@ def parse_checksum_manifest(text: str) -> dict[str, str]:
             raise ChecksumManifestError(f"invalid checksum label: {label!r}")
         if label.startswith("/") or (len(label) > 1 and label[1] == ":"):
             raise ChecksumManifestError(f"absolute path label not allowed: {label!r}")
-        base = Path(label).name
-        if base in MANIFEST_BASENAMES or label in MANIFEST_BASENAMES:
-            raise ChecksumManifestError(f"manifest must not list itself: {label!r}")
-        if base in seen_basenames and seen_basenames[base] != label:
-            raise ChecksumManifestError(
-                f"duplicate basename in manifest: {base!r} "
-                f"({seen_basenames[base]!r} vs {label!r})"
-            )
+        if ".." in Path(label).parts:
+            raise ChecksumManifestError(f"path traversal not allowed: {label!r}")
         if label in mapping and mapping[label] != digest:
             raise ChecksumManifestError(f"duplicate conflicting label: {label!r}")
-        seen_basenames[base] = label
         mapping[label] = digest
     return mapping
 
@@ -177,10 +177,12 @@ def verify_checksum_manifest(
     manifest_path: Path,
     *,
     root: Path | None = None,
+    search_roots: list[Path] | None = None,
 ) -> dict[str, str]:
-    """Independent client: fail-closed on missing / altered / dup / self-hash entries.
+    """Independent client: fail-closed on missing / altered / self-hash entries.
 
     Returns the verified label→digest map on success.
+    Does not require the manifest to list itself.
     """
     manifest_path = Path(manifest_path)
     if not manifest_path.is_file():
@@ -190,23 +192,38 @@ def verify_checksum_manifest(
     if not mapping:
         raise ChecksumManifestError(f"checksum manifest empty: {manifest_path}")
 
-    base_root = root if root is not None else manifest_path.parent
-    base_root_res = base_root.resolve()
+    roots: list[Path] = []
+    if search_roots:
+        roots.extend(Path(r) for r in search_roots)
+    if root is not None:
+        roots.append(Path(root))
+    if not roots:
+        roots.append(manifest_path.parent)
+
+    manifest_res = manifest_path.resolve()
     verified: dict[str, str] = {}
     for label, expected in mapping.items():
         candidate = Path(label)
         if candidate.is_absolute():
             raise ChecksumManifestError(f"absolute path label not allowed: {label!r}")
-        target = (base_root / candidate).resolve()
-        try:
-            target.relative_to(base_root_res)
-        except ValueError as exc:
-            raise ChecksumManifestError(
-                f"checksum path escapes root: {label!r}"
-            ) from exc
-        if target == manifest_path.resolve():
-            raise ChecksumManifestError(f"manifest must not list itself: {label!r}")
-        if not target.is_file():
+
+        target: Path | None = None
+        for base_root in roots:
+            trial = (base_root / candidate).resolve()
+            try:
+                trial.relative_to(base_root.resolve())
+            except ValueError:
+                continue
+            if trial == manifest_res:
+                raise ChecksumManifestError(f"manifest must not list itself: {label!r}")
+            if trial.is_file():
+                target = trial
+                break
+
+        if target is None:
+            # Self-label that did not resolve under roots still counts as self-hash.
+            if Path(label).name == manifest_path.name and label in MANIFEST_BASENAMES:
+                raise ChecksumManifestError(f"manifest must not list itself: {label!r}")
             raise ChecksumManifestError(f"checksum target missing: {label}")
         actual = sha256_file(target)
         if actual != expected:

@@ -144,3 +144,42 @@ def test_h63_n028_update_manager_single_file_still_works(tmp_path: Path):
     assert (install / "release.bin").read_bytes() == b"NEWCONTENT"
     bad = UpdatePackage(version="2.0.0", path=src, checksum_sha256="0" * 64)
     assert mgr.verify(bad) is False
+
+
+def test_h63_n028_unique_relative_paths_with_root(tmp_path: Path):
+    """With root=, same basename in different dirs get unique relative labels."""
+    d1 = tmp_path / "d1"
+    d2 = tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    f1 = d1 / "same.bin"
+    f2 = d2 / "same.bin"
+    f1.write_bytes(b"ONE")
+    f2.write_bytes(b"TWO")
+    out = tmp_path / "checksums.txt"
+    write_checksum_manifest([f1, f2], out, root=tmp_path)
+    text = out.read_text(encoding="utf-8")
+    assert "d1/same.bin" in text
+    assert "d2/same.bin" in text
+    mapping = verify_checksum_manifest(out, root=tmp_path)
+    assert mapping["d1/same.bin"] == hashlib.sha256(b"ONE").hexdigest()
+    assert mapping["d2/same.bin"] == hashlib.sha256(b"TWO").hexdigest()
+
+
+def test_h63_n028_sha256sums_may_list_platform_checksums(tmp_path: Path, bi_mod):
+    """Top-level SHA256SUMS.txt may include checksums.txt as an artifact (not self)."""
+    artifact = tmp_path / "app.bin"
+    artifact.write_bytes(b"APP")
+    platform = tmp_path / "checksums.txt"
+    platform.write_text(
+        f"{hashlib.sha256(b'APP').hexdigest()}  app.bin\n", encoding="utf-8"
+    )
+    top = tmp_path / "SHA256SUMS.txt"
+    bi_mod.checksums([artifact, platform, top], top)  # top excluded
+    body = top.read_text(encoding="utf-8")
+    assert "SHA256SUMS.txt" not in body
+    assert "checksums.txt" in body
+    assert "app.bin" in body
+    mapping = verify_checksum_manifest(top, root=tmp_path)
+    assert "checksums.txt" in mapping
+    assert "app.bin" in mapping
