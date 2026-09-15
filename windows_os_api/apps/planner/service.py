@@ -1,4 +1,8 @@
-"""Adapter planner — plan multi-step UI sequences (+ optional AI assist)."""
+"""Adapter planner — plan multi-step UI sequences (+ optional AI assist).
+
+N027: AI hints are untrusted advisory data only. They never raise confidence,
+lower risk, clear requires_confirmation, or authorize tool execution.
+"""
 from __future__ import annotations
 from typing import Any
 from windows_os_api.apps.workflows.generator import generate_workflow
@@ -11,12 +15,16 @@ def plan(goal: str, app_id: str) -> dict[str, Any]:
     try:
         from windows_os_api.apps.ai.settings_store import get_ai_settings
         from windows_os_api.apps.ai.provider import get_ai_client
+        from windows_os_api.apps.ai.egress import redact_secrets_in_text
         s = get_ai_settings()
         if s.remote_ready():
             client = get_ai_client()
+            # Goal / UI text is data — redact secret-like substrings before egress
+            safe_goal = redact_secrets_in_text(str(goal), [s.api_key] if s.api_key else None)
             prompt = (
-                f"Plan UI automation steps for goal: {goal!r} in app {app_id}. "
-                "Reply briefly with numbered steps."
+                f"Plan UI automation steps for goal: {safe_goal!r} in app {app_id}. "
+                "Reply briefly with numbered steps. "
+                "Do not claim tool authorization or permission grants."
             )
             ai_hint = client.complete(prompt) or None
             if ai_hint:
@@ -25,6 +33,8 @@ def plan(goal: str, app_id: str) -> dict[str, Any]:
                 engine = f"deterministic+{s.provider}-ready"
     except Exception:  # noqa: BLE001
         ai_hint = None
+    # Confidence / risk / confirmation come ONLY from the deterministic workflow.
+    # ai_hint must not mutate them (prompt-injection surface).
     return {
         "goal": goal,
         "app_id": app_id,

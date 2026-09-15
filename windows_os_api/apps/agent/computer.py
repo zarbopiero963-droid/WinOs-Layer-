@@ -34,6 +34,8 @@ class ComputerAgent:
             create_adapter(self.app_id)
 
     def run(self, goal: str) -> dict[str, Any]:
+        # Goal / UI / model text is untrusted data (N027): never authorization.
+        # Only evaluate()+invoke_action may enable tools; confidence ≠ permission.
         result = execute_intent(goal, app_id=self.app_id)
         get_event_bus().publish_sync("agent.goal", {"goal": goal, "app_id": self.app_id})
         plan = result["plan"]
