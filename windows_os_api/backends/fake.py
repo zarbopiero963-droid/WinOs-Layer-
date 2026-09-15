@@ -37,6 +37,21 @@ from windows_os_api.os.network.validation import (
     validate_ping,
 )
 
+def _fake_owner() -> str:
+    """Proprietario dei processi finti: l'utente corrente.
+
+    N047 verifica che l'API non termini processi di altri utenti. Se il backend
+    finto dichiarasse un proprietario inventato, quel controllo rifiuterebbe
+    ogni processo finto e il resto del contratto resterebbe non collaudato.
+    """
+    try:
+        import getpass
+
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        return "winos-fake-user"
+
+
 # Minimal 1x1 PNG
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -124,10 +139,16 @@ class FakeBackend:
         # `audio_set_mute()` non veniva chiamato, quindi GET /v1/audio/volume
         # rispondeva 500 a processo fresco. Nessun test lo copriva.
         self._muted = False
+        # N047: i processi preesistenti hanno un'identita' stabile come quelli
+        # avviati, altrimenti il caso «non l'ho avviato io» non sarebbe provabile.
+        _seeded_at = time.time() - 3600.0
         self._processes: dict[int, dict[str, Any]] = {
-            1: {"pid": 1, "name": "System", "status": "running", "cpu_percent": 0.1, "memory_mb": 8.0},
-            42: {"pid": 42, "name": "ContosoCRM.exe", "status": "running", "cpu_percent": 2.5, "memory_mb": 128.0},
-            100: {"pid": 100, "name": "notepad.exe", "status": "running", "cpu_percent": 0.0, "memory_mb": 16.0},
+            1: {"pid": 1, "name": "System", "status": "running", "cpu_percent": 0.1, "memory_mb": 8.0,
+                "create_time": _seeded_at, "exe": "System", "owner": _fake_owner()},
+            42: {"pid": 42, "name": "ContosoCRM.exe", "status": "running", "cpu_percent": 2.5, "memory_mb": 128.0,
+                 "create_time": _seeded_at, "exe": "C:\\Contoso\\ContosoCRM.exe", "owner": _fake_owner()},
+            100: {"pid": 100, "name": "notepad.exe", "status": "running", "cpu_percent": 0.0, "memory_mb": 16.0,
+                  "create_time": _seeded_at, "exe": "C:\\Windows\\notepad.exe", "owner": _fake_owner()},
         }
         self._next_pid = 1000
         self._windows: dict[int, dict[str, Any]] = {
@@ -201,8 +222,12 @@ class FakeBackend:
         self._next_pid += 1
         pid = self._next_pid
         name = Path(command).name or command
+        # N047: anche il backend finto espone l'identita', altrimenti il gate
+        # che la verifica non sarebbe collaudabile nella suite portabile — e un
+        # gate non collaudato e' un gate di cui non si sa niente.
         proc = {"pid": pid, "name": name, "status": "running", "cpu_percent": 0.0, "memory_mb": 10.0,
-                "command": command, "args": args or []}
+                "command": command, "args": args or [],
+                "create_time": time.time(), "exe": command, "owner": _fake_owner()}
         self._processes[pid] = proc
         return proc
 
