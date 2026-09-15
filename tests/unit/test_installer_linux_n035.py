@@ -153,6 +153,7 @@ def test_h63_n035_serve_rejects_weak_key_file(tmp_path, monkeypatch):
 
 def test_h63_n035_serve_loads_strong_key_into_env(tmp_path, monkeypatch):
     from windows_os_api.cli import main as cli_main
+    from windows_os_api.core.runtime.config import get_settings
 
     key_file = tmp_path / "api_key.txt"
     secret = "n035-strong-key-" + ("x" * 32)
@@ -165,7 +166,8 @@ def test_h63_n035_serve_loads_strong_key_into_env(tmp_path, monkeypatch):
         seen["auth"] = __import__("os").environ.get("WINOS_REQUIRE_AUTH")
 
     monkeypatch.setattr("uvicorn.run", fake_run)
-    # Clear cache side effects
+    # Track + restore conftest auth env so later tests keep X-API-Key: dev-key-change-me.
+    monkeypatch.setenv("WINOS_API_KEYS", '["dev-key-change-me"]')
     monkeypatch.setenv("WINOS_REQUIRE_AUTH", "false")
     rc = cli_main.main(
         ["serve", "--host", "127.0.0.1", "--port", "8765", "--api-key-file", str(key_file)]
@@ -173,6 +175,7 @@ def test_h63_n035_serve_loads_strong_key_into_env(tmp_path, monkeypatch):
     assert rc == 0
     assert json.loads(seen["keys"]) == [secret]
     assert seen["auth"] == "true"
+    get_settings.cache_clear()
 
 
 def test_h63_n035_package_linux_docstring_linuxbackend():
