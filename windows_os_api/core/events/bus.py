@@ -5,6 +5,9 @@ N038: every publish path validates type/provenance and redacts secrets
 
 N039: thread→loop handoff is non-blocking; queue/subscriber caps produce
 *observable* drops; stop/sentinel + reset tear down without deadlock/leak.
+
+N041: after a successful local fan-out, optionally notify the webhook
+dispatcher (authenticated egress). Webhook failures never affect bus stats.
 """
 from __future__ import annotations
 
@@ -163,6 +166,16 @@ class EventBus:
                     pending.append(size)
                 except asyncio.QueueFull:
                     self._dropped += 1
+        # N041: best-effort webhook fan-out (never raises into bus callers).
+        self._notify_webhooks(event)
+
+    def _notify_webhooks(self, event: Event) -> None:
+        try:
+            from windows_os_api.core.events.webhooks import get_webhook_dispatcher
+
+            get_webhook_dispatcher().fan_out(event)
+        except Exception:
+            return
 
     def _schedule_fan_out(self, event: Event) -> None:
         """Non-blocking thread→loop handoff when a running loop is bound."""
