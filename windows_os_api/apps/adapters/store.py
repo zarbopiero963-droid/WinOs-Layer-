@@ -100,7 +100,7 @@ def _manifest_path(app_id: str) -> Path:
 
 def to_manifest(adapter: Any) -> dict[str, Any]:
     """La descrizione dell'adapter, senza il legame con la finestra."""
-    return {
+    payload = {
         "manifest_version": MANIFEST_VERSION,
         "app_id": adapter.app_id,
         "app_name": adapter.app_name,
@@ -125,6 +125,13 @@ def to_manifest(adapter: Any) -> dict[str, Any]:
             for action in adapter.actions
         ],
     }
+    signature = getattr(adapter, "signature", None)
+    if signature:
+        payload["signature"] = signature
+    publisher = getattr(adapter, "publisher", None)
+    if publisher:
+        payload["publisher"] = publisher
+    return payload
 
 
 def save(adapter: Any) -> Path:

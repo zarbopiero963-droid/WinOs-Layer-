@@ -37,6 +37,9 @@ class Adapter:
     hwnd: int | None
     actions: list[AdapterAction] = field(default_factory=list)
     trust_level: str = "unsigned"
+    # N029: production provenance (signature verified against keystore on load)
+    signature: str | None = None
+    publisher: str | None = None
     openapi: dict[str, Any] = field(default_factory=dict)
     # Il manifest e' stato scritto? Un disco pieno o una cartella non
     # scrivibile non devono far fallire un adapter che in memoria funziona —
@@ -173,6 +176,29 @@ def load_persisted_adapters() -> dict[str, Any]:
         app_id = manifest["app_id"]
         if app_id in _adapters:
             continue
+        from windows_os_api.apps.trust.signing import resolve_trust_level, trust_allows
+
+        signature = manifest.get("signature")
+        if signature is not None:
+            signature = str(signature) or None
+        publisher = manifest.get("publisher")
+        if publisher is not None:
+            publisher = str(publisher).strip() or None
+        # Never trust persisted trust_level alone — re-resolve from signature.
+        resolved = resolve_trust_level(manifest, signature)
+        claimed = str(manifest.get("trust_level") or "unsigned")
+        # If the disk claims production trust but crypto/keystore disagree, deny load.
+        if claimed in {"verified", "publisher"} and not trust_allows(resolved, claimed):
+            skipped.append(
+                store.SkippedManifest(
+                    path=str(manifest.get("_path") or app_id),
+                    code="TRUST_INSUFFICIENT",
+                    reason=(
+                        f"persisted trust_level={claimed!r} but resolved={resolved!r}"
+                    ),
+                )
+            )
+            continue
         adapter = Adapter(
             app_id=app_id,
             app_name=manifest.get("app_name") or app_id,
@@ -192,7 +218,9 @@ def load_persisted_adapters() -> dict[str, Any]:
                 for a in manifest["actions"]
                 if isinstance(a, dict)
             ],
-            trust_level=manifest.get("trust_level", "unsigned"),
+            trust_level=resolved,
+            signature=signature,
+            publisher=publisher,
         )
         # Rigenerato, mai riletto dal disco: un documento derivato salvato
         # accanto alla sua sorgente e' un modo per farli divergere.
@@ -329,6 +357,34 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     # Centralising it here makes the gate unbypassable by construction: any future
     # caller is covered without having to remember. The REST route keeps its own
     # check so it can answer 403 — check_action is pure, so checking twice is free.
+    # N029: production trust re-check before any UI effect.
+    # Unsigned / hmac-dev adapters stay usable. Ed25519 signatures and any
+    # claimed verified/publisher level must still resolve to production trust.
+    sig = adapter.signature or ""
+    needs_production = adapter.trust_level in {"verified", "publisher"} or sig.startswith(
+        "ed25519:"
+    )
+    if needs_production:
+        from windows_os_api.apps.trust.signing import require_trust
+
+        manifest = {
+            "app_id": adapter.app_id,
+            "app_name": adapter.app_name,
+            "publisher": adapter.publisher,
+            "trust_level": adapter.trust_level,
+        }
+        trust_gate = require_trust(manifest, adapter.signature, required="verified")
+        if not trust_gate["allowed"]:
+            return {
+                "ok": False,
+                "denied": True,
+                "error": trust_gate["reason"],
+                "code": "TRUST_INSUFFICIENT",
+                "trust_level": trust_gate["trust_level"],
+                "app_id": app_id,
+                "action": action_name,
+            }
+
     gate = check_action(app_id, action_name, action.risk)
     if not gate["allowed"]:
         return {
