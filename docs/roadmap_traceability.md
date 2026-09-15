@@ -456,3 +456,13 @@ pytest tests/unit/test_trust_n030.py tests/unit/test_trust_n029.py -q
 
 Full installed W/L H63-N030 not claimed PASS here (MANUAL / #21).
 
+## N031 — Release discovery e download verificato
+
+Contratto (#67 / H63-N031, B-UPD, Q14): channel HTTPS JSON (version/artifact_url/sha256); download size-capped in staging; hash verify (N028); no private/loopback hosts; refuse downgrade/same version unless ``allow_downgrade``. Coverage: R45 G09 G20. Update transazionale Windows → N032.
+
+```bash
+pytest tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.py tests/unit/test_checksum_manifest_n028.py -q
+```
+
+Full installed W/L H63-N031 not claimed PASS here (MANUAL / #21).
+

@@ -18,6 +18,12 @@ from windows_os_api.update.checksum_manifest import (
     verify_checksum_manifest,
     write_checksum_manifest,
 )
+from windows_os_api.update.discovery import (
+    ReleaseDiscoveryError,
+    ReleaseInfo,
+    discover_release,
+    download_verified,
+)
 
 
 @dataclass
@@ -157,6 +163,40 @@ class UpdateManager:
         self._save_state()
         return {"ok": True, "version": ver, "restored_from": str(latest)}
 
+
+    def discover(self, channel_url: str) -> ReleaseInfo:
+        """HTTPS channel discovery (N031)."""
+        return discover_release(channel_url)
+
+    def discover_and_stage(
+        self,
+        channel_url: str,
+        staging_dir: str | Path,
+        *,
+        allow_downgrade: bool = False,
+        max_bytes: int = 256 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        """Discover + download + hash-verify into staging; enforce no-downgrade."""
+        try:
+            info = discover_release(channel_url)
+            path = download_verified(
+                info,
+                staging_dir,
+                max_bytes=max_bytes,
+                current_version=self.version,
+                allow_downgrade=allow_downgrade,
+            )
+        except ReleaseDiscoveryError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "version": info.version,
+            "path": str(path),
+            "sha256": info.sha256,
+            "channel": info.channel,
+        }
+
     @property
     def version(self) -> str:
+
         return str(self._state.get("version", "1.0.0"))
