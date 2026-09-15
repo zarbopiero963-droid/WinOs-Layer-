@@ -156,9 +156,33 @@ def set_scopes(
     return out
 
 @router.get("/audit")
-def audit_log(auth: AuthContext = Depends(require_permission(Permission.ADMIN)), limit: int = 100):
-    entries = get_audit_logger().read_all()
-    return {"entries": entries[-limit:]}
+def audit_log(
+    auth: AuthContext = Depends(require_permission(Permission.ADMIN)),
+    limit: int = 100,
+    offset: int = 0,
+):
+    """N042 — paginated, integrity-verified, redacted audit read (ADMIN only)."""
+    from windows_os_api.core.security.audit import (
+        AuditIntegrityError,
+        AuditParamError,
+        AuditUnavailableError,
+    )
+
+    logger = get_audit_logger()
+    try:
+        return logger.read_page(limit=limit, offset=offset)
+    except AuditParamError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AuditUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "audit_unavailable", "reason": str(exc)},
+        ) from exc
+    except AuditIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "audit_integrity_failure", "reason": str(exc)},
+        ) from exc
 
 @router.get("/remote/policy")
 def remote_policy(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
