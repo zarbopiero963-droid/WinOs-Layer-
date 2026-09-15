@@ -53,9 +53,14 @@ def action_content_fingerprint(action: Any) -> str:
 def verification_matches_action(verification: Any, action: Any) -> bool:
     """True unless a stamped ``action_fp`` disagrees with the action content.
 
-    Missing ``action_fp`` is allowed for in-memory/legacy verdicts; ``store``
-    migrates the stamp on load. A *present* mismatched stamp means VERIFIED of
-    another action version and must not be published (N045).
+    A *present* mismatched stamp means VERIFIED of another action version and
+    must not be published (N045).
+
+    Missing ``action_fp`` passes here because this predicate only compares a
+    stamp it was given: it is not the gate for persisted evidence. Anything
+    read from disk goes through ``store.sanitize_action_verification`` first,
+    which demotes an unstamped VERIFIED (``ACTION_FP_MISSING``), and every
+    in-memory VERIFIED is stamped by ``verify_and_record``.
     """
     if not isinstance(verification, dict):
         return False

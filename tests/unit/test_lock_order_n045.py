@@ -226,6 +226,56 @@ def test_action_fp_mismatch_demoted_on_load(adapter):
     assert "verification_id" not in restored.verification
 
 
+def test_action_fp_removed_by_tamper_is_demoted_on_load(adapter):
+    """Dropping the stamp must not buy back VERIFIED (N045 fail-closed).
+
+    Demoting only on *mismatch* leaves the gate open to the cheaper edit: change
+    the control the action points at AND delete ``action_fp``. Evidence that is
+    missing is not evidence that agrees.
+    """
+    action = _edit_name(adapter)
+    assert verify_and_record(APP, action)["ok"] is True
+
+    manifest_path = next(Path(os.environ["WINOS_ADAPTER_STORE"]).glob("*.json"))
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for act in raw["actions"]:
+        if act.get("name") == action:
+            act["automation_id"] = "field.TAMPERED"
+            act["verification"].pop("action_fp", None)
+            break
+    manifest_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    reset_adapters()
+    load_persisted_adapters()
+    restored = next(a for a in get_adapter(APP).actions if a.name == action)
+    assert restored.verification["state"] != "VERIFIED"
+    assert restored.verification.get("code") == "ACTION_FP_MISSING"
+    assert "verification_id" not in restored.verification
+
+
+def test_unstamped_verified_never_reaches_the_published_surface(adapter):
+    """Same rule with the identity untouched: no stamp, no VERIFIED, no path."""
+    action = _edit_name(adapter)
+    assert verify_and_record(APP, action)["ok"] is True
+
+    manifest_path = next(Path(os.environ["WINOS_ADAPTER_STORE"]).glob("*.json"))
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for act in raw["actions"]:
+        if act.get("name") == action:
+            act["verification"].pop("action_fp", None)
+            break
+    manifest_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    reset_adapters()
+    load_persisted_adapters()
+    adapter_reloaded = get_adapter(APP)
+    restored = next(a for a in adapter_reloaded.actions if a.name == action)
+    assert restored.verification["state"] != "VERIFIED"
+    assert restored.verification.get("code") == "ACTION_FP_MISSING"
+    published = adapter_reloaded.openapi.get("paths") or {}
+    assert f"/v1/apps/{APP}/actions/{action}" not in published
+
+
 def test_store_lock_not_held_during_ui(adapter, monkeypatch):
     """Level-3 store lock must not be held across UI/backend work in verify."""
     action = _edit_name(adapter)

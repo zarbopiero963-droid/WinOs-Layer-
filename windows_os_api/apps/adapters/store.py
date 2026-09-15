@@ -175,10 +175,18 @@ def sanitize_action_verification(
     an independent ``verification_id`` is demoted so Virtual API / registry never
     treat it as observed proof.
 
-    N045: when ``action`` is provided, VERIFIED must also match
-    ``action_content_fingerprint(action)``. Mismatch or missing ``action_fp`` on
-    a forged/hand-edited VERIFIED is demoted (legacy manifests that match
-    current fields are migrated by stamping ``action_fp``).
+    N045: when ``action`` is provided, a persisted VERIFIED must carry an
+    ``action_fp`` that matches ``action_content_fingerprint(action)``. Both a
+    mismatched stamp (``ACTION_FP_MISMATCH``) and a missing one
+    (``ACTION_FP_MISSING``) are demoted.
+
+    Demoting the *missing* case is what makes the stamp a gate. Stamping the
+    current fields instead — migrating — would hand the forger the cheaper
+    edit: point the action at another control and delete ``action_fp``, and the
+    load path would mint a fingerprint agreeing with the tampered content.
+    Evidence that is absent is not evidence that agrees. The cost is one
+    re-verification for adapters persisted before N045, the same price N018
+    charged for VERIFIED without ``verification_id``.
     """
     if verification is None:
         return None
@@ -210,22 +218,22 @@ def sanitize_action_verification(
 
         expected = action_content_fingerprint(action)
         stamped = verification.get("action_fp")
-        if isinstance(stamped, str) and stamped.strip():
-            if stamped != expected:
-                demoted = dict(verification)
-                demoted["state"] = "FAILED"
-                demoted["code"] = "ACTION_FP_MISMATCH"
-                prior = str(demoted.get("evidence") or "").strip()
-                note = "VERIFIED action_fp mismatch: demoted at load (N045)"
-                demoted["evidence"] = f"{prior}; {note}" if prior else note
-                demoted.pop("verification_id", None)
-                demoted.pop("action_fp", None)
-                return demoted
+        has_stamp = isinstance(stamped, str) and bool(stamped.strip())
+        if has_stamp and stamped == expected:
             return verification
-        # Legacy VERIFIED with id but no fp: migrate stamp to current fields.
-        migrated = dict(verification)
-        migrated["action_fp"] = expected
-        return migrated
+        demoted = dict(verification)
+        demoted["state"] = "FAILED"
+        if has_stamp:
+            demoted["code"] = "ACTION_FP_MISMATCH"
+            note = "VERIFIED action_fp mismatch: demoted at load (N045)"
+        else:
+            demoted["code"] = "ACTION_FP_MISSING"
+            note = "VERIFIED senza action_fp: demoted at load (N045)"
+        prior = str(demoted.get("evidence") or "").strip()
+        demoted["evidence"] = f"{prior}; {note}" if prior else note
+        demoted.pop("verification_id", None)
+        demoted.pop("action_fp", None)
+        return demoted
 
     return verification
 

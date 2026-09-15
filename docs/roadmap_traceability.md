@@ -669,7 +669,13 @@ Contratto (#67 / H63-N045, B-VERIFY, Q12): ordine lock
 verify/invoke/store; I/O UI sotto lock per-adapter e' proprio; niente
 await/rete/UI sotto ``store._io_lock``; ``action_fp`` lega VERIFIED alla
 identita' azione ( demote mismatch / mid-flight change ); concurrent
-verify+invoke e threadpool saturo senza lost-update/deadlock. Coverage:
+verify+invoke e threadpool saturo senza lost-update/deadlock.
+
+Fail-closed sul timbro: al load un VERIFIED persistito senza ``action_fp``
+e' degradato (``ACTION_FP_MISSING``) esattamente come quello con timbro
+discorde (``ACTION_FP_MISMATCH``). Timbrare il contenuto corrente al posto
+di degradare renderebbe il gate aggirabile cancellando un campo. Costo:
+una ri-verifica per gli adapter persistiti prima di N045. Coverage:
 R22 R26 R33 R49 G17 G19. Out of scope: N046+, N005 D6, chiusura
 #67/#63/#21, claim H63-N045 installed W/L PASS.
 
