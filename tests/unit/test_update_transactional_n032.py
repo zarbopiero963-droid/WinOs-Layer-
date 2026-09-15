@@ -1,0 +1,208 @@
+"""H63-N032 — Update transazionale Windows (verify obbligatorio, rollback senza orfani)."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from windows_os_api.update.manager import UpdateManager, UpdatePackage
+from windows_os_api.update.checksum_manifest import sha256_file
+
+
+def _snapshot(install: Path) -> dict[str, str]:
+    """Relative path → content hash; exclude update_state.json."""
+    out: dict[str, str] = {}
+    for p in sorted(install.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.name == "update_state.json":
+            continue
+        rel = p.relative_to(install).as_posix()
+        out[rel] = sha256_file(p)
+    return out
+
+
+def _dir_package(tmp_path: Path, version: str, files: dict[str, bytes]) -> UpdatePackage:
+    pkg = tmp_path / f"pkg-{version}"
+    pkg.mkdir()
+    for name, data in files.items():
+        target = pkg / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    manifest = UpdateManager.write_package_manifest(pkg)
+    return UpdatePackage(
+        version=version,
+        path=pkg,
+        checksum_sha256=sha256_file(manifest),
+    )
+
+
+def test_h63_n032_apply_rejects_verify_false(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("v1", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    src = tmp_path / "release.bin"
+    src.write_bytes(b"NEW")
+    pkg = UpdatePackage(version="2.0.0", path=src, checksum_sha256=sha256_file(src))
+    blocked = mgr.apply(pkg, verify=False)
+    assert blocked["ok"] is False
+    assert "verify" in blocked.get("error", "").lower()
+    assert not (install / "release.bin").exists()
+
+
+def test_h63_n032_transactional_always_verifies(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.dll": b"DLL"})
+    # Tamper after packaging
+    (pkg.path / "app.txt").write_bytes(b"EVIL")
+    result = mgr.apply_windows_transactional(pkg)
+    assert result["ok"] is False
+    assert "checksum" in result.get("error", "").lower() or "verif" in result.get("error", "").lower()
+    assert (install / "app.txt").read_text(encoding="utf-8") == "vA"
+    assert not (install / "new.dll").exists()
+
+
+def test_h63_n032_success_stop_replace_start_health(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    (install / "only_in_a.cfg").write_text("keep-me-on-rollback", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    before = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.dll": b"DLL"})
+
+    stages: list[str] = []
+
+    def stop() -> dict[str, Any]:
+        stages.append("stop")
+        return {"ok": True}
+
+    def start() -> dict[str, Any]:
+        stages.append("start")
+        return {"ok": True}
+
+    def health() -> dict[str, Any]:
+        stages.append("health")
+        return {"ok": True, "status": "ok"}
+
+    result = mgr.apply_windows_transactional(
+        pkg, stop_service=stop, start_service=start, health_check=health
+    )
+    assert result["ok"] is True
+    assert stages == ["stop", "start", "health"]
+    assert result.get("stage") == "done" or result.get("stages")
+    assert (install / "app.txt").read_bytes() == b"vB"
+    assert (install / "new.dll").read_bytes() == b"DLL"
+    # sostituzione: file solo in vA rimossi dall'albero installato
+    assert not (install / "only_in_a.cfg").exists()
+    assert mgr.version == "2.0.0"
+    assert before["app.txt"] != _snapshot(install)["app.txt"]
+
+
+@pytest.mark.parametrize(
+    "fail_stage",
+    ["stop", "replace", "start", "health"],
+)
+def test_h63_n032_failure_at_stage_rolls_back_no_orphans(
+    tmp_path: Path, fail_stage: str, monkeypatch: pytest.MonkeyPatch
+):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    (install / "only_in_a.cfg").write_text("preserve", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    expected = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.dll": b"ORPHAN-DLL"})
+
+    def stop() -> dict[str, Any]:
+        if fail_stage == "stop":
+            return {"ok": False, "error": "stop failed"}
+        return {"ok": True}
+
+    def start() -> dict[str, Any]:
+        if fail_stage == "start":
+            return {"ok": False, "error": "start failed"}
+        return {"ok": True}
+
+    def health() -> dict[str, Any]:
+        if fail_stage == "health":
+            return {"ok": False, "error": "health failed", "status": "unhealthy"}
+        return {"ok": True, "status": "ok"}
+
+    if fail_stage == "replace":
+        real_replace = mgr._replace_install_tree
+
+        def boom(package: UpdatePackage) -> None:
+            real_replace(package)
+            raise RuntimeError("injected replace failure after partial copy")
+
+        monkeypatch.setattr(mgr, "_replace_install_tree", boom)
+
+    result = mgr.apply_windows_transactional(
+        pkg, stop_service=stop, start_service=start, health_check=health
+    )
+    assert result["ok"] is False
+    assert result.get("rolled_back") is True or fail_stage == "stop"
+    # After any failure past/around replace, install must match vA (no orphan new.dll)
+    assert _snapshot(install) == expected
+    assert not (install / "new.dll").exists()
+    assert (install / "only_in_a.cfg").read_text(encoding="utf-8") == "preserve"
+    assert mgr.version == "1.0.0"
+
+
+def test_h63_n032_ambiguous_health_is_not_success(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    expected = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.dll": b"DLL"})
+
+    def health_ambiguous() -> dict[str, Any]:
+        # Missing ok / status — ambiguous
+        return {"message": "maybe fine"}
+
+    result = mgr.apply_windows_transactional(
+        pkg,
+        stop_service=lambda: {"ok": True},
+        start_service=lambda: {"ok": True},
+        health_check=health_ambiguous,
+    )
+    assert result["ok"] is False
+    assert "health" in result.get("error", "").lower() or "ambiguous" in result.get(
+        "error", ""
+    ).lower()
+    assert result.get("rolled_back") is True
+    assert _snapshot(install) == expected
+    assert not (install / "new.dll").exists()
+
+
+def test_h63_n032_rollback_deletes_files_introduced_by_update(tmp_path: Path):
+    """Phase 0 gap: rollback must remove files that were not in the backup."""
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    expected = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "brand_new.bin": b"NEW"})
+
+    # Simulate partial apply path: backup + replace, then explicit rollback
+    assert mgr.verify(pkg) is True
+    mgr.backup_current()
+    mgr._replace_install_tree(pkg)
+    assert (install / "brand_new.bin").exists()
+    rb = mgr.rollback()
+    assert rb["ok"] is True
+    assert _snapshot(install) == expected
+    assert not (install / "brand_new.bin").exists()
