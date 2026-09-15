@@ -1,4 +1,4 @@
-"""N016/N018/N019/N023/N024 — REST API catalog + test + disable + create/publish.
+"""N016/N018/N019/N023/N024/N025 — REST API catalog + test + disable + create/publish + SDK.
 
 Catalog: GET /v1/apis list + detail over PersistentApiRegistry / ApiRegistry.
 Pagination uses ``limit``/``offset``. Missing record → 404; registry
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from windows_os_api.api.rest.deps import audit
@@ -40,6 +40,10 @@ from windows_os_api.apps.schema.openapi_export import (
     assemble_openapi_document,
     build_registry_operation,
     finalize_openapi_export,
+)
+from windows_os_api.apps.schema.sdk_export import (
+    SdkExportRejected,
+    generate_python_sdk,
 )
 from windows_os_api.core.permissions.model import Permission, Role
 from windows_os_api.core.security.auth import (
@@ -259,6 +263,34 @@ def export_registry_openapi(
     audit("apis.openapi", auth, detail={"paths": len(doc.get("paths") or {})})
     return doc
 
+
+@router.get("/sdk.py")
+def export_registry_sdk(
+    auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ)),
+):
+    """N025: deterministic Python SDK from VERIFIED registry OpenAPI only."""
+    visible = _visible_app_ids(auth)
+    try:
+        doc = _registry_openapi_document(visible_app_ids=visible)
+        source = generate_python_sdk(doc)
+    except RegistryUnavailable as exc:
+        audit("apis.sdk", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API registry unavailable",
+        ) from exc
+    except (OpenAPISchemaRejected, SdkExportRejected) as exc:
+        audit("apis.sdk", auth, outcome="failure", detail={"reason": str(exc)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid SDK export: {exc}",
+        ) from exc
+    audit("apis.sdk", auth, detail={"bytes": len(source.encode("utf-8"))})
+    return Response(
+        content=source,
+        media_type="text/x-python; charset=utf-8",
+        headers={"Content-Disposition": 'inline; filename="winos_apis_sdk.py"'},
+    )
 
 @router.get("/{api_id}")
 def get_api(

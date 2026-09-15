@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from windows_os_api.core.permissions.model import Permission
 from windows_os_api.core.security.auth import AuthContext, require_permission, ensure_app_access
 from windows_os_api.api.rest.deps import audit
@@ -16,8 +16,9 @@ from windows_os_api.apps.api_registry.gateway import (
     execute_via_gateway,
     gateway_http_status,
 )
-from windows_os_api.apps.schema.generator import AdapterOpenAPINotFound, app_openapi
+from windows_os_api.apps.schema.generator import AdapterOpenAPINotFound, app_openapi, app_sdk
 from windows_os_api.apps.schema.openapi_export import OpenAPISchemaRejected
+from windows_os_api.apps.schema.sdk_export import SdkExportRejected
 from windows_os_api.apps.automation.actions import discover_actions
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -143,3 +144,21 @@ def openapi_for_app(app_id: str, auth: AuthContext = Depends(require_permission(
         raise HTTPException(404, str(exc)) from exc
     except OpenAPISchemaRejected as exc:
         raise HTTPException(400, f"invalid OpenAPI schema: {exc}") from exc
+
+
+@router.get("/{app_id}/sdk.py")
+def sdk_for_app(app_id: str, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):
+    """N025: deterministic Python SDK for per-app Virtual API (VERIFIED ops only)."""
+    ensure_app_access(auth, app_id)
+    try:
+        source = app_sdk(app_id)
+    except AdapterOpenAPINotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (OpenAPISchemaRejected, SdkExportRejected) as exc:
+        raise HTTPException(400, f"invalid SDK export: {exc}") from exc
+    audit("adapter.sdk", auth, resource=app_id, detail={"bytes": len(source.encode("utf-8"))})
+    return Response(
+        content=source,
+        media_type="text/x-python; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="{app_id}_sdk.py"'},
+    )

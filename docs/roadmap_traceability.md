@@ -395,3 +395,13 @@ pytest tests/unit/test_control_center_n024.py tests/unit/test_control_center_n02
 ```
 
 Full installed W/L H63-N024 not claimed PASS here (MANUAL / #21).
+
+## N025 — SDK/export dei contratti API
+
+Contratto (#67 / H63-N025, B-API, Q09): export schema + **client SDK Python** dal contratto **pubblicato/VERIFIED** (OpenAPI N019) senza duplicare il motore di esecuzione né inventare endpoint; ``GET /v1/apis/sdk.py`` e ``GET /v1/apps/{app_id}/sdk.py``; output deterministico (nessun timestamp/secret); client propaga **403**, supporta **timeout**, e dopo revoke/demote la rigenerazione omette l’op (live fail-closed). Coverage: R31 W063 L063 G01 G28. Segreti AI GUI → N026.
+
+```bash
+pytest tests/unit/test_api_registry_n025.py tests/unit/test_api_registry_n019.py -q
+```
+
+Full installed W/L H63-N025 not claimed PASS here (MANUAL / #21).

@@ -85,3 +85,14 @@ def platform_capabilities_schema() -> dict[str, Any]:
     except OpenAPISchemaRejected:
         # Platform stub must still be valid under N019 rules.
         raise
+
+
+def app_sdk(app_id: str) -> str:
+    """Return deterministic Python SDK source for a per-app Virtual API (N025).
+
+    Fail-closed: reuses ``app_openapi`` (never implicit create_adapter).
+    """
+    from windows_os_api.apps.schema.sdk_export import generate_python_sdk
+
+    doc = app_openapi(app_id)
+    return generate_python_sdk(doc)
