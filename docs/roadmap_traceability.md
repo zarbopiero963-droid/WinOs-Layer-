@@ -563,3 +563,22 @@ pytest tests/unit/test_event_bus_n039.py tests/unit/test_event_bus.py tests/unit
 
 Full installed W/L H63-N039 not claimed PASS here (MANUAL_ONLY / #21).
 
+
+## N040 — WebSocket auth e isolamento applicazioni
+
+Contratto (#67 / H63-N040, B-BUS, Q02/Q10): eliminare secret in URL; auth
+browser-safe (``X-API-Key`` header, ``Sec-WebSocket-Protocol: winos.apikey.<b64url>``,
+oppure first-message ``{"type":"auth","api_key":...}``); ``?api_key=`` **sempre
+negato** (4401); Origin/peer guard allineato a N013; RBAC ``SYSTEM_READ``;
+filtri server-side app/subject (fail-closed su ``app_scopes`` vuoti per eventi
+app-bound; admin vede tutto); idle/flood cap per connessione; cleanup subscriber
+su disconnect; revoca mid-stream N012 invariata. Coverage: R37 R38 W068 L068 G14 G16.
+Out of scope: N041 webhooks, N005 D6, chiusura #67/#63/#21, claim H63-N040
+installed W/L PASS.
+
+```bash
+pytest tests/unit/test_websocket_n040.py tests/unit/test_auth_n011.py tests/unit/test_auth_n012.py tests/unit/test_event_bus_n039.py -q
+```
+
+Meccanismo documentato in ``windows_os_api/api/websocket/bus.py`` (module docstring).
+Full installed W/L H63-N040 not claimed PASS here (MANUAL_ONLY / #21).
