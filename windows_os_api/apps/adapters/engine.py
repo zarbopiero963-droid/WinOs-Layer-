@@ -57,8 +57,11 @@ class Adapter:
         return self.hwnd is not None
 
 _adapters: dict[str, Adapter] = {}
+# N045 level 1: registry mutations only (never held during UI or store I/O).
+_adapters_registry_lock = RLock()
 
 ADAPTER_NOT_BOUND = "ADAPTER_NOT_BOUND"
+ADAPTER_BUSY = "ADAPTER_BUSY"
 
 def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     actions: list[AdapterAction] = []
@@ -138,7 +141,10 @@ def create_adapter(app_id: str, hwnd: int = 1001, trust_level: str = "unsigned")
         trust_level=trust_level,
     )
     adapter.openapi = generate_adapter_openapi(adapter)
-    _adapters[app_id] = adapter
+    # N045: registry mutation only under level-1 lock; UI already done above;
+    # store.save is level-3 and must not run under an inverted lock order.
+    with _adapters_registry_lock:
+        _adapters[app_id] = adapter
     try:
         store.save(adapter)
         adapter.persisted = True
@@ -212,7 +218,7 @@ def load_persisted_adapters() -> dict[str, Any]:
                     params=list(a.get("params") or []),
                     risk=a.get("risk", "low"),
                     verification=store.sanitize_action_verification(
-                        a.get("verification")
+                        a.get("verification"), action=a
                     ),
                 )
                 for a in manifest["actions"]
@@ -225,7 +231,10 @@ def load_persisted_adapters() -> dict[str, Any]:
         # Rigenerato, mai riletto dal disco: un documento derivato salvato
         # accanto alla sua sorgente e' un modo per farli divergere.
         adapter.openapi = generate_adapter_openapi(adapter)
-        _adapters[app_id] = adapter
+        with _adapters_registry_lock:
+            if app_id in _adapters:
+                continue
+            _adapters[app_id] = adapter
         restored.append(app_id)
     return {
         "restored": restored,
@@ -262,11 +271,33 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
         return {"ok": False, "error": f"azione non trovata: {action_name}"}
 
     with adapter._verification_lock:
+        from windows_os_api.apps.adapters.lock_order import action_content_fingerprint
+
+        # Re-resolve under the lock so we never stamp a stale action object.
+        action = next((a for a in adapter.actions if a.name == action_name), None)
+        if action is None:
+            return {"ok": False, "error": f"azione non trovata: {action_name}"}
+        fp_before = action_content_fingerprint(action)
         verdict = (
             verify_action(app_id, action_name)
             if times <= 1
             else verify_action_repeatedly(app_id, action_name, times=times)
         )
+        fp_after = action_content_fingerprint(action)
+        if fp_before != fp_after:
+            # Action identity changed mid-flight — never keep VERIFIED.
+            verdict = {
+                "state": "FAILED",
+                "evidence": (
+                    "action content changed during verify; "
+                    "VERIFIED of another version refused (N045)"
+                ),
+                "code": "ACTION_FP_CHANGED",
+                "checked_at": verdict.get("checked_at"),
+            }
+        elif verdict.get("state") == "VERIFIED":
+            verdict = dict(verdict)
+            verdict["action_fp"] = fp_after
         action.verification = verdict
         # La Virtual API e' una proiezione dei verdetti correnti, non delle
         # azioni semplicemente scoperte. Aggiornare la copia conservata
@@ -275,6 +306,7 @@ def verify_and_record(app_id: str, action_name: str, times: int = 1) -> dict[str
         adapter.openapi = generate_adapter_openapi(adapter)
         persisted = True
         try:
+            # store.save takes level-3 _io_lock; order is verification → store.
             store.save(adapter)
             adapter.persisted = True
             adapter.persist_error = None
@@ -345,7 +377,37 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
             "bound": False,
         }
 
-    params = params or {}
+    # N045: serialize invoke with verify on the same adapter (RLock re-entrant
+    # when verify_action already holds the lock). Level 2 only — never take
+    # store I/O here.
+    with adapter._verification_lock:
+        return _invoke_action_locked(adapter, action, app_id, action_name, params or {})
+
+
+def _invoke_action_locked(
+    adapter: Adapter,
+    action: AdapterAction,
+    app_id: str,
+    action_name: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    # Re-resolve under the lock: action list may have been replaced.
+    action = next((a for a in adapter.actions if a.name == action_name), None)
+    if action is None:
+        return {"ok": False, "error": f"action not found: {action_name}"}
+    if not adapter.bound:
+        return {
+            "ok": False,
+            "error": (
+                f"l'adapter {app_id!r} e' stato ricaricato da disco e non e' "
+                f"agganciato a nessuna finestra: riagganciarlo con un hwnd vivo "
+                f"prima di invocare azioni"
+            ),
+            "code": ADAPTER_NOT_BOUND,
+            "app_id": app_id,
+            "action": action_name,
+            "bound": False,
+        }
     # Sandbox enforcement lives HERE, not in the callers.
     #
     # It used to read "delegated to caller", and of the four call sites only one
@@ -498,8 +560,9 @@ def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
     ``verification`` arriva anche dai manifest persistiti, quindi il controllo
     e' intenzionalmente stretto: deve essere un oggetto e il suo stato deve
     essere esattamente ``VERIFIED`` **and** carry a non-empty
-    ``verification_id`` (N018). Dati mancanti o malformati restano fuori
-    dalla superficie pubblicata (fail-closed).
+    ``verification_id`` (N018) **and** a matching ``action_fp`` (N045).
+    Dati mancanti o malformati restano fuori dalla superficie pubblicata
+    (fail-closed).
 
     N019: rich input/output/errors/scopes/risk/auth/version; unique
     ``operationId`` (includes ``app_id``); deterministic path order; CRUD
@@ -514,7 +577,7 @@ def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
 
     paths: dict[str, Any] = {}
     for a in adapter.actions:
-        if not is_action_verified_for_openapi(a.verification):
+        if not is_action_verified_for_openapi(a.verification, action=a):
             continue
         path = f"/v1/apps/{adapter.app_id}/actions/{a.name}"
         paths[path] = {
@@ -544,4 +607,5 @@ def generate_adapter_openapi(adapter: Adapter) -> dict[str, Any]:
     return finalize_openapi_export(doc)
 
 def reset_adapters() -> None:
-    _adapters.clear()
+    with _adapters_registry_lock:
+        _adapters.clear()

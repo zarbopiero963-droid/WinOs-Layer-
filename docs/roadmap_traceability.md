@@ -661,3 +661,20 @@ pytest tests/unit/test_diagnose_n044.py tests/unit/test_health_metrics_n043.py t
 
 Full installed W/L H63-N044 not claimed PASS here (MANUAL_ONLY / #21).
 
+
+## N045 — Lock order, verify/invoke e consistenza store
+
+Contratto (#67 / H63-N045, B-VERIFY, Q12): ordine lock
+``registry (1) → verification (2) → store_io (3)``; confine atomico
+verify/invoke/store; I/O UI sotto lock per-adapter e' proprio; niente
+await/rete/UI sotto ``store._io_lock``; ``action_fp`` lega VERIFIED alla
+identita' azione ( demote mismatch / mid-flight change ); concurrent
+verify+invoke e threadpool saturo senza lost-update/deadlock. Coverage:
+R22 R26 R33 R49 G17 G19. Out of scope: N046+, N005 D6, chiusura
+#67/#63/#21, claim H63-N045 installed W/L PASS.
+
+```bash
+pytest tests/unit/test_lock_order_n045.py tests/security/test_capability_verification.py -q
+```
+
+Full installed W/L H63-N045 not claimed PASS here (MANUAL_ONLY / #21).

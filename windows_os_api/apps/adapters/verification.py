@@ -44,6 +44,14 @@ comparire da nessuna parte nell'albero. Quando l'albero non cambia il verdetto e
 ``UNSUPPORTED``, non ``VERIFIED``: dire «verificata» perche' il click non ha
 sollevato eccezioni sarebbe tornare esattamente al problema che questo modulo
 esiste per risolvere.
+
+Lock / confine (N045)
+---------------------
+``verify_action`` acquisisce ``Adapter._verification_lock`` (livello 2) per tutta
+la prova, incluso I/O UI/backend del probe: e' il confine atomico corretto.
+Non acquisisce ``store._io_lock`` (livello 3) ne' il registry lock. Persistenza
+del verdetto e' in ``verify_and_record`` (engine), che tiene livello 2 e poi
+salva sotto livello 3. Nessun ``await`` / rete sotto lock condivisi di store.
 """
 from __future__ import annotations
 
@@ -141,6 +149,10 @@ def verify_action(app_id: str, action_name: str) -> dict[str, Any]:
 
     L'evidenza e' testo leggibile: chi legge il verdetto deve poter capire *cosa*
     e' stato osservato, non solo che qualcuno ha deciso.
+
+    N045: holds ``Adapter._verification_lock`` (lock level 2) for the whole
+    probe — including UI/backend I/O. That is the *proper* shared lock for
+    probe atomicity. Must never acquire ``store._io_lock`` here.
     """
     from windows_os_api.apps.adapters.engine import get_adapter
 
