@@ -467,11 +467,22 @@ def merge_registry_paths_into_fastapi_schema(
         schemes["ApiKeyAuth"] = _security_schemes()["ApiKeyAuth"]
     return out
 
-def is_action_verified_for_openapi(verification: Any) -> bool:
-    """N018+N019 gate: VERIFIED + non-empty verification_id."""
-    return (
+def is_action_verified_for_openapi(verification: Any, action: Any = None) -> bool:
+    """N018+N019(+N045) gate: VERIFIED + verification_id [+ matching action_fp].
+
+    When ``action`` is provided, a VERIFIED verdict must also carry an
+    ``action_fp`` that matches the action content fingerprint (N045). Callers
+    that only have the verdict dict keep the N018/N019 id check.
+    """
+    if not (
         isinstance(verification, dict)
         and verification.get("state") == "VERIFIED"
         and isinstance(verification.get("verification_id"), str)
         and bool(str(verification.get("verification_id")).strip())
-    )
+    ):
+        return False
+    if action is None:
+        return True
+    from windows_os_api.apps.adapters.lock_order import verification_matches_action
+
+    return verification_matches_action(verification, action)

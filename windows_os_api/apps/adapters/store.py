@@ -42,6 +42,7 @@ silenzio.
 from __future__ import annotations
 
 import json
+import threading
 import os
 import sys
 import time
@@ -58,6 +59,12 @@ MANIFEST_VERSION = 1
 MANIFEST_UNREADABLE = "MANIFEST_UNREADABLE"
 MANIFEST_VERSION_UNKNOWN = "MANIFEST_VERSION_UNKNOWN"
 MANIFEST_MALFORMED = "MANIFEST_MALFORMED"
+
+# N045: process-wide store I/O lock (level 3). Never hold during UI/network.
+# Acquire only while reading/writing manifest bytes; never take verification
+# locks while holding this.
+_io_lock = threading.RLock()
+
 
 
 @dataclass(frozen=True)
@@ -137,31 +144,49 @@ def to_manifest(adapter: Any) -> dict[str, Any]:
 def save(adapter: Any) -> Path:
     """Scrive il manifest. Restituisce il percorso, cosi' il chiamante sa dove."""
     path = _manifest_path(adapter.app_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Scrittura in due tempi: un runtime che muore a meta' `write_text` lascia un
-    # manifest troncato, e un manifest troncato e' un adapter che al prossimo
-    # avvio sparisce. Il rename e' atomico sullo stesso filesystem.
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(to_manifest(adapter), indent=2), encoding="utf-8")
-    tmp.replace(path)
+    payload = json.dumps(to_manifest(adapter), indent=2)
+    with _io_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Scrittura in due tempi: un runtime che muore a meta' `write_text` lascia un
+        # manifest troncato, e un manifest troncato e' un adapter che al prossimo
+        # avvio sparisce. Il rename e' atomico sullo stesso filesystem.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
     return path
 
 
 def delete(app_id: str) -> bool:
     """Toglie il manifest. `False` se non c'era."""
     path = _manifest_path(app_id)
-    if not path.exists():
-        return False
-    path.unlink()
+    with _io_lock:
+        if not path.exists():
+            return False
+        path.unlink()
     return True
 
 
-def sanitize_action_verification(verification: Any) -> dict[str, Any] | None:
+def sanitize_action_verification(
+    verification: Any, action: Any | None = None
+) -> dict[str, Any] | None:
     """Fail-closed: VERIFIED without verification_id cannot survive reload (N018).
 
     Manifests may be hand-edited or forged. A persisted ``state=VERIFIED`` without
     an independent ``verification_id`` is demoted so Virtual API / registry never
     treat it as observed proof.
+
+    N045: when ``action`` is provided, a persisted VERIFIED must carry an
+    ``action_fp`` that matches ``action_content_fingerprint(action)``. Both a
+    mismatched stamp (``ACTION_FP_MISMATCH``) and a missing one
+    (``ACTION_FP_MISSING``) are demoted.
+
+    Demoting the *missing* case is what makes the stamp a gate. Stamping the
+    current fields instead — migrating — would hand the forger the cheaper
+    edit: point the action at another control and delete ``action_fp``, and the
+    load path would mint a fingerprint agreeing with the tampered content.
+    Evidence that is absent is not evidence that agrees. The cost is one
+    re-verification for adapters persisted before N045, the same price N018
+    charged for VERIFIED without ``verification_id``.
     """
     if verification is None:
         return None
@@ -173,19 +198,44 @@ def sanitize_action_verification(verification: Any) -> dict[str, Any] | None:
         if "verification_id" in verification:
             cleaned = dict(verification)
             cleaned.pop("verification_id", None)
+            cleaned.pop("action_fp", None)
             return cleaned
         return verification
     vid = verification.get("verification_id")
-    if isinstance(vid, str) and vid.strip():
-        return verification
-    demoted = dict(verification)
-    demoted["state"] = "FAILED"
-    demoted["code"] = "VERIFICATION_ID_MISSING"
-    prior = str(demoted.get("evidence") or "").strip()
-    note = "VERIFIED senza verification_id: demoted at load (N018)"
-    demoted["evidence"] = f"{prior}; {note}" if prior else note
-    demoted.pop("verification_id", None)
-    return demoted
+    if not (isinstance(vid, str) and vid.strip()):
+        demoted = dict(verification)
+        demoted["state"] = "FAILED"
+        demoted["code"] = "VERIFICATION_ID_MISSING"
+        prior = str(demoted.get("evidence") or "").strip()
+        note = "VERIFIED senza verification_id: demoted at load (N018)"
+        demoted["evidence"] = f"{prior}; {note}" if prior else note
+        demoted.pop("verification_id", None)
+        demoted.pop("action_fp", None)
+        return demoted
+
+    if action is not None:
+        from windows_os_api.apps.adapters.lock_order import action_content_fingerprint
+
+        expected = action_content_fingerprint(action)
+        stamped = verification.get("action_fp")
+        has_stamp = isinstance(stamped, str) and bool(stamped.strip())
+        if has_stamp and stamped == expected:
+            return verification
+        demoted = dict(verification)
+        demoted["state"] = "FAILED"
+        if has_stamp:
+            demoted["code"] = "ACTION_FP_MISMATCH"
+            note = "VERIFIED action_fp mismatch: demoted at load (N045)"
+        else:
+            demoted["code"] = "ACTION_FP_MISSING"
+            note = "VERIFIED senza action_fp: demoted at load (N045)"
+        prior = str(demoted.get("evidence") or "").strip()
+        demoted["evidence"] = f"{prior}; {note}" if prior else note
+        demoted.pop("verification_id", None)
+        demoted.pop("action_fp", None)
+        return demoted
+
+    return verification
 
 
 def _read_manifest(path: Path) -> tuple[dict[str, Any] | None, SkippedManifest | None]:
@@ -225,12 +275,14 @@ def load_all() -> tuple[list[dict[str, Any]], list[SkippedManifest]]:
     in silenzio e' un adapter che il chiamante crede di avere.
     """
     directory = store_dir()
-    if not directory.is_dir():
-        return [], []
+    with _io_lock:
+        if not directory.is_dir():
+            return [], []
+        paths = sorted(directory.glob("*.json"))
 
     loaded: list[dict[str, Any]] = []
     skipped: list[SkippedManifest] = []
-    for path in sorted(directory.glob("*.json")):
+    for path in paths:
         manifest, problem = _read_manifest(path)
         if problem is not None:
             skipped.append(problem)
@@ -243,7 +295,7 @@ def load_all() -> tuple[list[dict[str, Any]], list[SkippedManifest]]:
                         continue
                     item = dict(action)
                     item["verification"] = sanitize_action_verification(
-                        item.get("verification")
+                        item.get("verification"), action=item
                     )
                     cleaned_actions.append(item)
                 manifest = dict(manifest)
@@ -259,9 +311,10 @@ def clear_adapter_store() -> None:
     temporary directory. Does not recreate the directory.
     """
     directory = store_dir()
-    if not directory.exists():
-        return
-    for path in directory.iterdir():
-        if path.is_file():
-            path.unlink()
+    with _io_lock:
+        if not directory.exists():
+            return
+        for path in directory.iterdir():
+            if path.is_file():
+                path.unlink()
 
