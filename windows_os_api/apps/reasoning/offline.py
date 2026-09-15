@@ -36,7 +36,15 @@ def reason(query: str, hwnd: int = 1001) -> dict[str, Any]:
     element = map_intent_to_element(tree, query)
     suggestions = suggest_mappings(tree)
     llm = _ensure_llm()
-    llm_hint = llm.complete(f"UI query: {query}")
+    # Query text is untrusted data (N027) — never embed secrets in the prompt.
+    try:
+        from windows_os_api.apps.ai.egress import redact_secrets_in_text
+        from windows_os_api.apps.ai.settings_store import get_ai_settings
+        _key = get_ai_settings().api_key
+        safe_query = redact_secrets_in_text(str(query), [_key] if _key else None)
+    except Exception:  # noqa: BLE001
+        safe_query = str(query)
+    llm_hint = llm.complete(f"UI query: {safe_query}")
     engine = "deterministic-offline"
     try:
         from windows_os_api.apps.ai.settings_store import get_ai_settings

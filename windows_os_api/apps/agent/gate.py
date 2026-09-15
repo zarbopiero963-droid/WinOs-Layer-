@@ -66,7 +66,14 @@ def evaluate(plan: dict[str, Any], app_id: str) -> GateDecision:
     Every condition is checked and named. Returning a bare False would leave the
     caller to guess whether the agent was unsure, the action was risky, or the
     policy said no — three situations with three different answers.
+
+    Untrusted UI / model / prompt text is never authorization (N027): injection
+    claims such as ``force_execute`` / ``bypass_gate`` / ``enable_tools`` are
+    stripped and ignored. Confidence is not permission — sandbox still decides.
     """
+    from windows_os_api.apps.ai.egress import strip_injection_auth_claims
+
+    plan = strip_injection_auth_claims(plan)
     workflow = plan.get("workflow") or {}
     steps = workflow.get("steps") or []
     if not steps:

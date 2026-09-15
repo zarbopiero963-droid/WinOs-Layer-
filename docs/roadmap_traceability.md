@@ -415,3 +415,14 @@ pytest tests/unit/test_ai_settings_n026.py tests/security/test_ai_key_masking.py
 ```
 
 Full installed W/L H63-N026 not claimed PASS here (MANUAL / #21).
+
+## N027 — Confine egress AI e input non fidato
+
+Contratto (#67 / H63-N027, B-AI, Q02/Q13/Q15): validare base URL / redirect / DNS / provider (https-only, no credentials in URL, block private/link-local/metadata IP literals and DNS→private, default hosts ``api.openai.com`` / ``api.anthropic.com`` / ``openrouter.ai`` + custom solo se SSRF-safe); ``follow_redirects=False`` e deny 3xx; timeout/cancel fail-closed con ``spent=False``; prompt/UI/log come dati — redact API-key-like patterns dai body, mai ``api_key`` nel testo prompt; prompt-injection non abilita tool (gate ignora ``force_execute``/``bypass_gate``/``enable_tools``; confidence ≠ permesso). Coverage: R28 R35 R38 G08 G09 G19 G20.
+
+```bash
+pytest tests/unit/test_ai_egress_n027.py tests/unit/test_ai_provider.py tests/unit/test_agent_execution_gate.py -q
+```
+
+Full installed W/L H63-N027 not claimed PASS here (MANUAL / #21).
+

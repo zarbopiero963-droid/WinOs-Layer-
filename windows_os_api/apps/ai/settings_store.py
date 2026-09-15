@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from windows_os_api.apps.ai.egress import AIEgressError, validate_ai_base_url
+
 AIProviderName = Literal["local", "openai", "anthropic", "openrouter"]
 
 DEFAULT_MODELS: dict[str, str | None] = {
@@ -157,11 +159,18 @@ def _merge(base: AIRuntimeSettings, file_data: dict[str, Any]) -> AIRuntimeSetti
     base_url = file_data.get("base_url", base.base_url)
     if base_url == "":
         base_url = None
+    normalised_base: str | None = None
+    if base_url:
+        try:
+            normalised_base = validate_ai_base_url(str(base_url).rstrip("/"), resolve_dns=True)
+        except AIEgressError:
+            # Fail-closed: drop unsafe persisted URL (do not echo it)
+            normalised_base = None
     return AIRuntimeSettings(
         provider=provider,  # type: ignore[arg-type]
         api_key=str(api_key or "").strip(),
         model=str(model) if model else None,
-        base_url=str(base_url).rstrip("/") if base_url else None,
+        base_url=normalised_base,
     )
 
 
@@ -273,6 +282,24 @@ def _secure_write(path: Path, data: dict[str, Any]) -> None:
                 pass
 
 
+def _sanitize_runtime_base_url(settings: AIRuntimeSettings) -> AIRuntimeSettings:
+    """Drop unsafe base_url from env or file (fail-closed, no echo)."""
+    if not settings.base_url:
+        return settings
+    try:
+        safe = validate_ai_base_url(settings.base_url, resolve_dns=True)
+    except AIEgressError:
+        safe = None
+    if safe == settings.base_url:
+        return settings
+    return AIRuntimeSettings(
+        provider=settings.provider,
+        api_key=settings.api_key,
+        model=settings.model,
+        base_url=safe,
+    )
+
+
 def get_ai_settings(*, reload: bool = False) -> AIRuntimeSettings:
     global _runtime
     with _lock:
@@ -280,7 +307,8 @@ def get_ai_settings(*, reload: bool = False) -> AIRuntimeSettings:
             return _runtime
         base = _from_env()
         file_data = _load_file(_resolved_path())
-        _runtime = _merge(base, file_data) if file_data else base
+        merged = _merge(base, file_data) if file_data else base
+        _runtime = _sanitize_runtime_base_url(merged)
         return _runtime
 
 
@@ -313,6 +341,11 @@ def update_ai_settings(
             new_key = api_key.strip()
         new_model = current.model if model is None else (model.strip() or None)
         new_base = current.base_url if base_url is None else (base_url.strip().rstrip("/") or None)
+        if new_base:
+            try:
+                new_base = validate_ai_base_url(new_base, resolve_dns=True)
+            except AIEgressError as e:
+                raise ValueError(f"invalid base_url: {e}") from e
         updated = AIRuntimeSettings(
             provider=new_provider,  # type: ignore[arg-type]
             api_key=new_key,
