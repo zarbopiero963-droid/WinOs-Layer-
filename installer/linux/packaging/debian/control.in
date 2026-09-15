@@ -1,0 +1,18 @@
+Package: winos-api
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: WinOs-Layer Contributors <noreply@users.noreply.github.com>
+Depends: systemd | systemd-sysv
+Recommends: openssl
+Provides: winos-api
+Conflicts: winos-api-fake
+Replaces: winos-api (<< @VERSION@)
+Homepage: https://github.com/zarbopiero963-droid/WinOs-Layer-
+Description: WinOs-Layer Linux FastAPI OS API server (LinuxBackend)
+ WinOs-Layer portable FastAPI server for Linux. Default backend is
+ LinuxBackend (WINOS_BACKEND=auto): real processes/FS/system via the OS API.
+ Not a Windows emulator. Binds 127.0.0.1 by default. API key loaded via
+ --api-key-file (never printed). Upgrade preserves api_key.txt under
+ /opt/winos-api. Flatpak is out of scope (see issue #64).

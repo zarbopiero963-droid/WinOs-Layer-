@@ -8,16 +8,26 @@
 # Usage:
 #   ./install.sh              # system install to /opt/winos-api (needs sudo)
 #   ./install.sh --user       # user install to ~/.local/opt/winos-api
+#   ./install.sh --upgrade    # replace binary/unit; preserve api_key.txt (N036)
 #   ./install.sh --no-systemd # skip unit install
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PKG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# When packaged, binary sits next to installer/linux/ or in package root
+# Portable zip layout: <pkg>/winos-api + <pkg>/VERSION + <pkg>/installer/linux/
+# Fallback: scripts living next to the binary.
+if [[ -f "${SCRIPT_DIR}/../../winos-api" || -f "${SCRIPT_DIR}/../../VERSION" ]]; then
+  PKG_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+elif [[ -f "${SCRIPT_DIR}/../winos-api" ]]; then
+  PKG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+else
+  PKG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
+# When packaged, binary sits at package root or beside this script
 BINARY=""
 for candidate in \
   "${PKG_ROOT}/winos-api" \
+  "${SCRIPT_DIR}/../../winos-api" \
   "${SCRIPT_DIR}/../winos-api" \
   "${SCRIPT_DIR}/winos-api" \
   "./winos-api"
@@ -30,12 +40,14 @@ done
 
 USER_MODE=0
 WITH_SYSTEMD=1
+UPGRADE_MODE=0
 for arg in "$@"; do
   case "${arg}" in
     --user) USER_MODE=1 ;;
     --no-systemd) WITH_SYSTEMD=0 ;;
+    --upgrade) UPGRADE_MODE=1 ;;
     -h|--help)
-      echo "Usage: $0 [--user] [--no-systemd]"
+      echo "Usage: $0 [--user] [--upgrade] [--no-systemd]"
       exit 0
       ;;
   esac
@@ -80,6 +92,31 @@ is_weak_api_key() {
   esac
   return 1
 }
+
+# N036 upgrade/compat: require existing install; stop unit; preserve api_key.txt
+PREV_VERSION=""
+WAS_ENABLED=0
+WAS_ACTIVE=0
+if [[ "${UPGRADE_MODE}" -eq 1 ]]; then
+  if [[ ! -d "${DEST}" || ! -x "${DEST}/winos-api" ]]; then
+    echo "ERROR: --upgrade requires an existing install at ${DEST}" >&2
+    echo "ERROR: run without --upgrade for a fresh install." >&2
+    exit 1
+  fi
+  if [[ -f "${DEST}/VERSION" ]]; then
+    PREV_VERSION="$(tr -d '[:space:]' < "${DEST}/VERSION" || true)"
+  fi
+  if "${SYSTEMCTL[@]}" is-enabled winos-api >/dev/null 2>&1; then
+    WAS_ENABLED=1
+  fi
+  if "${SYSTEMCTL[@]}" is-active winos-api >/dev/null 2>&1; then
+    WAS_ACTIVE=1
+  fi
+  echo "Upgrade mode: stopping winos-api (if running) before replace…"
+  "${SYSTEMCTL[@]}" stop winos-api 2>/dev/null || true
+  echo "  previous VERSION=${PREV_VERSION:-unknown}"
+  echo "  api_key.txt will be preserved when present (value not printed)"
+fi
 
 echo "Installing WinOs-Layer Linux portable → ${DEST}"
 echo "  (LinuxBackend / real OS API — WINOS_BACKEND=auto)"
@@ -168,9 +205,23 @@ if [[ "${WITH_SYSTEMD}" -eq 1 ]]; then
   fi
 fi
 
+# N036: restore service state after upgrade replace
+if [[ "${UPGRADE_MODE}" -eq 1 && "${WITH_SYSTEMD}" -eq 1 ]]; then
+  "${SYSTEMCTL[@]}" daemon-reload || true
+  if [[ "${WAS_ENABLED}" -eq 1 ]]; then
+    "${SYSTEMCTL[@]}" enable winos-api 2>/dev/null || true
+  fi
+  if [[ "${WAS_ACTIVE}" -eq 1 || "${WAS_ENABLED}" -eq 1 ]]; then
+    "${SYSTEMCTL[@]}" restart winos-api 2>/dev/null || "${SYSTEMCTL[@]}" start winos-api 2>/dev/null || true
+    echo "Upgrade: attempted restart of winos-api (preserve api_key; check status)"
+  fi
+fi
+
 cat <<MSG
 
-Install complete.
+$([ "${UPGRADE_MODE}" -eq 1 ] && echo "Upgrade complete." || echo "Install complete.")
+$([ "${UPGRADE_MODE}" -eq 1 ] && echo "  previous VERSION: ${PREV_VERSION:-unknown}")
+$([ -f "${DEST}/VERSION" ] && echo "  current VERSION:  $(tr -d '[:space:]' < "${DEST}/VERSION")")
 
 Paths:
   system install: /opt/winos-api  (default; needs sudo)

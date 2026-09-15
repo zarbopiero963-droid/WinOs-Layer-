@@ -1,0 +1,89 @@
+Name:           winos-api
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        WinOs-Layer Linux FastAPI OS API server (LinuxBackend)
+License:        MIT
+URL:            https://github.com/zarbopiero963-droid/WinOs-Layer-
+BuildArch:      @ARCH@
+Requires:       systemd
+Recommends:      openssl
+
+%description
+WinOs-Layer portable FastAPI server for Linux. Default backend is
+LinuxBackend (WINOS_BACKEND=auto). Not a Windows emulator. Binds
+127.0.0.1 by default. API key via --api-key-file. Upgrade preserves
+api_key.txt. Flatpak out of scope (#64).
+
+%install
+mkdir -p %{buildroot}/opt/winos-api
+mkdir -p %{buildroot}/usr/local/bin
+mkdir -p %{buildroot}/etc/systemd/system
+mkdir -p %{buildroot}/usr/share/doc/winos-api
+cp -a %{_sourcedir}/payload/winos-api %{buildroot}/opt/winos-api/winos-api
+cp -a %{_sourcedir}/payload/VERSION %{buildroot}/opt/winos-api/VERSION
+cp -a %{_sourcedir}/payload/LINUX.md %{buildroot}/usr/share/doc/winos-api/LINUX.md || true
+cp -a %{_sourcedir}/payload/winos-api.service %{buildroot}/etc/systemd/system/winos-api.service
+ln -sfn /opt/winos-api/winos-api %{buildroot}/usr/local/bin/winos-api
+
+%files
+/opt/winos-api/winos-api
+/opt/winos-api/VERSION
+/usr/local/bin/winos-api
+/etc/systemd/system/winos-api.service
+%doc /usr/share/doc/winos-api/LINUX.md
+
+%pre
+# Stop before upgrade replace; do not touch api_key.txt
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop winos-api 2>/dev/null || true
+fi
+
+%post
+# Preserve api_key on upgrade; generate only if missing; never print secret.
+DEST=/opt/winos-api
+if [ ! -f "$DEST/api_key.txt" ]; then
+  if command -v openssl >/dev/null 2>&1; then
+    KEY=$(openssl rand -hex 24)
+  else
+    KEY=$(python3 -c 'import secrets; print(secrets.token_hex(24))' 2>/dev/null || true)
+  fi
+  if [ -n "$KEY" ]; then
+    printf '%s\n' "$KEY" > "$DEST/api_key.txt"
+    chmod 600 "$DEST/api_key.txt"
+    unset KEY
+    echo "Generated API key → $DEST/api_key.txt (value not printed)"
+  fi
+else
+  echo "Reusing existing API key at $DEST/api_key.txt (value not printed)"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+
+%preun
+if [ "$1" = "0" ]; then
+  # erase (not upgrade)
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop winos-api 2>/dev/null || true
+    systemctl disable winos-api 2>/dev/null || true
+  fi
+fi
+
+%postun
+if [ "$1" = "0" ]; then
+  # Full erase: remove unit; keep api_key unless --noscripts wipe by admin
+  rm -f /etc/systemd/system/winos-api.service 2>/dev/null || true
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+  fi
+  echo "winos-api erased; /opt/winos-api may retain api_key.txt for reinstall compat"
+fi
+if [ "$1" -ge "1" ]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+  fi
+fi
+
+%changelog
+* Tue Sep 15 2026 WinOs-Layer Contributors <noreply@users.noreply.github.com> - @VERSION@-1
+- N036: initial deb/rpm/AppImage packaging with upgrade-preserving lifecycle

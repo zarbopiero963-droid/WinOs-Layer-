@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=WinOs-API
+Comment=WinOs-Layer Linux FastAPI OS API server (LinuxBackend)
+Exec=winos-api
+Icon=winos-api
+Categories=Utility;Development;
+Terminal=true
+StartupNotify=false
+X-AppImage-Version=@VERSION@

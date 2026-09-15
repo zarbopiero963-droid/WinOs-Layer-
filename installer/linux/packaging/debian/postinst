@@ -1,0 +1,33 @@
+#!/bin/sh
+# N036 deb lifecycle: configure / upgrade — preserve api_key, reload systemd.
+set -e
+DEST=/opt/winos-api
+UNIT=/etc/systemd/system/winos-api.service
+
+case "$1" in
+  configure)
+    if [ -f "$DEST/winos-api" ]; then
+      chmod 755 "$DEST/winos-api" || true
+    fi
+    # Preserve existing key; never print secret. Generate only if missing.
+    if [ ! -f "$DEST/api_key.txt" ]; then
+      if command -v openssl >/dev/null 2>&1; then
+        KEY=$(openssl rand -hex 24)
+      else
+        KEY=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
+      fi
+      printf '%s\n' "$KEY" > "$DEST/api_key.txt"
+      chmod 600 "$DEST/api_key.txt"
+      unset KEY
+      echo "Generated API key → $DEST/api_key.txt (chmod 600; value not printed)"
+    else
+      echo "Reusing existing API key at $DEST/api_key.txt (value not printed)"
+    fi
+    if [ -f "$UNIT" ] && command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+    fi
+    ;;
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+esac
+exit 0

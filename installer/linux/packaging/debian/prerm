@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stop service before remove/upgrade replace (do not wipe user key here).
+set -e
+case "$1" in
+  remove|upgrade|deconfigure)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop winos-api 2>/dev/null || true
+    fi
+    ;;
+esac
+exit 0

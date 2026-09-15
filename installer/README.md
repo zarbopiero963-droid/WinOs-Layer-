@@ -61,6 +61,9 @@ python scripts/build_installer.py build-portable
 python scripts/build_installer.py package-linux
 # or: python scripts/build_installer.py package-linux --build
 
+# N036 native packages (deb / rpm / AppImage; Flatpak out of scope)
+python scripts/build_installer.py package-linux --format deb rpm appimage
+
 # SHA-256 of dist/ artifacts
 python scripts/build_installer.py checksums
 ```
