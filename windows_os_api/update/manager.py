@@ -1,12 +1,23 @@
-"""Auto-update with verify / backup / rollback."""
+"""Auto-update with verify / backup / rollback.
+
+N028: directory packages verify via an embedded checksum manifest that never
+lists itself; duplicate basenames, missing or altered files fail closed.
+"""
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from windows_os_api.update.checksum_manifest import (
+    ChecksumManifestError,
+    find_package_manifest,
+    sha256_file,
+    verify_checksum_manifest,
+    write_checksum_manifest,
+)
 
 
 @dataclass
@@ -35,16 +46,54 @@ class UpdateManager:
 
     @staticmethod
     def checksum(path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        return sha256_file(Path(path))
 
     def verify(self, package: UpdatePackage) -> bool:
-        if not package.path.exists():
+        """Return True only when package identity matches checksum_sha256.
+
+        - File package: sha256(file) == checksum_sha256.
+        - Directory package: embedded checksums manifest must verify (independent
+          client) and checksum_sha256 must equal sha256 of that manifest file
+          (identity of the manifest, not a self-hash inside it).
+        """
+        path = Path(package.path)
+        if not path.exists():
             return False
-        return self.checksum(package.path) == package.checksum_sha256
+        try:
+            if path.is_dir():
+                manifest = find_package_manifest(path)
+                if manifest is None:
+                    return False
+                verify_checksum_manifest(manifest, root=path)
+                return sha256_file(manifest) == package.checksum_sha256.lower()
+            if not path.is_file():
+                return False
+            return sha256_file(path) == package.checksum_sha256.lower()
+        except ChecksumManifestError:
+            return False
+
+    @staticmethod
+    def write_package_manifest(package_dir: Path, files: list[Path] | None = None) -> Path:
+        """Write ``checksums.txt`` inside package_dir for the given (or all) files."""
+        package_dir = Path(package_dir)
+        if not package_dir.is_dir():
+            raise ChecksumManifestError(f"package dir missing: {package_dir}")
+        out = package_dir / "checksums.txt"
+        if files is None:
+            files = [
+                p
+                for p in package_dir.iterdir()
+                if p.is_file()
+                and p.name
+                not in {
+                    "checksums.txt",
+                    "checksums-linux.txt",
+                    "SHA256SUMS.txt",
+                    "SHA256SUMS",
+                    "sha256sums.txt",
+                }
+            ]
+        return write_checksum_manifest(files, out, root=package_dir)
 
     def backup_current(self) -> Path:
         version = self._state.get("version", "unknown")
@@ -52,7 +101,6 @@ class UpdateManager:
         if dest.exists():
             shutil.rmtree(dest)
         if self.install_dir.exists():
-            # Copy files except update_state and backups nesting
             dest.mkdir(parents=True, exist_ok=True)
             for item in self.install_dir.iterdir():
                 if item.name == "update_state.json":
@@ -70,7 +118,6 @@ class UpdateManager:
         if verify and not self.verify(package):
             return {"ok": False, "error": "checksum verification failed"}
         backup = self.backup_current()
-        # Extract: for tests, package.path is a directory or a single file payload
         if package.path.is_dir():
             for item in package.path.iterdir():
                 target = self.install_dir / item.name
@@ -81,7 +128,6 @@ class UpdateManager:
                 else:
                     shutil.copy2(item, target)
         else:
-            # Single file update payload — copy as release.txt content marker
             shutil.copy2(package.path, self.install_dir / package.path.name)
         self._state["version"] = package.version
         self._state["last_backup"] = str(backup)
@@ -106,7 +152,6 @@ class UpdateManager:
                 shutil.copytree(item, target)
             else:
                 shutil.copy2(item, target)
-        # Restore version from backup folder name
         ver = latest.name.replace("backup-", "", 1)
         self._state["version"] = ver
         self._save_state()

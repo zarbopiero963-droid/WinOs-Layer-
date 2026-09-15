@@ -103,7 +103,11 @@ def sha256_file(path: Path) -> str:
 
 
 def _parse_checksums(text: str) -> dict[str, str]:
-    """Parse `sha256  filename` / `sha256 *filename` lines (build_installer style)."""
+    """Parse `sha256  path` / `sha256 *path` lines (build_installer / N028 style).
+
+    Keys include both the full label and the basename so flat manifests and
+    unique relative paths remain lookup-compatible with ``artifact.name``.
+    """
     mapping: dict[str, str] = {}
     for line in text.splitlines():
         line = line.strip()
@@ -112,7 +116,10 @@ def _parse_checksums(text: str) -> dict[str, str]:
         m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+)$", line)
         if not m:
             continue
-        mapping[Path(m.group(2).strip()).name] = m.group(1).lower()
+        digest = m.group(1).lower()
+        label = m.group(2).strip()
+        mapping[label] = digest
+        mapping[Path(label).name] = digest
     return mapping
 
 

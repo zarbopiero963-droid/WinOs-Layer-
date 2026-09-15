@@ -174,38 +174,77 @@ def validate(verbose: bool = True) -> dict[str, Any]:
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    """Delegate to shared N028 helper (single implementation)."""
+    from windows_os_api.update.checksum_manifest import sha256_file as _sha256
+
+    return _sha256(Path(path))
 
 
-def checksums(paths: list[Path] | None = None, out: Path | None = None) -> Path:
-    """Write sha256 checksums for artifacts."""
-    if paths is None:
-        candidates = []
-        for folder in (DIST, OUTPUT, ROOT / "dist"):
-            if folder.is_dir():
-                candidates.extend(
-                    p for p in folder.iterdir() if p.is_file() and not p.name.endswith(".txt")
-                )
-        paths = sorted(set(candidates), key=lambda p: str(p))
+def checksums(
+    paths: list[Path] | None = None,
+    out: Path | None = None,
+    *,
+    root: Path | None = None,
+) -> Path:
+    """Write sha256 checksums for artifacts (N028: no self-hash, unique labels).
+
+    - Excludes the output manifest path even if passed explicitly (no self-hash).
+    - Missing inputs raise ``ChecksumManifestError`` (fail-closed).
+    - Duplicate labels fail closed; pass ``root=`` for unique relative paths.
+    - Atomic write via ``write_checksum_manifest``.
+    """
+    from windows_os_api.update.checksum_manifest import (
+        build_checksum_lines,
+        write_checksum_manifest,
+    )
+
     if out is None:
         out = DIST / "checksums.txt"
-        out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-    lines: list[str] = []
-    for p in paths:
-        if not p.is_file():
-            continue
-        digest = sha256_file(p)
-        lines.append(f"{digest}  {p.name}")
-    out.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    print(f"Wrote {out} ({len(lines)} files)")
+    if paths is None:
+        candidates: list[Path] = []
+        seen: set[Path] = set()
+        for folder in (DIST, OUTPUT, ROOT / "dist"):
+            if folder.is_dir():
+                for p in folder.iterdir():
+                    if not p.is_file():
+                        continue
+                    if p.suffix.lower() == ".txt":
+                        continue
+                    rp = p.resolve()
+                    if rp in seen:
+                        continue
+                    seen.add(rp)
+                    candidates.append(p)
+        paths = candidates
+
+    # Default root=None keeps flat basename labels (duplicate basename -> fail).
+    lines = build_checksum_lines(paths, out=out, root=root)
+    written = write_checksum_manifest(paths, out, root=root)
+    print(f"Wrote {written} ({len(lines)} files)")
     for line in lines:
         print(line)
-    return out
+    return written
+
+
+def verify_checksums(manifest: Path, *, root: Path | None = None) -> int:
+    """Independent verify client for a checksums manifest (H63-N028)."""
+    from windows_os_api.update.checksum_manifest import (
+        ChecksumManifestError,
+        verify_checksum_manifest,
+    )
+
+    try:
+        mapping = verify_checksum_manifest(Path(manifest), root=root)
+    except ChecksumManifestError as exc:
+        print(f"VERIFY FAIL: {exc}", file=sys.stderr)
+        return 1
+    print(f"VERIFY OK ({len(mapping)} files) — {manifest}")
+    for label, digest in sorted(mapping.items()):
+        print(f"{digest}  {label}")
+    return 0
 
 
 def build_portable(dry_run: bool = False) -> int:
@@ -500,6 +539,21 @@ def main(argv: list[str] | None = None) -> int:
     p_sum = sub.add_parser("checksums", help="Write sha256 for dist/installer artifacts")
     p_sum.add_argument("files", nargs="*", help="Optional explicit files")
     p_sum.add_argument("-o", "--output", default=None, help="Output checksums.txt path")
+    p_sum.add_argument(
+        "--root",
+        default=None,
+        help="Label root for unique relative paths (default: basename-only mode)",
+    )
+    p_ver = sub.add_parser(
+        "verify-checksums",
+        help="Independently verify a checksums manifest (N028)",
+    )
+    p_ver.add_argument("manifest", help="Path to checksums.txt / SHA256SUMS.txt")
+    p_ver.add_argument(
+        "--root",
+        default=None,
+        help="Directory that relative labels resolve against (default: manifest parent)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -517,10 +571,20 @@ def main(argv: list[str] | None = None) -> int:
             formats=formats,
         )
     if args.cmd == "checksums":
+        from windows_os_api.update.checksum_manifest import ChecksumManifestError
+
         paths = [Path(f) for f in args.files] if args.files else None
         out = Path(args.output) if args.output else None
-        checksums(paths, out)
+        root = Path(args.root) if getattr(args, "root", None) else None
+        try:
+            checksums(paths, out, root=root)
+        except ChecksumManifestError as exc:
+            print(f"CHECKSUMS FAIL: {exc}", file=sys.stderr)
+            return 1
         return 0
+    if args.cmd == "verify-checksums":
+        root = Path(args.root) if args.root else None
+        return verify_checksums(Path(args.manifest), root=root)
     return 1
 
 
