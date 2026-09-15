@@ -1,4 +1,4 @@
-"""CLI entrypoint: winos-api serve|version|audit."""
+"""CLI entrypoint: winos-api serve|version|audit|diagnose."""
 from __future__ import annotations
 
 import argparse
@@ -92,6 +92,63 @@ def _audit_tail(limit: int) -> int:
     return 0
 
 
+def _diagnose_collect(
+    output: str | None,
+    *,
+    before_restart: bool,
+    max_bytes: int | None,
+) -> int:
+    """N044 — write a redacted support bundle (optionally marked before-restart)."""
+    from windows_os_api.observability.diagnose import (
+        DiagnoseError,
+        collect_before_restart,
+        default_bundle_path,
+        write_support_bundle,
+    )
+
+    path = output or str(default_bundle_path())
+    try:
+        if before_restart:
+            result = collect_before_restart(
+                path,
+                reason="cli.before_restart",
+                max_bytes=max_bytes,
+                subject="cli",
+            )
+        else:
+            result = write_support_bundle(
+                path,
+                reason="cli.diagnose",
+                max_bytes=max_bytes,
+                before_restart=False,
+            )
+    except DiagnoseError as exc:
+        print(
+            json.dumps(
+                {"error": type(exc).__name__, "reason": str(exc)},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "path": str(result.path),
+                "bytes_written": result.bytes_written,
+                "truncated": result.truncated,
+                "bundle_id": result.bundle_id,
+                "before_restart": result.before_restart,
+                "collected_at": result.collected_at,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="winos-api", description="Windows OS API Layer")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -127,6 +184,29 @@ def main(argv: list[str] | None = None) -> int:
         help="tail entry count (audit tail)",
     )
 
+
+    diag = sub.add_parser(
+        "diagnose",
+        help="Collect redacted support bundle (stack/process/config/audit) — N044",
+    )
+    diag.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="output JSON path (default: logs/support-bundle-<ts>-<pid>.json)",
+    )
+    diag.add_argument(
+        "--before-restart",
+        action="store_true",
+        help="mark bundle as collect-before-restart and audit that intent (does not restart)",
+    )
+    diag.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="hard size cap for the bundle (default 262144, max 1048576)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "version":
@@ -142,6 +222,14 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "tail":
             return _audit_tail(args.limit)
         return _run_forensic_audit()
+
+
+    if args.cmd == "diagnose":
+        return _diagnose_collect(
+            args.output,
+            before_restart=bool(args.before_restart),
+            max_bytes=args.max_bytes,
+        )
 
     if args.cmd == "serve":
         import os
