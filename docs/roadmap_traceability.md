@@ -426,3 +426,13 @@ pytest tests/unit/test_ai_egress_n027.py tests/unit/test_ai_provider.py tests/un
 
 Full installed W/L H63-N027 not claimed PASS here (MANUAL / #21).
 
+## N028 — Manifest checksum affidabile
+
+Contratto (#67 / H63-N028, B-UPD, Q14): checksums manifest **non** elenca se stesso anche con input espliciti; basename **univoci** (duplicati → fail); file mancanti/alterati → fail al generate e al verify indipendente; write atomico; regen×2 byte-identico. ``UpdateManager`` verifica package directory via manifest embedded (identità = hash del manifest, non self-hash interno). Coverage: R44 R45 G05. Trust production → N029.
+
+```bash
+pytest tests/unit/test_checksum_manifest_n028.py tests/unit/test_update_manager.py tests/unit/test_build_installer.py -q
+```
+
+Full installed W/L H63-N028 not claimed PASS here (MANUAL / #21).
+
