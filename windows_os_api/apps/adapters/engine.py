@@ -61,7 +61,6 @@ _adapters: dict[str, Adapter] = {}
 _adapters_registry_lock = RLock()
 
 ADAPTER_NOT_BOUND = "ADAPTER_NOT_BOUND"
-ADAPTER_BUSY = "ADAPTER_BUSY"
 
 def _default_actions_from_tree(tree: dict[str, Any]) -> list[AdapterAction]:
     actions: list[AdapterAction] = []
