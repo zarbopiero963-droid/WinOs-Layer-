@@ -117,6 +117,30 @@ def validate(verbose: bool = True) -> dict[str, Any]:
             if not ok:
                 errors.append(f"{bat} missing service name {EXPECTED_SERVICE}")
 
+    # N034 identity helpers + least-privilege service account
+    for helper in ("write_secure_api_key.ps1", "harden_service_dirs.ps1"):
+        hp = SERVICE_SCRIPTS / helper
+        ok = hp.is_file()
+        checks[f"helper_{helper}"] = ok
+        if not ok:
+            errors.append(f"missing N034 helper: installer/service_scripts/{helper}")
+
+    nssm_bat = SERVICE_SCRIPTS / "install_nssm.bat"
+    if nssm_bat.is_file():
+        nt = _read(nssm_bat)
+        checks["nssm_objectname_localservice"] = (
+            "ObjectName" in nt and ("NT AUTHORITY" + chr(92) + "LocalService") in nt
+        )
+        checks["nssm_harden_dirs"] = "harden_service_dirs.ps1" in nt
+        checks["nssm_weak_key_deny"] = "dev-key-change-me" in nt
+        checks["nssm_appdirectory"] = "AppDirectory" in nt
+        if not checks["nssm_objectname_localservice"]:
+            errors.append("install_nssm.bat must set ObjectName to NT AUTHORITY\\LocalService (N034)")
+        if not checks["nssm_harden_dirs"]:
+            errors.append("install_nssm.bat must call harden_service_dirs.ps1 (N034)")
+        if not checks["nssm_weak_key_deny"]:
+            errors.append("install_nssm.bat must denylist weak/dev API keys (N034)")
+
     # Spec / ISS consistency
     if SPEC.is_file():
         st = _read(SPEC)
@@ -132,10 +156,16 @@ def validate(verbose: bool = True) -> dict[str, Any]:
         checks["iss_exe"] = EXPECTED_EXE in it
         checks["iss_service_scripts"] = "service_scripts" in it or "service" in it.lower()
         checks["iss_localhost"] = "127.0.0.1" in it
+        checks["iss_setup_mutex"] = "SetupMutex" in it and "WinOsApiSetupMutex" in it
+        checks["iss_secure_key_script"] = "write_secure_api_key.ps1" in it
         if EXPECTED_EXE not in it:
             errors.append(f"winos-api.iss must reference {EXPECTED_EXE}")
         if "127.0.0.1" not in it:
             warnings.append("Inno script should default bind to 127.0.0.1 (localhost)")
+        if not checks["iss_setup_mutex"]:
+            errors.append("winos-api.iss must declare SetupMutex=WinOsApiSetupMutex (N034 single-instance wizard)")
+        if not checks["iss_secure_key_script"]:
+            errors.append("winos-api.iss must generate api_key via write_secure_api_key.ps1 (N034 CSPRNG+ACL)")
 
     # Linux unit should bind localhost and mention FakeBackend / WINOS_BACKEND
     if (LINUX_INSTALLER / "winos-api.service").is_file():

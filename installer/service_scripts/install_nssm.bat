@@ -1,8 +1,10 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 REM Install WindowsOSLayerService through NSSM. Run this script as Administrator.
+REM N034: least-privilege LocalService, key ACL/dir harden, reject weak/dev keys.
 set "SERVICE=WindowsOSLayerService"
 set "SCRIPT_DIR=%~dp0"
+set "SERVICE_ACCOUNT=NT AUTHORITY\LocalService"
 
 REM Setup.exe installs scripts under service\ and the EXE one directory above.
 REM The fallback supports the portable ZIP, where scripts and EXE are siblings.
@@ -26,7 +28,11 @@ if not exist "%APP_DIR%\api_key.txt" (
   exit /b 1
 )
 set "WINOS_SERVICE_KEY_FILE=%APP_DIR%\api_key.txt"
-powershell.exe -NoProfile -NonInteractive -Command "$lines = @(Get-Content -LiteralPath $env:WINOS_SERVICE_KEY_FILE); if ($lines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($lines[0])) { exit 1 }"
+powershell.exe -NoProfile -NonInteractive -Command "$lines = @(Get-Content -LiteralPath $env:WINOS_SERVICE_KEY_FILE); if ($lines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($lines[0])) { exit 1 }; $weak = @('dev','admin','test','password','secret','changeme','dev-key-change-me','winos-dev','winos-admin'); if ($weak -contains $lines[0].Trim().ToLowerInvariant()) { exit 2 }"
+if errorlevel 2 (
+  echo ERROR: api_key.txt matches a denylisted weak/dev key. 1>&2
+  exit /b 1
+)
 if errorlevel 1 (
   echo ERROR: api_key.txt must contain exactly one non-empty line. 1>&2
   exit /b 1
@@ -57,18 +63,30 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM N034: DACL so LocalService can write logs/tmp/sandbox under Program Files.
+set "WINOS_HARDEN_APP_DIR=%APP_DIR%"
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%SCRIPT_DIR%harden_service_dirs.ps1" -AppDir "%APP_DIR%"
+if errorlevel 1 (
+  echo ERROR: unable to harden runtime directory ACLs for LocalService. 1>&2
+  exit /b 1
+)
+set "WINOS_HARDEN_APP_DIR="
+
 sc.exe query "%SERVICE%" >nul 2>&1
 if not errorlevel 1 (
   echo ERROR: %SERVICE% already exists; refusing to replace it. 1>&2
   exit /b 1
 )
 
+REM Absolute, quoted ImagePath via NSSM; working directory = install tree.
 "%NSSM%" install "%SERVICE%" "%APP%" || goto :rollback
 "%NSSM%" set "%SERVICE%" AppDirectory "%APP_DIR%" || goto :rollback
 "%NSSM%" set "%SERVICE%" AppParameters "serve --host 127.0.0.1 --port %PORT_NUMBER% --api-key-file api_key.txt" || goto :rollback
 "%NSSM%" set "%SERVICE%" DisplayName "Windows OS API Layer" || goto :rollback
 "%NSSM%" set "%SERVICE%" Description "FastAPI Windows OS API Layer - localhost only" || goto :rollback
 "%NSSM%" set "%SERVICE%" Start SERVICE_AUTO_START || goto :rollback
+REM N034: least-privilege built-in account (not LocalSystem).
+"%NSSM%" set "%SERVICE%" ObjectName "%SERVICE_ACCOUNT%" || goto :rollback
 REM Try CTRL_C_EVENT first so uvicorn executes its lifespan shutdown. Skip GUI
 REM messages, retain TerminateProcess only as a last-resort safety fallback.
 "%NSSM%" set "%SERVICE%" AppStopMethodSkip 6 || goto :rollback
@@ -79,8 +97,8 @@ REM on Windows before the child even runs.
 "%NSSM%" set "%SERVICE%" AppStdout "%APP_DIR%\logs\service.out.log" || goto :rollback
 "%NSSM%" set "%SERVICE%" AppStderr "%APP_DIR%\logs\service.err.log" || goto :rollback
 "%NSSM%" set "%SERVICE%" AppRotateFiles 1 || goto :rollback
-REM PyInstaller onefile unpacks under %%TEMP%%. LocalSystem's default temp is
-REM cleaned and locked on GHA; keep the unpack dir next to the installed EXE.
+REM PyInstaller onefile unpacks under %%TEMP%%. Keep the unpack dir next to the
+REM installed EXE so LocalService does not depend on a volatile system temp.
 "%NSSM%" set "%SERVICE%" AppEnvironmentExtra "TMP=%APP_DIR%\tmp" "TEMP=%APP_DIR%\tmp" "WINOS_BACKEND=windows" || goto :rollback
 REM Bootloader unpack + import of uiautomation can exceed the 1500ms default.
 "%NSSM%" set "%SERVICE%" AppThrottle 15000 || goto :rollback
@@ -88,7 +106,7 @@ REM Bootloader unpack + import of uiautomation can exceed the 1500ms default.
 powershell.exe -NoProfile -NonInteractive -Command "$deadline = (Get-Date).AddSeconds(45); do { try { $health = Invoke-RestMethod -UseBasicParsing -Uri ('http://127.0.0.1:' + $env:WINOS_SERVICE_HEALTH_PORT + '/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
 if errorlevel 1 goto :rollback
 set "WINOS_SERVICE_HEALTH_PORT="
-echo Installed and started %SERVICE% on 127.0.0.1:%PORT_NUMBER%.
+echo Installed and started %SERVICE% as %SERVICE_ACCOUNT% on 127.0.0.1:%PORT_NUMBER%.
 exit /b 0
 
 :bad_port

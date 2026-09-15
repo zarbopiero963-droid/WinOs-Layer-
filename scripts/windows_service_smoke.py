@@ -192,7 +192,12 @@ def run_lifecycle(install_dir: Path) -> None:
     key_lines = key_file.read_text(encoding="utf-8").splitlines()
     if len(key_lines) != 1 or not key_lines[0].strip():
         raise ServiceSmokeError("installed api_key.txt must contain exactly one non-empty line")
-    api_key = key_lines[0].strip()
+    from windows_os_api.installer.identity import assert_release_api_key
+
+    try:
+        api_key = assert_release_api_key(key_lines[0])
+    except ValueError as exc:
+        raise ServiceSmokeError(str(exc)) from exc
     port = free_port()
     audit_path = install_dir / "logs" / "audit.jsonl"
     install_script = install_dir / "service" / "install_nssm.bat"
@@ -208,8 +213,19 @@ def run_lifecycle(install_dir: Path) -> None:
         output = invoke_batch(install_script, "service install", env=env)
         print(output)
         wait_until(lambda: service_status() == "running", 45, "SCM RUNNING state")
+        qc = run_checked(["sc.exe", "qc", SERVICE_NAME], "sc qc")
+        if "LOCAL SERVICE" not in qc.upper() and "LOCALSERVICE" not in qc.upper().replace(" ", ""):
+            raise ServiceSmokeError(f"service account is not LocalService (N034): {qc}")
         health = wait_for_health(port)
         assert_authenticated_api(port, api_key)
+        # SECURITY BLOCK: well-known/dev key must not authenticate (stato invariato).
+        try:
+            http_get(port, "/v1/system", "dev-key-change-me")
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (401, 403):
+                raise ServiceSmokeError(f"dev key denied with unexpected HTTP {exc.code}") from exc
+        else:
+            raise ServiceSmokeError("dev-key-change-me must not authenticate the installed API")
         wait_until(lambda: bool(winos_processes()), 15, "winos-api.exe process tree")
         print(f"  start -> RUNNING, health={health}, auth enforced, process tree present")
 

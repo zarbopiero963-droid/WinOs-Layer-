@@ -1,11 +1,14 @@
 ; Inno Setup script for WinOs Layer
 ; Build on Windows with ISCC.exe after PyInstaller produces winos-api.exe
 ; Service name: WindowsOSLayerService — bind default 127.0.0.1:8765
+; N034: SetupMutex (single-instance wizard), CSPRNG api_key + ACL, least-privilege service account.
 #define MyAppName "Windows OS API Layer"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "WinOs-Layer"
 #define MyAppExeName "winos-api.exe"
 #define MyServiceName "WindowsOSLayerService"
+#define MySetupMutex "WinOsApiSetupMutex"
+#define MyAppMutex "WinOsApiAppMutex"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -21,6 +24,9 @@ SolidCompression=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; N034: one Setup wizard at a time; refuse a second concurrent install UI.
+SetupMutex={#MySetupMutex}
+AppMutex={#MyAppMutex}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -57,33 +63,37 @@ Type: filesandordirs; Name: "{app}\tmp"
 Type: dirifempty; Name: "{app}"
 
 [Code]
-function GenerateApiKey: String;
-var
-  I: Integer;
-  Hex: String;
-begin
-  Hex := '';
-  for I := 1 to 32 do
-    Hex := Hex + Format('%x', [Random(16)]);
-  Result := Hex;
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   KeyPath: String;
-  Key: String;
+  ScriptPath: String;
+  ResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
     KeyPath := ExpandConstant('{app}\api_key.txt');
+    // Script lives under {app}\service (packaged); key is the only Code-generated file.
+    ScriptPath := ExpandConstant('{app}') + '\service\write_secure_api_key.ps1';
     if not FileExists(KeyPath) then
     begin
-      Key := GenerateApiKey();
-      SaveStringToFile(KeyPath, Key + #13#10, False);
+      if not FileExists(ScriptPath) then
+        RaiseException('Missing write_secure_api_key.ps1 beside service scripts');
+      if not Exec(
+        'powershell.exe',
+        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" -Path "' + KeyPath + '"',
+        ExpandConstant('{app}') + '\service',
+        SW_HIDE,
+        ewWaitUntilTerminated,
+        ResultCode
+      ) then
+        RaiseException('Unable to launch write_secure_api_key.ps1');
+      if ResultCode <> 0 then
+        RaiseException('write_secure_api_key.ps1 failed with code ' + IntToStr(ResultCode));
       if not WizardSilent then
         MsgBox('API key written to api_key.txt (localhost default).' + #13#10 +
+               'Key ACL: SYSTEM / Administrators / LocalService only.' + #13#10 +
                'Set WINOS_API_KEYS and do not expose the port publicly.' + #13#10 +
-               'Service name: {#MyServiceName}', mbInformation, MB_OK);
+               'Service name: {#MyServiceName} (NT AUTHORITY\LocalService)', mbInformation, MB_OK);
     end;
   end;
 end;
