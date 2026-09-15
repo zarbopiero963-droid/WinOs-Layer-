@@ -357,33 +357,31 @@ def invoke_action(app_id: str, action_name: str, params: dict[str, Any] | None =
     # Centralising it here makes the gate unbypassable by construction: any future
     # caller is covered without having to remember. The REST route keeps its own
     # check so it can answer 403 — check_action is pure, so checking twice is free.
-    # N029: production trust re-check before any UI effect.
-    # Unsigned / hmac-dev adapters stay usable. Ed25519 signatures and any
-    # claimed verified/publisher level must still resolve to production trust.
-    sig = adapter.signature or ""
-    needs_production = adapter.trust_level in {"verified", "publisher"} or sig.startswith(
-        "ed25519:"
-    )
-    if needs_production:
-        from windows_os_api.apps.trust.signing import require_trust
+    # N029/N030: re-verify signature over *current* adapter content (incl. actions).
+    # Tamper after load → deny before any UI effect; demote VERIFIED evidence.
+    from windows_os_api.apps.trust.signing import revalidate_adapter_trust
 
-        manifest = {
-            "app_id": adapter.app_id,
-            "app_name": adapter.app_name,
-            "publisher": adapter.publisher,
-            "trust_level": adapter.trust_level,
+    trust_gate = revalidate_adapter_trust(adapter, required="verified")
+    if not trust_gate["allowed"]:
+        if trust_gate.get("tampered"):
+            for act in adapter.actions:
+                if isinstance(act.verification, dict) and act.verification.get("state") == "VERIFIED":
+                    demoted = dict(act.verification)
+                    demoted["state"] = "INVALID"
+                    demoted["tampered"] = True
+                    demoted.pop("verification_id", None)
+                    act.verification = demoted
+            adapter.trust_level = trust_gate.get("trust_level") or "unsigned"
+        return {
+            "ok": False,
+            "denied": True,
+            "error": trust_gate["reason"],
+            "code": "TRUST_INSUFFICIENT",
+            "trust_level": trust_gate["trust_level"],
+            "tampered": bool(trust_gate.get("tampered")),
+            "app_id": app_id,
+            "action": action_name,
         }
-        trust_gate = require_trust(manifest, adapter.signature, required="verified")
-        if not trust_gate["allowed"]:
-            return {
-                "ok": False,
-                "denied": True,
-                "error": trust_gate["reason"],
-                "code": "TRUST_INSUFFICIENT",
-                "trust_level": trust_gate["trust_level"],
-                "app_id": app_id,
-                "action": action_name,
-            }
 
     gate = check_action(app_id, action_name, action.risk)
     if not gate["allowed"]:
