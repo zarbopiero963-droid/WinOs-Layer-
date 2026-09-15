@@ -640,3 +640,24 @@ pytest tests/unit/test_health_metrics_n043.py tests/unit/test_n004_health_and_d3
 ```
 
 Full installed W/L H63-N043 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N044 — Diagnose e raccolta crash protetta
+
+Contratto (#67 / H63-N044, B-OBS, Q11/Q12): CLI ``winos-api diagnose`` scrive un
+support bundle redatto (stack thread limitati, snapshot processo, config senza
+secret, coda audit correlata); REST ``GET /v1/diagnose/bundle`` e
+``POST /v1/diagnose/collect`` solo **ADMIN**; size clamp (default 256 KiB,
+max 1 MiB); file mode ``0o600``; ``--before-restart`` / collect marca e audita la
+raccolta **prima** del restart senza riavviare il processo; runtime bloccato
+produce comunque un bundle limitato; nessuna API key / integrity secret / UI
+credential nel payload. Coverage: R49 W030 W095 L030 L095 G18. Out of scope:
+N045+ lock/verify, N005 D6, chiusura #67/#63/#21, claim H63-N044 installed W/L
+PASS.
+
+```bash
+pytest tests/unit/test_diagnose_n044.py tests/unit/test_health_metrics_n043.py tests/unit/test_audit_n042.py -q
+```
+
+Full installed W/L H63-N044 not claimed PASS here (MANUAL_ONLY / #21).
+
