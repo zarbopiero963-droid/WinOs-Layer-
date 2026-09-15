@@ -466,3 +466,13 @@ pytest tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.p
 
 Full installed W/L H63-N031 not claimed PASS here (MANUAL / #21).
 
+
+## N032 — Update transazionale Windows
+
+Contratto (#67 / H63-N032, B-UPD, Q01/Q14): percorso distribuito **sempre** verify (``apply(verify=False)`` rifiutato); sequenza stop → replace → start → health con hook iniettabili; fallimento a ogni confine → rollback; rollback elimina file introdotti dall'update (zero orfani); health ambiguo ≠ successo. Coverage: R39 R41 R45 W091 W093-W094 G11 G20. Update transazionale Linux → N033.
+
+```bash
+pytest tests/unit/test_update_transactional_n032.py tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.py tests/unit/test_checksum_manifest_n028.py -q
+```
+
+Full installed W H63-N032 not claimed PASS here (MANUAL_ONLY / #21).
