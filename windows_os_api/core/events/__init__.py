@@ -1,4 +1,12 @@
-from .bus import Event, EventBus, get_event_bus, reset_event_bus
+from .bus import (
+    BusAtCapacityError,
+    BusClosedError,
+    BusStats,
+    Event,
+    EventBus,
+    get_event_bus,
+    reset_event_bus,
+)
 from .schema import (
     ALLOWED_EVENT_TYPES,
     ALLOWED_PROVENANCE,
@@ -8,6 +16,9 @@ from .schema import (
 )
 
 __all__ = [
+    "BusAtCapacityError",
+    "BusClosedError",
+    "BusStats",
     "Event",
     "EventBus",
     "get_event_bus",
