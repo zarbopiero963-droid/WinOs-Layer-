@@ -40,5 +40,26 @@ def rate_limited(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
     return auth
 
-def audit(action: str, auth: AuthContext, resource: str = "", detail=None, outcome="success"):
-    get_audit_logger().log(action, subject=auth.subject, resource=resource, outcome=outcome, detail=detail or {})
+def audit(
+    action: str,
+    auth: AuthContext,
+    resource: str = "",
+    detail=None,
+    outcome="success",
+    request_id: str | None = None,
+    execution_id: str | None = None,
+):
+    """Persist a redacted, integrity-chained audit entry (N042).
+
+    Propagates ``AuditUnavailableError`` so callers fail closed rather than
+    silently dropping the audit record.
+    """
+    return get_audit_logger().log(
+        action,
+        subject=auth.subject,
+        resource=resource,
+        outcome=outcome,
+        detail=detail or {},
+        request_id=request_id,
+        execution_id=execution_id,
+    )

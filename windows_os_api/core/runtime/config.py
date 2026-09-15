@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # When remote_access_enabled: explicit Origin allowlist (never implicit "*").
     cors_allowed_origins: list[str] = Field(default_factory=list)
     audit_log_path: str = "logs/audit.jsonl"
+    # N042 — integrity HMAC secret (override in production via WINOS_AUDIT_INTEGRITY_SECRET)
+    audit_integrity_secret: str = "winos-audit-dev-secret"
+    audit_max_bytes: int = 10_485_760  # 10 MiB rotation threshold
+    audit_max_entries: int = 100_000
+    audit_max_age_seconds: float | None = None  # optional age-based rotation
     sandbox_root: str = "sandbox"
     # Extra filesystem roots allowed by LinuxBackend (still blocks ..)
     fs_allow_paths: list[str] = Field(default_factory=list)

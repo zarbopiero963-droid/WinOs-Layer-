@@ -20,6 +20,78 @@ def load_api_key_file(path: str | Path) -> str:
     return assert_release_api_key(lines[0])
 
 
+def _run_forensic_audit() -> int:
+    import runpy
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "forensic_audit.py"
+    # parents: cli -> windows_os_api -> project root
+    runpy.run_path(str(script), run_name="__main__")
+    return 0
+
+
+def _audit_verify() -> int:
+    from windows_os_api.core.security.audit import get_audit_logger, reset_audit_logger
+
+    reset_audit_logger()
+    logger = get_audit_logger()
+    report = logger.verify_integrity()
+    out = {
+        "ok": report.ok,
+        "available": report.available,
+        "entries_checked": report.entries_checked,
+        "reason": report.reason,
+        "path": str(logger.path),
+    }
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if report.ok and report.available else 2
+
+
+def _audit_tail(limit: int) -> int:
+    from windows_os_api.core.security.audit import (
+        AuditIntegrityError,
+        AuditUnavailableError,
+        get_audit_logger,
+        reset_audit_logger,
+    )
+
+    reset_audit_logger()
+    logger = get_audit_logger()
+    try:
+        page = logger.read_page(limit=max(1, min(limit, 500)), offset=0)
+    except (AuditIntegrityError, AuditUnavailableError) as exc:
+        print(
+            json.dumps(
+                {"error": type(exc).__name__, "reason": str(exc)},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    # Tail = last N of the verified set
+    entries = page["entries"]
+    total = page["total"]
+    start = max(0, total - max(1, min(limit, 500)))
+    # Re-read with offset for true tail without secrets
+    try:
+        page = logger.read_page(limit=max(1, min(limit, 500)), offset=start)
+    except (AuditIntegrityError, AuditUnavailableError) as exc:
+        print(
+            json.dumps(
+                {"error": type(exc).__name__, "reason": str(exc)},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    # Strip hmac secret material is already not present; drop long hmac for brevity
+    safe = []
+    for e in page["entries"]:
+        row = {k: v for k, v in e.items() if k not in ("hmac", "prev_hash")}
+        safe.append(row)
+    print(json.dumps({"entries": safe, "count": len(safe)}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="winos-api", description="Windows OS API Layer")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -36,7 +108,24 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     sub.add_parser("version", help="Print version")
-    sub.add_parser("audit", help="Run forensic audit script")
+
+    audit_p = sub.add_parser(
+        "audit",
+        help="Forensic roadmap audit (default) or JSONL verify/tail (N042)",
+    )
+    audit_p.add_argument(
+        "audit_cmd",
+        nargs="?",
+        default="forensic",
+        choices=["forensic", "verify", "tail"],
+        help="forensic=scripts/forensic_audit.py; verify/tail=app JSONL (N042)",
+    )
+    audit_p.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="tail entry count (audit tail)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -47,13 +136,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "audit":
-        import runpy
-
-        script = Path(__file__).resolve().parents[2] / "scripts" / "forensic_audit.py"
-        # parents: cli -> windows_os_api -> project root? 
-        # Path: windows_os_api/cli/main.py -> parents[0]=cli, [1]=windows_os_api, [2]=project
-        runpy.run_path(str(script), run_name="__main__")
-        return 0
+        cmd = getattr(args, "audit_cmd", "forensic") or "forensic"
+        if cmd == "verify":
+            return _audit_verify()
+        if cmd == "tail":
+            return _audit_tail(args.limit)
+        return _run_forensic_audit()
 
     if args.cmd == "serve":
         import os

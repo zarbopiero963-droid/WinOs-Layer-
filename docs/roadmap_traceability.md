@@ -601,3 +601,23 @@ pytest tests/unit/test_webhooks_n041.py tests/unit/test_event_schema_n038.py tes
 ```
 
 Full installed W/L H63-N041 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N042 — Audit correlato, redatto e anti-tamper
+
+Contratto (#67 / H63-N042, B-OBS, Q11/Q15): ogni entry ha ``request_id`` /
+``execution_id`` unici; redaction secret-keys + scrub token-like **prima** di
+persist e di ritorno API; catena HMAC-SHA256 (``prev_hash``/``hmac``) con secret
+``WINOS_AUDIT_INTEGRITY_SECRET`` (default documentato solo per test/dev);
+rotation per size/entries/age; retention via file ruotato ``.1``; lettura
+paginata fail-closed su corruzione/indisponibilità; ACL ADMIN su ``GET /v1/audit``;
+CLI ``winos-api audit verify|tail``; metriche ``audit.writes`` /
+``audit.write_failures`` / ``audit.integrity_failures`` / ``audit.unavailable``.
+Coverage: R03 R49 W005 L005 G09 G13 G18. Out of scope: N043+ health/diagnose,
+N005 D6, chiusura #67/#63/#21, claim H63-N042 installed W/L PASS.
+
+```bash
+pytest tests/unit/test_audit_n042.py tests/unit/test_security_core.py -q
+```
+
+Full installed W/L H63-N042 not claimed PASS here (MANUAL_ONLY / #21).
