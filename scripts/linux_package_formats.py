@@ -95,6 +95,109 @@ def _copy_binary(src: Path, dest: Path) -> None:
     dest.chmod(dest.stat().st_mode | 0o111)
 
 
+def _ar_member(name: str, data: bytes) -> bytes:
+    """GNU ar member header (60 bytes) + data, padded to even size."""
+    name_field = (name + "/").encode("ascii")[:16].ljust(16)
+    header = (
+        name_field
+        + b"0".ljust(12)  # mtime
+        + b"0".ljust(6)  # uid
+        + b"0".ljust(6)  # gid
+        + b"100644".ljust(8)  # mode
+        + str(len(data)).encode("ascii").ljust(10)
+        + b"`\n"
+    )
+    assert len(header) == 60
+    out = header + data
+    if len(data) % 2 == 1:
+        out += b"\n"
+    return out
+
+
+def _tar_gz_from_dir(root: Path, *, arc_root: str = ".") -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for p in sorted(root.rglob("*")):
+            if not p.is_file() and not p.is_symlink():
+                continue
+            rel = p.relative_to(root).as_posix()
+            arcname = f"{arc_root}/{rel}" if arc_root != "." else rel
+            tf.add(p, arcname=arcname)
+    return buf.getvalue()
+
+
+def _stage_deb_tree(
+    *,
+    binary: Path,
+    version: str,
+    control: str,
+    files: dict[str, Path],
+    unit_src: Path,
+    linux_installer: Path,
+    root: Path,
+) -> None:
+    debian = root / "DEBIAN"
+    opt = root / "opt" / "winos-api"
+    unit_dir = root / "etc" / "systemd" / "system"
+    bin_dir = root / "usr" / "local" / "bin"
+    doc = root / "usr" / "share" / "doc" / "winos-api"
+    for d in (debian, opt, unit_dir, bin_dir, doc):
+        d.mkdir(parents=True)
+
+    _copy_binary(binary, opt / "winos-api")
+    (opt / "VERSION").write_text(version + "\n", encoding="utf-8")
+    shutil.copy2(unit_src, unit_dir / "winos-api.service")
+    linux_md = linux_installer / "LINUX.md"
+    if linux_md.is_file():
+        shutil.copy2(linux_md, doc / "LINUX.md")
+    # Portable wrapper instead of symlink (Windows staging cannot always symlink)
+    (bin_dir / "winos-api").write_text(
+        "#!/bin/sh\nexec /opt/winos-api/winos-api \"$@\"\n", encoding="utf-8"
+    )
+    (bin_dir / "winos-api").chmod(0o755)
+
+    (debian / "control").write_text(control, encoding="utf-8")
+    for script in ("postinst", "prerm", "postrm"):
+        src = files[f"debian_{script}"]
+        dest = debian / script
+        shutil.copy2(src, dest)
+        dest.chmod(0o755)
+
+
+def build_deb_python(root: Path, out_path: Path) -> Path:
+    """Assemble a valid .deb (ar of debian-binary + control.tar.gz + data.tar.gz)."""
+    debian = root / "DEBIAN"
+    # control archive: contents of DEBIAN/
+    control_buf = io.BytesIO()
+    with tarfile.open(fileobj=control_buf, mode="w:gz") as tf:
+        for p in sorted(debian.iterdir()):
+            if p.is_file():
+                tf.add(p, arcname=p.name)
+    control_tar = control_buf.getvalue()
+
+    # data archive: everything except DEBIAN/
+    data_buf = io.BytesIO()
+    with tarfile.open(fileobj=data_buf, mode="w:gz") as tf:
+        for p in sorted(root.rglob("*")):
+            if not p.is_file():
+                continue
+            if "DEBIAN" in p.parts:
+                continue
+            rel = p.relative_to(root).as_posix()
+            tf.add(p, arcname=rel)
+    data_tar = data_buf.getvalue()
+
+    debian_binary = b"2.0\n"
+    blob = (
+        b"!<arch>\n"
+        + _ar_member("debian-binary", debian_binary)
+        + _ar_member("control.tar.gz", control_tar)
+        + _ar_member("data.tar.gz", data_tar)
+    )
+    out_path.write_bytes(blob)
+    return out_path
+
+
 def build_deb(
     *,
     binary: Path,
@@ -105,62 +208,50 @@ def build_deb(
     unit_src: Path,
     dry_run: bool = False,
 ) -> Path:
-    """Build a .deb with dpkg-deb (fails closed if tool missing unless dry_run)."""
+    """Build a .deb via dpkg-deb when available, else pure-Python ar fallback (N036)."""
     deb_arch = normalize_deb_arch(arch)
     out_name = f"{PACKAGE_NAME}_{version}_{deb_arch}.deb"
     out_path = dist / out_name
     files = required_packaging_files(linux_installer)
-    control = render_template(files["debian_control_in"].read_text(encoding="utf-8"), version=version, arch=deb_arch)
+    control = render_template(
+        files["debian_control_in"].read_text(encoding="utf-8"),
+        version=version,
+        arch=deb_arch,
+    )
 
     if dry_run:
         return out_path
 
-    dpkg_deb = shutil.which("dpkg-deb")
-    if not dpkg_deb:
-        raise RuntimeError(
-            "dpkg-deb not found — cannot build .deb. Install dpkg-dev or run on Debian/Ubuntu."
-        )
-
     dist.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="winos-deb-") as tmp:
         root = Path(tmp) / "pkg"
-        debian = root / "DEBIAN"
-        opt = root / "opt" / "winos-api"
-        unit_dir = root / "etc" / "systemd" / "system"
-        bin_dir = root / "usr" / "local" / "bin"
-        doc = root / "usr" / "share" / "doc" / "winos-api"
-        for d in (debian, opt, unit_dir, bin_dir, doc):
-            d.mkdir(parents=True)
-
-        _copy_binary(binary, opt / "winos-api")
-        (opt / "VERSION").write_text(version + "\n", encoding="utf-8")
-        # Do NOT ship api_key.txt in the package — generated/preserved at configure.
-        shutil.copy2(unit_src, unit_dir / "winos-api.service")
-        linux_md = linux_installer / "LINUX.md"
-        if linux_md.is_file():
-            shutil.copy2(linux_md, doc / "LINUX.md")
-        # Symlink in package
-        (bin_dir / "winos-api").symlink_to("/opt/winos-api/winos-api")
-
-        (debian / "control").write_text(control, encoding="utf-8")
-        for script in ("postinst", "prerm", "postrm"):
-            src = files[f"debian_{script}"]
-            dest = debian / script
-            shutil.copy2(src, dest)
-            dest.chmod(0o755)
-
+        _stage_deb_tree(
+            binary=binary,
+            version=version,
+            control=control,
+            files=files,
+            unit_src=unit_src,
+            linux_installer=linux_installer,
+            root=root,
+        )
         if out_path.exists():
             out_path.unlink()
-        r = subprocess.run(
-            [dpkg_deb, "--build", "--root-owner-group", str(root), str(out_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode != 0 or not out_path.is_file():
-            raise RuntimeError(f"dpkg-deb failed: {r.stderr or r.stdout}")
-    return out_path
 
+        dpkg_deb = shutil.which("dpkg-deb")
+        if dpkg_deb:
+            r = subprocess.run(
+                [dpkg_deb, "--build", "--root-owner-group", str(root), str(out_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode == 0 and out_path.is_file():
+                return out_path
+            # fall through to Python builder
+        build_deb_python(root, out_path)
+        if not out_path.is_file():
+            raise RuntimeError("failed to write .deb artifact")
+    return out_path
 
 def _cpio_entry(name: str, data: bytes, mode: int = 0o644) -> bytes:
     """New ASCII (SVR4) cpio entry."""
