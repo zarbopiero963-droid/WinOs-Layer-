@@ -405,3 +405,13 @@ pytest tests/unit/test_api_registry_n025.py tests/unit/test_api_registry_n019.py
 ```
 
 Full installed W/L H63-N025 not claimed PASS here (MANUAL / #21).
+
+## N026 — Segreti AI e configurazione sicura della GUI
+
+Contratto (#67 / H63-N026, B-UI, Q02/Q13): proteggere credenziali AI persistite con storage **owner-only** (Unix ``chmod 600`` + dir ``0700``; Windows ACL best-effort via pywin32/``icacls``, senza hard-fail su Linux CI), salvataggio atomico (``os.open(..., 0o600)`` + ``os.replace``), rotazione/clear senza eco raw key, fail-closed su JSON corrotto e su write failure (runtime non half-applied; HTTP detail senza secret); GUI senza key precompilate (`dev`/`admin`/AI) e senza render secret da GET. Coverage: R03 R40 R48 G09 G19 G20. Confine egress AI → N027.
+
+```bash
+pytest tests/unit/test_ai_settings_n026.py tests/security/test_ai_key_masking.py tests/unit/test_ai_provider.py -q
+```
+
+Full installed W/L H63-N026 not claimed PASS here (MANUAL / #21).

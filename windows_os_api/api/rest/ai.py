@@ -55,7 +55,14 @@ def put_settings_route(
             persist=True,
         )
     except ValueError as e:
+        # Provider validation only — never include request body / secrets
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except OSError:
+        # Persist failed: runtime unchanged; do not echo path contents or secrets
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to persist AI settings",
+        ) from None
     sync_llm_bridge()
     audit("ai.settings.put", auth, resource="ai", detail=updated.audit_detail())
     return updated.public_dict()

@@ -87,3 +87,73 @@ def test_ai_test_local_ok(client, admin_headers):
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert r.json()["skipped_network"] is True
+
+
+@pytest.mark.security
+def test_rotate_key_response_has_no_old_or_new_raw(client, admin_headers):
+    old = "sk-old-n026-rotate-AAAAAAAA1111"
+    new = "sk-new-n026-rotate-BBBBBBBB2222"
+    r1 = client.put(
+        "/v1/ai/settings",
+        headers=admin_headers,
+        json={"provider": "openai", "api_key": old},
+    )
+    assert r1.status_code == 200
+    r2 = client.put(
+        "/v1/ai/settings",
+        headers=admin_headers,
+        json={"api_key": new},
+    )
+    assert r2.status_code == 200
+    blob = json.dumps(r1.json()) + json.dumps(r2.json())
+    assert old not in blob
+    assert new not in blob
+    assert r2.json()["api_key_set"] is True
+    assert r2.json()["api_key_preview"].endswith(new[-4:])
+
+
+@pytest.mark.security
+def test_persist_failure_http_detail_has_no_secret(client, admin_headers, monkeypatch):
+    secret = "sk-persist-fail-n026-LEAKCHECK9999"
+    # Establish a durable key first
+    ok = client.put(
+        "/v1/ai/settings",
+        headers=admin_headers,
+        json={"provider": "openai", "api_key": "sk-prior-durable-key-AAAAAAAA"},
+    )
+    assert ok.status_code == 200
+
+    def boom(*_a, **_k):
+        raise OSError("disk full with " + secret)
+
+    monkeypatch.setattr("windows_os_api.apps.ai.settings_store.os.open", boom)
+    r = client.put(
+        "/v1/ai/settings",
+        headers=admin_headers,
+        json={"api_key": secret},
+    )
+    assert r.status_code == 500
+    body = json.dumps(r.json())
+    assert secret not in body
+    assert "disk full" not in body.lower()
+    assert "Failed to persist" in (r.json().get("detail") or "")
+    # Prior key still present (no half-apply)
+    got = client.get("/v1/ai/settings", headers=admin_headers)
+    assert got.status_code == 200
+    assert got.json()["api_key_set"] is True
+    assert secret not in json.dumps(got.json())
+    assert got.json()["api_key_preview"].endswith("AAAA")
+
+
+@pytest.mark.security
+def test_control_center_ai_key_not_prefilled_and_storage_copy(client):
+    html = client.get("/").text
+    assert 'id="ai_api_key"' in html
+    assert 'value="dev"' not in html
+    assert 'value="admin"' not in html
+    assert "dev-key-change-me" not in html
+    assert "admin-key-change-me" not in html
+    # password field empty (explicit value="" or no value= with secret)
+    assert 'id="ai_api_key"' in html
+    assert "sk-proj-" not in html
+    assert "owner-only" in html.lower() or "chmod 600" in html
