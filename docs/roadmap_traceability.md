@@ -385,3 +385,13 @@ pytest tests/unit/test_control_center_n023.py tests/unit/test_control_center_n02
 ```
 
 Full installed W/L H63-N023 not claimed PASS here (MANUAL / #21).
+
+## N024 — Control Center Create → Verify → Publish
+
+Contratto (#67 / H63-N024, B-UI, Q08/Q13): form **Create → Verify → Publish** senza consenso implicito da GUI. ``POST /v1/apis`` crea sempre candidato **PARTIAL** (``ADAPTER_MANAGE``, audit ``apis.create``). Verify → ``POST /v1/apis/{id}/test`` con ``update_registry_on_pass:false``: PASS scrive ``verification_id``+``last_verified_at`` restando **PARTIAL** (mai VERIFIED silenzioso). ``POST /v1/apis/{id}/publish`` promuove a VERIFIED solo con evidence fresca (``authorize_verified_status``); altrimenti **409**. DISABLED non pubblica senza recovery (re-verify → PARTIAL → publish). Disable (N023) ritira endpoint. UI: confirm esplicito su Publish; risultati ``textContent``; ``#key`` non precompilata. Coverage: R22 R31 R40 W092 L092 S61-10–S61-11 G28 G29.
+
+```bash
+pytest tests/unit/test_control_center_n024.py tests/unit/test_control_center_n023.py tests/unit/test_control_center_n022.py -q
+```
+
+Full installed W/L H63-N024 not claimed PASS here (MANUAL / #21).
