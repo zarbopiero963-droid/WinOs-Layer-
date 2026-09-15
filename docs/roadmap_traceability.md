@@ -436,3 +436,13 @@ pytest tests/unit/test_checksum_manifest_n028.py tests/unit/test_update_manager.
 
 Full installed W/L H63-N028 not claimed PASS here (MANUAL / #21).
 
+## N029 — Trust adapter production e identità publisher
+
+Contratto (#67 / H63-N029, B-UPD, Q14): HMAC-dev al massimo ``dev``; production = Ed25519 + keystore (``key_id``, publisher binding, revoke); ``verified_publisher`` self-asserted ignorato; forged/revoked/bad → ``unsigned``; load deny se claim production non riverificata; execute deny su ``TRUST_INSUFFICIENT``. Coverage: R48 W097 L097 G09 G20. Enforcement tamper-after-load → N030.
+
+```bash
+pytest tests/unit/test_trust_n029.py tests/unit/test_trust_and_sandbox.py -q
+```
+
+Full installed W/L H63-N029 not claimed PASS here (MANUAL / #21).
+

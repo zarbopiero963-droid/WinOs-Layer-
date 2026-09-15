@@ -15,7 +15,16 @@ from windows_os_api.core.security.auth import (
 )
 from windows_os_api.core.security.audit import get_audit_logger
 from windows_os_api.core.runtime.config import get_settings
-from windows_os_api.apps.trust.signing import sign_adapter_manifest, verify_adapter_signature, resolve_trust_level
+from windows_os_api.apps.trust.signing import (
+    sign_adapter_manifest,
+    sign_adapter_manifest_ed25519,
+    verify_adapter_signature,
+    resolve_trust_level,
+)
+from windows_os_api.apps.trust.keystore import (
+    TrustKeystoreError,
+    get_keystore,
+)
 from windows_os_api.apps.sandbox.permissions import SandboxPolicy, set_policy, get_policy
 from windows_os_api.observability.metrics import get_metrics
 from windows_os_api.api.rest.deps import audit as audit_event
@@ -28,6 +37,10 @@ class TrustBody(BaseModel):
 
 class SignBody(BaseModel):
     manifest: dict
+    # Production: provide key_id + private_key_hex (32-byte seed) for Ed25519.
+    # Omit both for legacy HMAC-dev (trust_level at most "dev").
+    key_id: str | None = None
+    private_key_hex: str | None = None
 
 class PolicyBody(BaseModel):
     app_id: str
@@ -164,8 +177,28 @@ def remote_policy(auth: AuthContext = Depends(require_permission(Permission.SYST
 
 @router.post("/trust/sign")
 def trust_sign(body: SignBody, auth: AuthContext = Depends(require_permission(Permission.ADMIN))):
+    if body.key_id and body.private_key_hex:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+            raw = bytes.fromhex(body.private_key_hex.strip())
+            if len(raw) != 32:
+                raise HTTPException(status_code=400, detail="private_key_hex must be 32 bytes")
+            priv = Ed25519PrivateKey.from_private_bytes(raw)
+            # Key must already be trusted (and not revoked) for production sign.
+            get_keystore().require_active(body.key_id.strip())
+            sig = sign_adapter_manifest_ed25519(
+                body.manifest, key_id=body.key_id.strip(), private_key=priv
+            )
+        except TrustKeystoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid key material: {exc}") from exc
+        level = resolve_trust_level(body.manifest, sig)
+        return {"signature": sig, "trust_level": level, "alg": "ed25519"}
     sig = sign_adapter_manifest(body.manifest)
-    return {"signature": sig, "trust_level": "verified"}
+    level = resolve_trust_level(body.manifest, sig)
+    return {"signature": sig, "trust_level": level, "alg": "hmac-dev"}
 
 @router.post("/trust/verify")
 def trust_verify(body: TrustBody, auth: AuthContext = Depends(require_permission(Permission.ADAPTER_USE))):

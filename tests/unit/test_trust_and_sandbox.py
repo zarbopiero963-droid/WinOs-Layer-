@@ -1,5 +1,10 @@
 """Signed trust + sandbox permissions."""
-from windows_os_api.apps.trust.signing import sign_adapter_manifest, verify_adapter_signature, resolve_trust_level, trust_allows
+from windows_os_api.apps.trust.signing import (
+    sign_adapter_manifest,
+    verify_adapter_signature,
+    resolve_trust_level,
+    trust_allows,
+)
 from windows_os_api.apps.sandbox.permissions import SandboxPolicy, set_policy, check_action, reset_policies
 
 def test_sign_verify():
@@ -7,10 +12,12 @@ def test_sign_verify():
     sig = sign_adapter_manifest(manifest)
     assert verify_adapter_signature(manifest, sig)
     assert not verify_adapter_signature(manifest, "deadbeef")
-    assert resolve_trust_level(manifest, sig) == "verified"
+    # N029: HMAC-dev grants at most "dev", never production verified/publisher
+    assert resolve_trust_level(manifest, sig) == "dev"
     assert resolve_trust_level(manifest, None) == "unsigned"
     assert trust_allows("verified", "dev")
     assert not trust_allows("unsigned", "verified")
+    assert not trust_allows("dev", "verified")
 
 def test_sandbox_deny():
     reset_policies()
