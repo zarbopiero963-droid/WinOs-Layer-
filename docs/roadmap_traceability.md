@@ -469,10 +469,21 @@ Full installed W/L H63-N031 not claimed PASS here (MANUAL / #21).
 
 ## N032 — Update transazionale Windows
 
-Contratto (#67 / H63-N032, B-UPD, Q01/Q14): percorso distribuito **sempre** verify (``apply(verify=False)`` rifiutato); sequenza stop → replace → start → health con hook iniettabili; fallimento a ogni confine → rollback; rollback elimina file introdotti dall'update (zero orfani); health ambiguo ≠ successo. Coverage: R39 R41 R45 W091 W093-W094 G11 G20. Update transazionale Linux → N033.
+Contratto (#67 / H63-N032, B-UPD, Q01/Q14): percorso distribuito **sempre** verify (``apply(verify=False)`` rifiutato); sequenza stop → replace → start → health con hook iniettabili; fallimento a ogni confine → rollback; rollback elimina file introdotti dall'update (zero orfani); health ambiguo ≠ successo. Coverage: R39 R41 R45 W091 W093-W094 G11 G20. Shared core ``_apply_os_transactional`` (N033). Update transazionale Linux → N033.
 
 ```bash
-pytest tests/unit/test_update_transactional_n032.py tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.py tests/unit/test_checksum_manifest_n028.py -q
+pytest tests/unit/test_update_transactional_n032.py tests/unit/test_update_transactional_n033.py tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.py tests/unit/test_checksum_manifest_n028.py -q
 ```
 
 Full installed W H63-N032 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N033 — Update transazionale Linux
+
+Contratto (#67 / H63-N033, B-UPD, Q01/Q14): stessa state machine di N032 per systemd/user + albero install Linux — preflight verify → permissions → backup → stop → replace → start → health; always verify; fallimento a ogni confine → rollback senza orfani; health ambiguo ≠ successo; **permissions denied fail closed** prima del replace; journal/stages coerenti; hook ``stop_service``/``start_service``/``health_check`` iniettabili (no live systemctl in CI). Coverage: R41 R45 L091 L093-L094 G09 G20. API pubblica: ``apply_linux_transactional``.
+
+```bash
+pytest tests/unit/test_update_transactional_n033.py tests/unit/test_update_transactional_n032.py tests/unit/test_update_discovery_n031.py tests/unit/test_update_manager.py -q
+```
+
+Full installed L H63-N033 not claimed PASS here (MANUAL_ONLY / #21).
