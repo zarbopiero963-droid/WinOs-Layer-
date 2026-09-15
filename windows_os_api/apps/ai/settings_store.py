@@ -1,8 +1,9 @@
-"""AI provider settings — env + secured user config file (chmod 600)."""
+"""AI provider settings — env + secured user config file (owner-only ACL / chmod 600)."""
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 from dataclasses import dataclass
@@ -133,12 +134,13 @@ def _from_env() -> AIRuntimeSettings:
 
 
 def _load_file(path: Path) -> dict[str, Any]:
+    """Fail-closed: corrupt / non-dict / unreadable → ``{}`` (never echo contents)."""
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         return {}
 
 
@@ -163,22 +165,112 @@ def _merge(base: AIRuntimeSettings, file_data: dict[str, Any]) -> AIRuntimeSetti
     )
 
 
+def _windows_restrict_acl(path: Path) -> bool:
+    """Best-effort owner-only DACL on Windows. Returns True if a restrictor ran.
+
+    Prefer ``win32security`` when installed (optional ``[windows]`` extra); else
+    ``icacls``. Never raises for missing APIs — callers treat False as honesty
+    that ACL restriction was unavailable (POSIX chmod path still applies on Unix).
+    """
+    if sys.platform != "win32":
+        return False
+    p = str(path)
+    # 1) pywin32 when present
+    try:
+        import win32security  # type: ignore[import-untyped]
+        import ntsecuritycon as con  # type: ignore[import-untyped]
+
+        user, _domain, _typ = win32security.LookupAccountName(None, os.getlogin())
+        sd = win32security.SECURITY_DESCRIPTOR()
+        sd.Initialize()
+        dacl = win32security.ACL()
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, con.FILE_ALL_ACCESS, user)
+        sd.SetSecurityDescriptorDacl(1, dacl, 0)
+        win32security.SetFileSecurity(p, win32security.DACL_SECURITY_INFORMATION, sd)
+        return True
+    except Exception:
+        pass
+    # 2) icacls fallback (built-in on modern Windows)
+    try:
+        user = os.environ.get("USERNAME") or os.getlogin()
+        # inheritance:r then grant:r current user full — replaces inherited ACEs
+        r1 = subprocess.run(
+            ["icacls", p, "/inheritance:r"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+            text=True,
+        )
+        r2 = subprocess.run(
+            ["icacls", p, "/grant:r", f"{user}:(F)"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+            text=True,
+        )
+        return r1.returncode == 0 and r2.returncode == 0
+    except Exception:
+        return False
+
+
+def _chmod_owner_only(path: Path, *, directory: bool = False) -> None:
+    if sys.platform == "win32":
+        _windows_restrict_acl(path)
+        return
+    mode = 0o700 if directory else 0o600
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def _secure_write(path: Path, data: dict[str, Any]) -> None:
+    """Atomic owner-only write. Never leaves a world-readable tmp under permissive umask.
+
+    On Unix: create tmp with ``os.open(..., 0o600)``, fsync, ``os.replace``, chmod
+    file ``0o600`` and parent dir ``0o700`` when creatable.
+    On Windows: same atomic replace + best-effort owner ACL (pywin32 / icacls).
+    On any failure: unlink ``.tmp`` if present and raise ``OSError`` whose message
+    does **not** include the payload/secret.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    _chmod_owner_only(path.parent, directory=True)
+
     tmp = path.with_suffix(path.suffix + ".tmp")
     payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    tmp.write_text(payload, encoding="utf-8")
-    if sys.platform != "win32":
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    fd: int | None = None
+    try:
+        # mode 0o600 is masked by umask on Unix → still owner-only; Windows ignores mode bits
+        fd = os.open(str(tmp), flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fd = None  # transferred to fh
+            fh.write(payload)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        _chmod_owner_only(tmp, directory=False)
+        os.replace(str(tmp), str(path))
+        _chmod_owner_only(path, directory=False)
+    except Exception as exc:
         try:
-            os.chmod(tmp, 0o600)
+            if tmp.exists():
+                tmp.unlink()
         except OSError:
             pass
-    tmp.replace(path)
-    if sys.platform != "win32":
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        # Do not include path contents / payload / secret in the message
+        raise OSError(f"failed to persist AI settings to {path.name}") from exc
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def get_ai_settings(*, reload: bool = False) -> AIRuntimeSettings:
@@ -201,7 +293,12 @@ def update_ai_settings(
     clear_key: bool = False,
     persist: bool = True,
 ) -> AIRuntimeSettings:
-    """Update runtime settings. Empty ``api_key`` string clears the key."""
+    """Update runtime settings. Empty ``api_key`` string clears the key.
+
+    When ``persist=True``, the runtime cache is updated **only after** a durable
+    secure write succeeds — a failed persist leaves the previous runtime key
+    unchanged and never echoes secrets in the raised error.
+    """
     global _runtime
     with _lock:
         current = get_ai_settings()

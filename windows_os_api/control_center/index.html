@@ -111,7 +111,7 @@
       </div>
       <div class="card">
         <h2>AI Provider</h2>
-        <p class="note">Optional. Local OCR (Pillow / tesseract) works without a key. Same settings on Windows and Linux. Saving/testing requires an <b>admin</b> API key in the field above.</p>
+        <p class="note">Optional. Local OCR (Pillow / tesseract) works without a key. Same settings on Windows and Linux. Saving/testing requires an <b>admin</b> API key in the field above. Persisted keys use <b>owner-only</b> storage (Unix <code>chmod 600</code> + dir <code>0700</code>; Windows ACL best-effort). The API never returns the raw key — only a masked preview.</p>
         <div class="row">
           <label>Provider
             <select id="ai_provider">
@@ -123,7 +123,7 @@
           </label>
           <label>Model <input id="ai_model" placeholder="default per provider"/></label>
           <label>Base URL <input id="ai_base_url" placeholder="optional / OpenRouter custom"/></label>
-          <label>API Key <input id="ai_api_key" type="password" placeholder="sk-… (leave blank to keep)"/></label>
+          <label>API Key <input id="ai_api_key" type="password" value="" placeholder="sk-… (leave blank to keep)" autocomplete="off"/></label>
         </div>
         <div class="row" style="margin-top:.75rem">
           <button type="button" onclick="saveAi()">Save</button>
@@ -955,7 +955,7 @@
       if (r.status === 200) {
         fillAi(r.body);
         aiStatus.className = "status ok";
-        aiStatus.textContent = "Saved (persisted under user config dir, chmod 600).";
+        aiStatus.textContent = "Saved (owner-only ACL / chmod 600 under user config dir).";
       } else {
         aiStatus.className = "status err";
         aiStatus.textContent = "Save failed.";
