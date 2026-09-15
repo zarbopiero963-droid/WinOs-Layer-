@@ -75,6 +75,17 @@ def test_installed_layout_rejects_missing_service_scripts(ism, tmp_path):
         ism.verify_installed_layout(d)
 
 
+def test_installed_layout_accepts_acl_denied_nonempty_api_key(ism, tmp_path, monkeypatch):
+    """N034 restrictive DACL may deny smoke read; non-zero size still counts as present."""
+    d = _install(tmp_path, key="secret-not-readable")
+
+    def deny_read(self, *a, **k):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_text", deny_read)
+    ism.verify_installed_layout(d)
+
+
 def test_installed_layout_rejects_empty_api_key(ism, tmp_path):
     """The .iss generates api_key.txt at ssPostInstall; an empty one is a broken install."""
     d = _install(tmp_path, key="   \n")
