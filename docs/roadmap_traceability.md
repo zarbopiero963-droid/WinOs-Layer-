@@ -582,3 +582,22 @@ pytest tests/unit/test_websocket_n040.py tests/unit/test_auth_n011.py tests/unit
 
 Meccanismo documentato in ``windows_os_api/api/websocket/bus.py`` (module docstring).
 Full installed W/L H63-N040 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N041 — Webhook autenticati e delivery controllato
+
+Contratto (#67 / H63-N041, B-BUS, Q10/Q11): destinazioni webhook solo se
+esplicitamente registrate (HTTPS; ``http://127.0.0.1`` solo per receiver di test
+con flag); firma HMAC-SHA256 (``X-WinOS-Signature`` / ``X-WinOS-Event-Id`` /
+``X-WinOS-Timestamp``); fan-out tipi workflow/capability/crash
+(``WEBHOOK_EVENT_TYPES``, include ``system.crash``); retry con backoff e
+idempotenza su ``(destination_id, event_id)``; egress fail-closed
+(private/link-local/metadata, scheme/host non ammessi, DNS→IP privato). Coverage:
+R37 W069 L069 G01 G09. Out of scope: N042+, N005 D6, chiusura #67/#63/#21,
+claim H63-N041 installed W/L PASS.
+
+```bash
+pytest tests/unit/test_webhooks_n041.py tests/unit/test_event_schema_n038.py tests/unit/test_event_bus_n039.py -q
+```
+
+Full installed W/L H63-N041 not claimed PASS here (MANUAL_ONLY / #21).

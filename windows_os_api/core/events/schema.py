@@ -20,6 +20,7 @@ ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(
         "workflow.step.proposed",
         "workflow.step.executed",
         "api.registry.changed",
+        "system.crash",
     }
 )
 
