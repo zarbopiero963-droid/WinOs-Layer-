@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install WinOs-Layer Linux portable binary + optional systemd unit.
 #
-# Linux package runs FakeBackend / OS-portable API server for non-Windows hosts.
-# Windows EXE uses WindowsBackend when on Win32 — do not use this script there.
+# Linux package runs LinuxBackend / real OS API server for non-Windows hosts
+# (WINOS_BACKEND=auto). Windows EXE uses WindowsBackend when on Win32 —
+# do not use this script there.
 #
 # Usage:
 #   ./install.sh              # system install to /opt/winos-api (needs sudo)
@@ -68,8 +69,25 @@ run() {
   fi
 }
 
+# Denylist mirrors windows_os_api.installer.identity.WEAK_API_KEYS (fail closed).
+is_weak_api_key() {
+  local k
+  k="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "${k}" in
+    ""|dev|admin|test|password|secret|changeme|dev-key-change-me|winos-dev|winos-admin)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 echo "Installing WinOs-Layer Linux portable → ${DEST}"
-echo "  (FakeBackend / OS-portable API — not a Windows emulator)"
+echo "  (LinuxBackend / real OS API — WINOS_BACKEND=auto)"
+if [[ "${USER_MODE}" -eq 1 ]]; then
+  echo "  Install mode: user (~/.local/opt/winos-api)"
+else
+  echo "  Install mode: system (/opt/winos-api)"
+fi
 run mkdir -p "${DEST}"
 run cp -f "${BINARY}" "${DEST}/winos-api"
 run chmod 755 "${DEST}/winos-api"
@@ -89,10 +107,14 @@ if [[ -d "${SCRIPT_DIR}" ]]; then
   run cp -f "${SCRIPT_DIR}/winos-api.service" "${DEST}/installer/" 2>/dev/null || true
 fi
 
-# Generate API key if missing
+# Generate or reuse API key (never print the secret value)
 API_KEY_FILE="${DEST}/api_key.txt"
 if [[ ! -f "${API_KEY_FILE}" ]]; then
   KEY="$(openssl rand -hex 24 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(24))')"
+  if is_weak_api_key "${KEY}"; then
+    echo "ERROR: generated API key matched weak/dev denylist (internal failure)." >&2
+    exit 1
+  fi
   if [[ "${NEED_SUDO}" -eq 1 && "$(id -u)" -ne 0 ]]; then
     echo "${KEY}" | sudo tee "${API_KEY_FILE}" >/dev/null
     sudo chmod 600 "${API_KEY_FILE}"
@@ -100,10 +122,23 @@ if [[ ! -f "${API_KEY_FILE}" ]]; then
     echo "${KEY}" > "${API_KEY_FILE}"
     chmod 600 "${API_KEY_FILE}"
   fi
-  echo "Generated API key → ${API_KEY_FILE}"
+  unset KEY
+  echo "Generated API key → ${API_KEY_FILE} (chmod 600; value not printed)"
 else
-  KEY="$(cat "${API_KEY_FILE}" 2>/dev/null || true)"
-  echo "Reusing existing API key at ${API_KEY_FILE}"
+  EXISTING="$(cat "${API_KEY_FILE}" 2>/dev/null || true)"
+  if [[ -z "$(printf '%s' "${EXISTING}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" ]]; then
+    echo "ERROR: existing API key file is empty: ${API_KEY_FILE}" >&2
+    echo "ERROR: refuse to install with empty key (fail closed)." >&2
+    exit 1
+  fi
+  if is_weak_api_key "${EXISTING}"; then
+    echo "ERROR: existing API key at ${API_KEY_FILE} matches weak/dev denylist." >&2
+    echo "ERROR: refuse to reuse (dev, admin, test, password, secret, changeme," >&2
+    echo "ERROR:   dev-key-change-me, winos-dev, winos-admin). Replace the file." >&2
+    exit 1
+  fi
+  unset EXISTING
+  echo "Reusing existing API key at ${API_KEY_FILE} (value not printed)"
 fi
 
 # Symlink into PATH
@@ -137,9 +172,14 @@ cat <<MSG
 
 Install complete.
 
+Paths:
+  system install: /opt/winos-api  (default; needs sudo)
+  user install:   ~/.local/opt/winos-api  (--user)
+
 Start manually:
-  WINOS_BACKEND=fake WINOS_API_KEYS='["${KEY:-see-api_key.txt}"]' \\
-    ${DEST}/winos-api serve --host 127.0.0.1 --port 8765
+  WINOS_BACKEND=auto \\
+    ${DEST}/winos-api serve --host 127.0.0.1 --port 8765 \\
+    --api-key-file ${API_KEY_FILE}
 
 Or with systemd:
   ${SYSTEMCTL[*]} enable --now winos-api
@@ -147,9 +187,9 @@ Or with systemd:
 
 Open:
   http://127.0.0.1:8765/docs
-  Header: X-API-Key: (contents of ${API_KEY_FILE})
+  Header: X-API-Key: (contents of ${API_KEY_FILE} — do not paste into shell history)
 
-This is the Linux portable FastAPI server (FakeBackend-capable), NOT a
-Windows emulator. For real Windows automation use the Windows EXE/Setup
-artifacts from GitHub Actions (dist-windows).
+This is the Linux portable FastAPI server (LinuxBackend / real OS via
+WINOS_BACKEND=auto), NOT a Windows emulator. For real Windows automation
+use the Windows EXE/Setup artifacts from GitHub Actions (dist-windows).
 MSG

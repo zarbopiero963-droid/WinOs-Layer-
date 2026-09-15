@@ -167,13 +167,49 @@ def validate(verbose: bool = True) -> dict[str, Any]:
         if not checks["iss_secure_key_script"]:
             errors.append("winos-api.iss must generate api_key via write_secure_api_key.ps1 (N034 CSPRNG+ACL)")
 
-    # Linux unit should bind localhost and mention FakeBackend / WINOS_BACKEND
+    # Linux unit / install.sh — N035: LinuxBackend + --api-key-file, no FakeBackend default
     if (LINUX_INSTALLER / "winos-api.service").is_file():
         unit = _read(LINUX_INSTALLER / "winos-api.service")
         checks["linux_unit_localhost"] = "127.0.0.1" in unit
-        checks["linux_unit_backend"] = "WINOS_BACKEND" in unit or "FakeBackend" in unit
+        checks["linux_unit_api_key_file"] = "--api-key-file" in unit
+        desc_line = next((ln for ln in unit.splitlines() if ln.startswith("Description=")), "")
+        checks["linux_unit_backend_auto"] = (
+            "WINOS_BACKEND=auto" in unit
+            and "FakeBackend" not in desc_line
+            and "FakeBackend" not in "".join(
+                ln for ln in unit.splitlines() if ln.startswith("ExecStart=")
+            )
+        )
+        checks["linux_unit_backend"] = "WINOS_BACKEND" in unit and "FakeBackend" not in desc_line
         if "127.0.0.1" not in unit:
-            warnings.append("linux unit should bind 127.0.0.1")
+            errors.append("linux unit must bind 127.0.0.1 (N035)")
+        if not checks["linux_unit_api_key_file"]:
+            errors.append("linux unit must pass --api-key-file (N035)")
+        if "WINOS_BACKEND=auto" not in unit:
+            errors.append("linux unit must set Environment=WINOS_BACKEND=auto (N035)")
+        if "FakeBackend" in desc_line:
+            errors.append("linux unit Description must not present FakeBackend as default (N035)")
+
+    install_sh = LINUX_INSTALLER / "install.sh"
+    if install_sh.is_file():
+        sh = _read(install_sh)
+        # Distributed install path must not push FakeBackend as product/default start
+        checks["linux_install_no_fake_default"] = "FakeBackend" not in sh and "WINOS_BACKEND=fake" not in sh
+        checks["linux_install_no_secret_print"] = "WINOS_API_KEYS=" not in sh
+        checks["linux_install_api_key_file"] = "--api-key-file" in sh
+        checks["linux_install_backend_auto"] = "WINOS_BACKEND=auto" in sh
+        if not checks["linux_install_no_fake_default"]:
+            errors.append(
+                "install.sh must not instruct FakeBackend / WINOS_BACKEND=fake as default start (N035)"
+            )
+        if not checks["linux_install_no_secret_print"]:
+            errors.append(
+                "install.sh must not print WINOS_API_KEYS= with secret in final message (N035)"
+            )
+        if not checks["linux_install_api_key_file"]:
+            errors.append("install.sh must mention --api-key-file (N035)")
+        if not checks["linux_install_backend_auto"]:
+            errors.append("install.sh must mention WINOS_BACKEND=auto (N035)")
 
     # Localhost firewall note in README
     readme = ROOT / "installer" / "README.md"
@@ -432,7 +468,8 @@ def package_linux(
     """Package Linux portable zip/tar.gz with binary + installer/linux/* + VERSION.
 
     Requires dist/winos-api (or builds portable first when build_if_missing=True).
-    Linux package = FastAPI FakeBackend-capable server, not a Windows emulator.
+    Linux package = FastAPI LinuxBackend / real OS server (WINOS_BACKEND=auto),
+    not a Windows emulator. FakeBackend remains an optional fixture only.
     """
     v = validate(verbose=False)
     if not v["ok"]:
@@ -535,8 +572,8 @@ def package_linux(
         checksum_targets.append(binary)
     checksums(checksum_targets, DIST / "checksums-linux.txt")
     print(
-        "NOTE: Linux portable = FastAPI server (FakeBackend-capable), "
-        "not a Windows emulator. Use Windows artifacts for Win32."
+        "NOTE: Linux portable = FastAPI server (LinuxBackend / real OS, "
+        "WINOS_BACKEND=auto), not a Windows emulator. Use Windows artifacts for Win32."
     )
     return 0
 

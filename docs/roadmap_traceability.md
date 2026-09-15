@@ -500,3 +500,14 @@ python scripts/build_installer.py validate
 
 Full installed W H63-N034 not claimed PASS here (MANUAL_ONLY / #21).
 
+## N035 — Installer Linux: backend reale + key load
+
+Contratto (#67 / H63-N035, B-PKG, Q01/Q03): path install Linux distribuito senza FakeBackend come default; systemd + CLI caricano la key via ``--api-key-file`` (mai stampare il secret); path user vs system separati; reject weak/dev keys (reuse ``WEAK_API_KEYS`` / ``assert_release_api_key``); default ``WINOS_BACKEND=auto`` → LinuxBackend. Coverage: R39 R41 L091 G10 G11 G21. Out of scope: N036, N037; non chiudere #67/#63/#21; non toccare N005 D6 / workflows.
+
+```bash
+pytest tests/unit/test_installer_linux_n035.py tests/unit/test_installer_identity_n034.py tests/unit/test_build_installer.py tests/unit/test_installer_smoke.py -q
+python scripts/build_installer.py validate
+```
+
+Full installed L H63-N035 not claimed PASS here (MANUAL_ONLY / #21).
+

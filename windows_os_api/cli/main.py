@@ -8,11 +8,16 @@ from pathlib import Path
 
 
 def load_api_key_file(path: str | Path) -> str:
-    """Load exactly one non-empty API key without exposing it on the command line."""
+    """Load exactly one non-empty API key without exposing it on the command line.
+
+    Rejects empty and denylisted weak/dev keys via assert_release_api_key (N035).
+    """
+    from windows_os_api.installer.identity import assert_release_api_key
+
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     if len(lines) != 1 or not lines[0].strip():
         raise ValueError("API key file must contain exactly one non-empty line")
-    return lines[0].strip()
+    return assert_release_api_key(lines[0])
 
 
 def main(argv: list[str] | None = None) -> int:
