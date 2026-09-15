@@ -150,10 +150,11 @@ def test_write_bundle_mode_600_and_collect_before_restart(tmp_path: Path):
     result = collect_before_restart(path, reason="pre-restart", max_bytes=128_000)
     assert result.before_restart is True
     assert path.is_file()
-    mode = stat.S_IMODE(path.stat().st_mode)
-    assert mode == 0o600 or mode == 0o600 & ~0o111  # owner rw
-    # On some FS umask may clear group bits differently; require no other perms.
-    assert mode & 0o077 == 0
+    if os.name == "posix":
+        mode = stat.S_IMODE(path.stat().st_mode)
+        # Owner rw only — group/other must be clear (ACL intent on Unix).
+        assert mode & 0o077 == 0
+        assert mode & 0o600 == 0o600
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["before_restart"] is True
     assert SECRET not in path.read_text(encoding="utf-8")

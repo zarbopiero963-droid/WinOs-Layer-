@@ -456,10 +456,12 @@ def write_support_bundle(
         fd = os.open(str(tmp), flags, BUNDLE_FILE_MODE)
         try:
             os.write(fd, encoded)
-            try:
-                os.fchmod(fd, BUNDLE_FILE_MODE)
-            except OSError:
-                pass
+            # fchmod is POSIX-only (missing on Windows).
+            if hasattr(os, "fchmod"):
+                try:
+                    os.fchmod(fd, BUNDLE_FILE_MODE)
+                except OSError:
+                    pass
         finally:
             os.close(fd)
         os.replace(str(tmp), str(dest))
