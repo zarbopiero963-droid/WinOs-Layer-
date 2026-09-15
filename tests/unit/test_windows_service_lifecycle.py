@@ -22,7 +22,9 @@ def test_nssm_installer_uses_the_real_packaged_layout_and_key_file():
     assert r"%SCRIPT_DIR%winos-api.exe" in script
     assert "--api-key-file api_key.txt" in script
     assert "WINOS_SERVICE_PORT" in script
-    assert "dev-key-change-me" not in script
+    # N034: weak key may appear only inside an explicit denylist rejection.
+    assert "WINOS_API_KEYS=dev-key-change-me" not in script
+    assert 'AppParameters "serve' in script and "dev-key-change-me" not in script.split("AppParameters", 1)[1].splitlines()[0]
 
 
 def test_nssm_installer_fails_closed_and_configures_tree_shutdown():

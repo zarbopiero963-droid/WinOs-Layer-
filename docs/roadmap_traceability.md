@@ -487,3 +487,16 @@ pytest tests/unit/test_update_transactional_n033.py tests/unit/test_update_trans
 ```
 
 Full installed L H63-N033 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N034 — Installer Windows: identità, key e lifecycle
+
+Contratto (#67 / H63-N034, B-PKG, Q01/Q03): preservare fix #54; **SetupMutex** wizard singola istanza; key **CSPRNG** + **ACL** (SYSTEM/Administrators/LocalService); servizio **NT AUTHORITY\\LocalService** + harden ACL su logs/tmp/sandbox; **AppDirectory**/binPath assoluto; reject weak/dev keys; setup key autentica, key dev no. Coverage: R39 R41 W091 W093 G10 G11 G21. Linux FakeBackend/key load → N035.
+
+```bash
+pytest tests/unit/test_installer_identity_n034.py tests/unit/test_windows_service_lifecycle.py tests/unit/test_installer_smoke.py tests/unit/test_build_installer.py -q
+python scripts/build_installer.py validate
+```
+
+Full installed W H63-N034 not claimed PASS here (MANUAL_ONLY / #21).
+

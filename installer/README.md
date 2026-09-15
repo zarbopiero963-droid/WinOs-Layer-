@@ -108,10 +108,12 @@ Artifacts:
 
 1. Copies `winos-api.exe` under `{autopf}\WinOsApi`
 2. Copies `installer/service_scripts\*.bat` to `{app}\service`
-3. Generates a random API key into `{app}\api_key.txt` (first install)
-4. Offers to start the API bound to `127.0.0.1:8765`
-5. Optional: run `service\install_nssm.bat` as Administrator to register
-   **WindowsOSLayerService**
+3. Generates a **CSPRNG** API key into `{app}\api_key.txt` (first install) with a
+   restrictive DACL (SYSTEM / Administrators / LocalService only)
+4. Uses **SetupMutex** so only one Setup wizard runs at a time
+5. Offers to start the API bound to `127.0.0.1:8765`
+6. Optional: run `service\install_nssm.bat` as Administrator to register
+   **WindowsOSLayerService** as **NT AUTHORITY\LocalService** (least privilege)
 
 ## Windows service lifecycle
 
@@ -121,7 +123,10 @@ real native `nssm.exe` there itself; a package-manager shim from `PATH` is not a
 valid service host. Then run the batch file as Administrator. It:
 
 - resolves both the Setup layout (`service\` below the EXE) and portable layout;
-- requires a one-line `api_key.txt` beside `winos-api.exe`;
+- requires a one-line `api_key.txt` beside `winos-api.exe` and rejects denylisted
+  weak/dev keys;
+- runs as `NT AUTHORITY\LocalService` (not LocalSystem) with hardened ACLs on
+  `logs`/`tmp`/`sandbox`;
 - binds only to `127.0.0.1` and reads the key with `--api-key-file`, so the
   secret is not stored in the service command line;
 - sends `CTRL_C_EVENT` first on stop, waits up to 15 seconds for graceful
