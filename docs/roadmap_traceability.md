@@ -549,3 +549,17 @@ pytest tests/unit/test_event_schema_n038.py tests/unit/test_event_bus.py tests/u
 
 Full installed W/L H63-N038 not claimed PASS here (MANUAL_ONLY / #21).
 
+## N039 — Bus thread-safe, backpressure e lifecycle
+
+Contratto (#67 / H63-N039, B-BUS, Q11/Q12): handoff thread→loop non bloccante
+(``call_soon_threadsafe``); limiti queue/subscriber/byte con **drop osservabile**
+(``EventBus.dropped`` / ``stats()``); ``stop()`` sentinel + ``reset_event_bus``
+senza deadlock/leak; recovery con bus fresco. Coverage: R37 R49 W068 L068 G15 G16 G17.
+Out of scope: N040 WS app isolation, N041 webhooks, N005 D6, chiusura #67/#63/#21.
+
+```bash
+pytest tests/unit/test_event_bus_n039.py tests/unit/test_event_bus.py tests/unit/test_event_schema_n038.py -q
+```
+
+Full installed W/L H63-N039 not claimed PASS here (MANUAL_ONLY / #21).
+

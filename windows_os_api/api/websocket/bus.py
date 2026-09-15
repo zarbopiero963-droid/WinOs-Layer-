@@ -6,7 +6,11 @@ import json
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from windows_os_api.core.events.bus import get_event_bus
+from windows_os_api.core.events.bus import (
+    BusAtCapacityError,
+    BusClosedError,
+    get_event_bus,
+)
 from windows_os_api.core.runtime.config import get_settings
 from windows_os_api.core.security.auth import build_auth_context, get_auth_registry
 
@@ -41,6 +45,12 @@ async def events_ws(websocket: WebSocket) -> None:
             await websocket.send_text(
                 json.dumps({"id": event.id, "type": event.type, "payload": event.payload, "ts": event.ts})
             )
+    except BusClosedError:
+        await websocket.close(code=1012)
+        return
+    except BusAtCapacityError:
+        await websocket.close(code=1013)
+        return
     except WebSocketDisconnect:
         return
     except asyncio.CancelledError:
