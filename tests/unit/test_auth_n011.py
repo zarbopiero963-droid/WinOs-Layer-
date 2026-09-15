@@ -133,15 +133,23 @@ def test_auth_me_four_credentials(client):
 
 
 def test_ws_rejects_invalid_key_same_as_rest(client):
+    # N040: auth via header (query api_key is always denied — see test_websocket_n040).
     with pytest.raises((WebSocketDisconnect, Exception)):
-        with client.websocket_connect("/ws/events?api_key=not-a-real-key") as ws:
+        with client.websocket_connect(
+            "/ws/events",
+            headers={"X-API-Key": "not-a-real-key"},
+        ) as ws:
             ws.receive_text()
 
 
 def test_ws_accepts_valid_automator_key(client):
-    # Connect then disconnect cleanly — acceptance proves shared resolve.
-    with client.websocket_connect("/ws/events?api_key=dev-key-change-me") as ws:
-        assert ws is not None
+    # N040: header handshake (no secret in URL).
+    with client.websocket_connect(
+        "/ws/events",
+        headers={"X-API-Key": "dev-key-change-me"},
+    ) as ws:
+        msg = ws.receive_text()
+        assert "auth_ok" in msg
 
 
 def test_build_auth_context_redacts_key_material():
