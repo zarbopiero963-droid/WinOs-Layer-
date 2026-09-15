@@ -1,3 +1,20 @@
-from .bus import EventBus, Event, get_event_bus
+from .bus import Event, EventBus, get_event_bus, reset_event_bus
+from .schema import (
+    ALLOWED_EVENT_TYPES,
+    ALLOWED_PROVENANCE,
+    SECRET_KEYS,
+    redact_secrets,
+    validate_and_sanitize,
+)
 
-__all__ = ["EventBus", "Event", "get_event_bus"]
+__all__ = [
+    "Event",
+    "EventBus",
+    "get_event_bus",
+    "reset_event_bus",
+    "ALLOWED_EVENT_TYPES",
+    "ALLOWED_PROVENANCE",
+    "SECRET_KEYS",
+    "redact_secrets",
+    "validate_and_sanitize",
+]

@@ -60,10 +60,10 @@ def test_h63_n002_no_state_inherited_across_full_reset(tmp_path, monkeypatch):
     reset_limiter()
 
     bus = get_event_bus()
-    bus.publish_sync("n002.seed", {"k": 1})
+    bus.publish_sync("system.probe", {"k": 1})
     # Simulate a live subscriber that would otherwise leak across tests
     bus._subs.append(object())  # type: ignore[arg-type]
-    assert any(e.type == "n002.seed" for e in bus.history())
+    assert any(e.type == "system.probe" for e in bus.history())
     assert len(bus._subs) == 1
 
     metrics = get_metrics()
@@ -85,7 +85,7 @@ def test_h63_n002_no_state_inherited_across_full_reset(tmp_path, monkeypatch):
     # RED on old behavior: partial reset clears policies/adapters but leaves
     # bus history/subscribers, metrics counters, rate-limiter hits, and store files.
     _conftest_style_partial_reset()
-    assert any(e.type == "n002.seed" for e in get_event_bus().history())
+    assert any(e.type == "system.probe" for e in get_event_bus().history())
     assert len(get_event_bus()._subs) == 1
     assert get_metrics().snapshot()["counters"].get("n002_counter") == 7
     assert get_limiter(get_settings()).remaining("n002-subject") < get_limiter(get_settings()).limit

@@ -538,3 +538,14 @@ python scripts/build_installer.py verify-release
 
 Full installed W H63-N037 Authenticode/SmartScreen not claimed PASS here (MANUAL_ONLY / #21 / #10).
 
+
+## N038 — Event schema e redaction prima del fan-out
+
+Contratto (#67 / H63-N038, B-BUS, Q11): allowlist type/schema/provenienza; payload limitati (byte/depth/keys); redaction secret-keys ricorsiva **prima** di history/subscribe; tipi sconosciuti (es. ``admin.granted``) e payload oversize **respinti** senza fan-out; ``agent.goal.proposed`` / ``executed`` / ``denied`` distinti (goal non implica autorizzazione). Coverage: R37 R49 W005 W068 L005 L068 G14 G15 G16. Out of scope: N039 thread-safe/backpressure, N040 WS app isolation, N041 webhooks, N005 D6, chiusura #67/#63/#21.
+
+```bash
+pytest tests/unit/test_event_schema_n038.py tests/unit/test_event_bus.py tests/unit/test_fixture_isolation_n002.py tests/unit/test_agent_execution_gate.py -q
+```
+
+Full installed W/L H63-N038 not claimed PASS here (MANUAL_ONLY / #21).
+

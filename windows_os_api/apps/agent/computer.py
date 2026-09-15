@@ -22,7 +22,7 @@ from windows_os_api.apps.intent.engine import execute_intent
 from windows_os_api.apps.adapters.engine import create_adapter, invoke_action, get_adapter
 from windows_os_api.apps.adapters.validation import validate_app_id
 from windows_os_api.apps.agent.gate import evaluate
-from windows_os_api.core.events.bus import get_event_bus, Event
+from windows_os_api.core.events.bus import get_event_bus
 
 class ComputerAgent:
     def __init__(self, app_id: str) -> None:
@@ -37,7 +37,12 @@ class ComputerAgent:
         # Goal / UI / model text is untrusted data (N027): never authorization.
         # Only evaluate()+invoke_action may enable tools; confidence ≠ permission.
         result = execute_intent(goal, app_id=self.app_id)
-        get_event_bus().publish_sync("agent.goal", {"goal": goal, "app_id": self.app_id})
+        # N038: proposed before the gate — never imply authorization.
+        get_event_bus().publish_sync(
+            "agent.goal.proposed",
+            {"goal": goal, "app_id": self.app_id},
+            provenance="agent",
+        )
         plan = result["plan"]
         workflow = plan.get("workflow") or {}
 
@@ -53,6 +58,25 @@ class ComputerAgent:
                 executed.append(
                     invoke_action(self.app_id, step["action"], step.get("params"))
                 )
+            get_event_bus().publish_sync(
+                "agent.goal.executed",
+                {
+                    "goal": goal,
+                    "app_id": self.app_id,
+                    "steps": len(executed),
+                },
+                provenance="agent",
+            )
+        else:
+            get_event_bus().publish_sync(
+                "agent.goal.denied",
+                {
+                    "goal": goal,
+                    "app_id": self.app_id,
+                    "reason": decision.reason,
+                },
+                provenance="agent",
+            )
 
         response: dict[str, Any] = {
             "goal": goal,
