@@ -1,4 +1,5 @@
 # N034: CSPRNG api_key.txt + restrictive DACL (SYSTEM / Administrators / LocalService).
+# Uses icacls.exe (not Get-Acl/Set-Acl) for runner/module portability.
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File write_secure_api_key.ps1 -Path <file>
 param(
     [Parameter(Mandatory = $true)]
@@ -6,6 +7,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Invoke-Icacls {
+    param([Parameter(Mandatory = $true)][string[]]$Args)
+    & icacls.exe @Args
+    if ($LASTEXITCODE -ne 0) {
+        throw "icacls failed ($LASTEXITCODE): icacls $($Args -join ' ')"
+    }
+}
 
 $dir = Split-Path -Parent -Path $Path
 if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
@@ -17,22 +26,8 @@ $bytes = New-Object byte[] 32
 $hex = -join ($bytes | ForEach-Object { $_.ToString("x2") })
 [System.IO.File]::WriteAllText($Path, $hex + [Environment]::NewLine)
 
-$acl = Get-Acl -LiteralPath $Path
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) {
-    [void]$acl.RemoveAccessRule($rule)
-}
-$principals = @(
-    "NT AUTHORITY\SYSTEM",
-    "BUILTIN\Administrators",
-    "NT AUTHORITY\LOCAL SERVICE"
-)
-foreach ($principal in $principals) {
-    $access = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        $principal,
-        "Read,ReadAndExecute",
-        "Allow"
-    )
-    $acl.AddAccessRule($access)
-}
-Set-Acl -LiteralPath $Path -AclObject $acl
+# Restrictive DACL: no inherited Everyone/Users; only SYSTEM/Administrators/LocalService read.
+Invoke-Icacls -Args @($Path, "/inheritance:r")
+Invoke-Icacls -Args @($Path, "/grant:r", "NT AUTHORITY\SYSTEM:(R)")
+Invoke-Icacls -Args @($Path, "/grant:r", "BUILTIN\Administrators:(R)")
+Invoke-Icacls -Args @($Path, "/grant:r", "NT AUTHORITY\LOCAL SERVICE:(R)")

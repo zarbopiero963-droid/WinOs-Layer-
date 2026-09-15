@@ -59,7 +59,8 @@ def test_h63_n034_iss_csprng_key_and_acl_via_helper():
     assert "Random(" not in text
     helper = (SERVICE_SCRIPTS / "write_secure_api_key.ps1").read_text(encoding="utf-8")
     assert "RandomNumberGenerator" in helper
-    assert "SetAccessRuleProtection" in helper
+    assert "icacls" in helper  # portable ACL path (Get-Acl broken on some GHA pwsh)
+    assert "inheritance:r" in helper
     assert "NT AUTHORITY\\LOCAL SERVICE" in helper or "LOCAL SERVICE" in helper
     assert "BUILTIN\\Administrators" in helper
     assert "NT AUTHORITY\\SYSTEM" in helper
@@ -73,7 +74,8 @@ def test_h63_n034_nssm_least_privilege_objectname_and_workdir():
     assert "harden_service_dirs.ps1" in script
     harden = (SERVICE_SCRIPTS / "harden_service_dirs.ps1").read_text(encoding="utf-8")
     assert "LOCAL SERVICE" in harden
-    assert "Modify" in harden
+    assert "icacls" in harden
+    assert "(OI)(CI)(M)" in harden or "Modify" in harden
 
 
 def test_h63_n034_nssm_rejects_weak_dev_keys():
