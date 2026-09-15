@@ -19,7 +19,12 @@ def get_limiter(settings: Settings = Depends(get_settings)) -> RateLimiter:
 def get_concurrency_gate(settings: Settings = Depends(get_settings)) -> ConcurrencyGate:
     global _gate
     if _gate is None:
-        _gate = ConcurrencyGate(settings.max_concurrent_requests)
+        # N046: il tetto globale resta quello di N013; la quota per principal gli
+        # sta sotto e impedisce che un solo chiamante lo esaurisca da solo.
+        _gate = ConcurrencyGate(
+            settings.max_concurrent_requests,
+            per_principal_limit=settings.max_concurrent_per_principal,
+        )
     return _gate
 
 

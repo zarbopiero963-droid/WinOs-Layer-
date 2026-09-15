@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # N013 — request / concurrency / body / CORS confines
     max_body_bytes: int = 1_048_576  # 1 MiB default body cap
     max_concurrent_requests: int = 32
+    # N046 — budget per principal: il tetto globale sopra non impedisce a una
+    # sola app di occuparlo tutto e far rifiutare le altre. Default prudente e
+    # inferiore al globale; alzarlo e' una scelta esplicita.
+    max_concurrent_per_principal: int = 8
+    # N046 — una sola istanza per adapter store: due istanze si sovrascrivono i
+    # manifest a vicenda. Disattivarlo riapre quel difetto, quindi resta acceso.
+    single_instance_lock: bool = True
     # When remote_access_enabled: explicit Origin allowlist (never implicit "*").
     cors_allowed_origins: list[str] = Field(default_factory=list)
     audit_log_path: str = "logs/audit.jsonl"
