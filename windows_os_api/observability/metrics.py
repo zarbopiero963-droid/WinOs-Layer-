@@ -129,9 +129,19 @@ def _inflight_gauge() -> dict[str, float]:
         return {
             "http.inflight": float(gate.in_flight),
             "http.inflight_limit": float(gate.limit),
+            # N046: senza questi due il budget per principal non e' osservabile —
+            # si vedrebbe solo il totale, e un principal che satura la propria
+            # quota mentre il totale e' basso sembrerebbe un sistema scarico.
+            "http.inflight_principals": float(len(gate.principals())),
+            "http.inflight_per_principal_limit": float(gate.per_principal_limit or 0),
         }
     except Exception:
-        return {"http.inflight": 0.0, "http.inflight_limit": 0.0}
+        return {
+            "http.inflight": 0.0,
+            "http.inflight_limit": 0.0,
+            "http.inflight_principals": 0.0,
+            "http.inflight_per_principal_limit": 0.0,
+        }
 
 
 def _verify_hold_gauge() -> dict[str, float]:

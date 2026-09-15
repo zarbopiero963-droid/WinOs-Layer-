@@ -684,3 +684,46 @@ pytest tests/unit/test_lock_order_n045.py tests/security/test_capability_verific
 ```
 
 Full installed W/L H63-N045 not claimed PASS here (MANUAL_ONLY / #21).
+
+
+## N046 — Budget risorse e recovery runtime
+
+Contratto (#67 / H63-N046, B-OBS, Q12/Q15): quote per principal/app;
+cancellation; shutdown e restart **senza worker/subscriber sopravvissuti**;
+due istanze store/porta. Coverage: R02 R05 R39 R49 W002 L002 G09 G17 G19.
+Out of scope: N047+, N005 D6, chiusura #67/#63/#21, claim H63-N046
+installed W/L PASS.
+
+**Teardown del ciclo.** Il `lifespan` restituisce le risorse del ciclo:
+ferma i subscriber con il sentinel di STOP e sgancia il singleton del bus
+(`reset_event_bus`), poi rilascia il lock di istanza. Prima il bus
+sopravviveva al ciclo, quindi un subscriber aperto nel ciclo precedente
+leggeva gli eventi di quello nuovo e il ciclo nuovo ereditava la history
+del vecchio. `server.shutdown` riporta `subscribers_released` e
+`instance_lock_released`.
+
+**Quota per principal.** `ConcurrencyGate` applica due tetti: quello
+globale di N013 e uno per principal (`WINOS_MAX_CONCURRENT_PER_PRINCIPAL`,
+default 8, ridotto al globale se superiore). L'identita' e' il digest
+SHA-256 della chiave intera (`principal_key`), non i primi 8 caratteri
+usati dal rate limiter: due chiavi con lo stesso prefisso sono principal
+distinti. Identita' assente => secchio anonimo unico, mai una quota
+illimitata per chi non si identifica.
+
+**Cancellation.** Gia' corretta prima di N046: il rilascio sta nel
+`finally` del middleware e vale anche su `CancelledError`. Verificata, non
+dichiarata per memoria, e bloccata da un test di regressione.
+
+**Due istanze sullo stesso store.** `core/runtime/instance_lock.py` prende
+un lock esclusivo sulla cartella dei manifest prima di ripristinarli. La
+liveness si decide sul **PID, mai sull'orologio**: un salto di clock non
+rilascia il lock di un processo vivo (caso H63-N046) e non ne trattiene uno
+di un processo morto. Lock di un PID morto o file malformato => recuperato;
+lock di un processo vivo => avvio rifiutato, mai rubato. Disattivabile con
+`WINOS_SINGLE_INSTANCE_LOCK=false`, che riapre esplicitamente il difetto.
+
+```bash
+pytest tests/unit/test_runtime_budget_n046.py -q
+```
+
+Full installed W/L H63-N046 not claimed PASS here (MANUAL_ONLY / #21).

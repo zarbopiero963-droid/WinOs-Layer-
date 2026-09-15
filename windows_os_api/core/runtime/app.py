@@ -23,6 +23,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # N046: il lock di istanza si prende PRIMA di toccare lo store. Se lo
+        # prendessimo dopo aver ripristinato gli adapter, la seconda istanza
+        # avrebbe gia' letto (e potrebbe gia' riscrivere) i manifest della prima.
+        instance_lock = None
+        if settings.single_instance_lock:
+            from windows_os_api.apps.adapters.store import store_dir
+            from windows_os_api.core.runtime.instance_lock import InstanceLock
+
+            instance_lock = InstanceLock(store_dir())
+            instance_lock.acquire()
         try:
             from windows_os_api.apps.ai.provider import sync_llm_bridge
             sync_llm_bridge()
@@ -49,22 +59,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.viewer_api_keys,
         )
         configured_keys = sum(1 for lst in key_lists for k in (lst or []) if k)
-        get_audit_logger().log(
-            "server.startup",
-            subject="system",
-            detail={
-                "version": __version__,
-                "host": settings.effective_host(),
-                "adapters_restored": adapters_report["restored"],
-                "adapters_skipped": adapters_report["skipped"],
-                "require_auth": settings.require_auth,
-                "configured_api_keys": configured_keys,
-            },
-        )
-        get_metrics().incr("server.starts")
+        try:
+            get_audit_logger().log(
+                "server.startup",
+                subject="system",
+                detail={
+                    "version": __version__,
+                    "host": settings.effective_host(),
+                    "adapters_restored": adapters_report["restored"],
+                    "adapters_skipped": adapters_report["skipped"],
+                    "require_auth": settings.require_auth,
+                    "configured_api_keys": configured_keys,
+                },
+            )
+            get_metrics().incr("server.starts")
+        except BaseException:
+            # N046 — START fallito: nessuna sessione parzialmente attiva. L'audit
+            # di avvio e' fail-closed (N042), quindi puo' fermare l'avvio: senza
+            # questo rilascio il lock resterebbe su uno store di un runtime che
+            # non e' mai partito, e nessuna istanza potrebbe piu' prenderlo
+            # finche' il processo resta vivo.
+            if instance_lock is not None:
+                instance_lock.release()
+            raise
         try:
             yield
         finally:
+            # N046 — un ciclo runtime possiede le proprie risorse e le restituisce
+            # tutte qui. Lasciare vivo il bus di processo significa che un
+            # subscriber aperto nel ciclo precedente continua a leggere gli eventi
+            # del ciclo nuovo: un client WebSocket di ieri sul runtime di oggi.
+            # `reset_event_bus` manda il sentinel di STOP ai subscriber (non li
+            # uccide a meta' lettura) e sgancia il singleton, cosi' il ciclo
+            # successivo ne costruisce uno vuoto.
+            released = 0
+            try:
+                from windows_os_api.core.events.bus import (
+                    get_event_bus,
+                    reset_event_bus,
+                )
+
+                released = get_event_bus().stats().subscribers
+                reset_event_bus()
+            except Exception as exc:  # noqa: BLE001
+                # Il teardown non deve mai nascondere lo shutdown: se il bus non
+                # si chiude, l'audit lo dice invece di far sparire l'evento.
+                released = -1
+                get_metrics().incr("server.teardown.errors")
+                teardown_error: str | None = str(exc)
+            else:
+                teardown_error = None
+            lock_released = False
+            if instance_lock is not None:
+                lock_released = instance_lock.release()
             # A service stop is only graceful if the ASGI lifespan reaches this
             # point. The Windows hard smoke reads this durable event after SCM
             # reports STOPPED, distinguishing CTRL_C_EVENT shutdown from a
@@ -72,7 +119,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             get_audit_logger().log(
                 "server.shutdown",
                 subject="system",
-                detail={"version": __version__},
+                detail={
+                    "version": __version__,
+                    "subscribers_released": released,
+                    "instance_lock_released": lock_released,
+                    "teardown_error": teardown_error,
+                },
             )
 
     app = FastAPI(
@@ -101,6 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # N013 process-wide limiter/gate (shared with deps.reset_limiter for tests).
     from windows_os_api.api.rest.deps import get_concurrency_gate, get_limiter
+    from windows_os_api.core.security.rate_limit import principal_key
 
     _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
 
@@ -160,9 +213,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 content={"detail": "Rate limit exceeded"},
             )
 
-        # --- concurrency quota ---
+        # --- concurrency quota (globale N013 + per principal N046) ---
         gate = get_concurrency_gate(settings)
-        if not gate.try_acquire():
+        # L'identita' usata qui non e' quella autenticata: l'auth vive nelle
+        # dependency, dopo il middleware. Il budget deve decidere prima, quindi
+        # usa la stessa coppia peer/chiave del rate limiter — ma sulla chiave
+        # intera, non sui primi 8 caratteri (vedi `principal_key`).
+        principal = principal_key(peer, api_key)
+        if not gate.try_acquire(principal):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Concurrency limit exceeded"},
@@ -180,7 +238,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             metrics.incr("http.responses.5xx")
             raise
         finally:
-            gate.release()
+            # Stesso principal dell'acquire, e dentro il `finally`: uno slot non
+            # rilasciato non torna indietro e consuma la quota per sempre.
+            gate.release(principal)
             elapsed = (time.perf_counter() - start) * 1000
             metrics.timing("http.latency_ms", elapsed)
             if response is not None:
