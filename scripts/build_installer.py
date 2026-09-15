@@ -3,7 +3,8 @@
 
 On Linux: validate + checksums always work; build-portable produces a Linux one-file
 smoke binary (or documents windows-only if PyInstaller missing). package-linux wraps
-the ELF + installer/linux/* into winos-api-portable-linux.zip/.tar.gz.
+the ELF + installer/linux/* into zip/tar.gz and (N036) deb/rpm/AppImage.
+Flatpak is out of scope (#64).
 
 Setup.exe requires Windows + Inno Setup (ISCC) — use GHA windows-latest
 (see .github/workflows/build.yml / build-linux.yml).
@@ -210,6 +211,48 @@ def validate(verbose: bool = True) -> dict[str, Any]:
             errors.append("install.sh must mention --api-key-file (N035)")
         if not checks["linux_install_backend_auto"]:
             errors.append("install.sh must mention WINOS_BACKEND=auto (N035)")
+
+    # N036 — deb/rpm/AppImage packaging templates + upgrade lifecycle flags
+    # Load N036 helpers from scripts/ next to this file (not ROOT — tests may stub ROOT)
+    import importlib.util
+
+    _lpf = Path(__file__).resolve().parent / "linux_package_formats.py"
+    validate_packaging_templates = None  # type: ignore[assignment]
+    required_packaging_files = None  # type: ignore[assignment]
+    if _lpf.is_file():
+        _spec = importlib.util.spec_from_file_location("linux_package_formats", _lpf)
+        if _spec and _spec.loader:
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            validate_packaging_templates = _mod.validate_packaging_templates
+            required_packaging_files = _mod.required_packaging_files
+
+    if validate_packaging_templates is not None:
+        pkg_errs = validate_packaging_templates(LINUX_INSTALLER)
+        checks["linux_packaging_templates"] = not pkg_errs
+        for e in pkg_errs:
+            errors.append(e)
+        req = required_packaging_files(LINUX_INSTALLER)
+        for key, p in req.items():
+            checks[f"n036_{key}"] = p.is_file()
+    else:
+        checks["linux_packaging_templates"] = False
+        errors.append("scripts/linux_package_formats.py missing (N036)")
+
+    if install_sh.is_file():
+        sh2 = _read(install_sh)
+        checks["linux_install_upgrade_flag"] = "--upgrade" in sh2 and "UPGRADE_MODE" in sh2
+        checks["linux_install_preserve_key_on_upgrade"] = (
+            "api_key.txt will be preserved" in sh2 or "UPGRADE_MODE" in sh2
+        )
+        if not checks["linux_install_upgrade_flag"]:
+            errors.append("install.sh must support --upgrade (N036)")
+    uninstall_sh = LINUX_INSTALLER / "uninstall.sh"
+    if uninstall_sh.is_file():
+        ush = _read(uninstall_sh)
+        checks["linux_uninstall_keep_data"] = "--keep-data" in ush
+        if not checks["linux_uninstall_keep_data"]:
+            errors.append("uninstall.sh must support --keep-data (N036)")
 
     # Localhost firewall note in README
     readme = ROOT / "installer" / "README.md"
@@ -465,11 +508,12 @@ def package_linux(
     build_if_missing: bool = False,
     formats: tuple[str, ...] = ("zip", "tar.gz"),
 ) -> int:
-    """Package Linux portable zip/tar.gz with binary + installer/linux/* + VERSION.
+    """Package Linux portable zip/tar.gz and N036 deb/rpm/AppImage.
 
     Requires dist/winos-api (or builds portable first when build_if_missing=True).
     Linux package = FastAPI LinuxBackend / real OS server (WINOS_BACKEND=auto),
     not a Windows emulator. FakeBackend remains an optional fixture only.
+    Flatpak is out of scope (#64).
     """
     v = validate(verbose=False)
     if not v["ok"]:
@@ -510,7 +554,10 @@ def package_linux(
     print(f"formats={formats} stage={stage}")
 
     if dry_run:
-        print("dry-run: not writing zip/tar.gz")
+        print("dry-run: not writing zip/tar.gz/deb/rpm/AppImage")
+        native = sorted({"deb", "rpm", "appimage"}.intersection(formats))
+        if native:
+            print(f"dry-run: would also build native formats: {native}")
         return 0
 
     if stage.exists():
@@ -566,6 +613,62 @@ def package_linux(
         print(f"wrote {tgz_path} ({tgz_path.stat().st_size} bytes)")
         produced.append(tgz_path)
 
+    # N036 native packages
+    native = {"deb", "rpm", "appimage"}
+    if native.intersection(formats):
+        import importlib.util
+        import platform as _platform
+
+        _lpf_path = Path(__file__).resolve().parent / "linux_package_formats.py"
+        _spec = importlib.util.spec_from_file_location("linux_package_formats", _lpf_path)
+        assert _spec and _spec.loader
+        lpf = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(lpf)
+
+        machine = _platform.machine() or "x86_64"
+        unit_src = LINUX_INSTALLER / "winos-api.service"
+        if dry_run:
+            print("dry-run: would build", sorted(native.intersection(formats)))
+        else:
+            if "deb" in formats:
+                deb_path = lpf.build_deb(
+                    binary=binary,
+                    version=version,
+                    arch=machine,
+                    linux_installer=LINUX_INSTALLER,
+                    dist=DIST,
+                    unit_src=unit_src,
+                    dry_run=False,
+                )
+                print(f"wrote {deb_path} ({deb_path.stat().st_size} bytes)")
+                produced.append(deb_path)
+            if "rpm" in formats:
+                rpm_path = lpf.build_rpm(
+                    binary=binary,
+                    version=version,
+                    arch=machine,
+                    linux_installer=LINUX_INSTALLER,
+                    dist=DIST,
+                    unit_src=unit_src,
+                    dry_run=False,
+                )
+                print(f"wrote {rpm_path} ({rpm_path.stat().st_size} bytes)")
+                produced.append(rpm_path)
+                spec_side = DIST / f"winos-api-{version}-1.spec"
+                if spec_side.is_file():
+                    produced.append(spec_side)
+            if "appimage" in formats:
+                app_path = lpf.build_appimage(
+                    binary=binary,
+                    version=version,
+                    arch=machine,
+                    linux_installer=LINUX_INSTALLER,
+                    dist=DIST,
+                    dry_run=False,
+                )
+                print(f"wrote {app_path} ({app_path.stat().st_size} bytes)")
+                produced.append(app_path)
+
     # Also keep a copy of the raw binary referenced in checksums
     checksum_targets = list(produced)
     if binary.is_file():
@@ -588,7 +691,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("build-installer", help="Compile Inno Setup (Windows + ISCC)")
     p_linux = sub.add_parser(
         "package-linux",
-        help="Zip/tar.gz Linux portable + installer/linux + VERSION",
+        help="Linux portable zip/tar.gz + N036 deb/rpm/AppImage",
     )
     p_linux.add_argument(
         "--build",
@@ -599,9 +702,9 @@ def main(argv: list[str] | None = None) -> int:
         "--format",
         dest="formats",
         nargs="+",
-        choices=("zip", "tar.gz", "tgz"),
+        choices=("zip", "tar.gz", "tgz", "deb", "rpm", "appimage"),
         default=["zip", "tar.gz"],
-        help="Archive formats to produce (default: zip tar.gz)",
+        help="Formats to produce (default: zip tar.gz; N036 also: deb rpm appimage)",
     )
     p_sum = sub.add_parser("checksums", help="Write sha256 for dist/installer artifacts")
     p_sum.add_argument("files", nargs="*", help="Optional explicit files")

@@ -511,3 +511,15 @@ python scripts/build_installer.py validate
 
 Full installed L H63-N035 not claimed PASS here (MANUAL_ONLY / #21).
 
+
+## N036 — Pacchetti Linux e compatibilità upgrade
+
+Contratto (#67 / H63-N036, B-PKG, Q01/Q14): produrre **deb / rpm / AppImage** con metadati e lifecycle coerenti (install/upgrade/uninstall); preservare ``api_key.txt`` su upgrade; ``install.sh --upgrade`` + ``uninstall.sh --keep-data``; templates sotto ``installer/linux/packaging/``; Flatpak resta proposta #64 (non implementato). Coverage: R01 R41 R44 L093 G03. Out of scope: N037 signing, Flatpak, secrets, bypass gates, chiusura #67/#63/#21, N005 D6.
+
+```bash
+pytest tests/unit/test_linux_packages_n036.py tests/unit/test_installer_linux_n035.py tests/unit/test_build_installer.py -q
+python scripts/build_installer.py validate
+python scripts/build_installer.py package-linux --format deb rpm appimage
+```
+
+Full installed L H63-N036 (ogni formato su distro reale) not claimed PASS here (MANUAL_ONLY / #21).

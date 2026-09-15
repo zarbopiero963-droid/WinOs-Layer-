@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# AppImage entry — LinuxBackend / WINOS_BACKEND=auto; localhost default.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+export WINOS_BACKEND="${WINOS_BACKEND:-auto}"
+BIN="${HERE}/usr/bin/winos-api"
+if [[ ! -x "${BIN}" ]]; then
+  echo "ERROR: winos-api binary missing inside AppImage" >&2
+  exit 1
+fi
+# Prefer external key file if set; never print secrets.
+exec "${BIN}" "$@"

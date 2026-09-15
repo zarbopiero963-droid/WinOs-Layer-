@@ -29,8 +29,23 @@ Registry API maps to `~/.config/winos-api/registry.json` for compatibility.
 
 - `winos-api` — portable binary
 - `installer/linux/` — `install.sh`, `uninstall.sh`, `winos-api.service`
+- `installer/linux/packaging/` — N036 **deb** / **rpm** / **AppImage** templates (Flatpak: #64 only)
 - `VERSION` — package version from `pyproject.toml`
 - This `LINUX.md`
+
+## Native packages (N036)
+
+```bash
+python scripts/build_installer.py build-portable
+python scripts/build_installer.py package-linux --format deb rpm appimage
+# → dist/winos-api_<ver>_amd64.deb
+# → dist/winos-api-<ver>-1.x86_64.rpm (+ .spec)
+# → dist/winos-api-<ver>-x86_64.AppImage
+```
+
+Upgrade (portable install.sh): `./installer/linux/install.sh --user --upgrade`  
+preserves `api_key.txt`. Deb `postrm` remove keeps data; `purge` deletes.  
+Real distro install/upgrade/uninstall → MANUAL_ONLY / issue #21.
 
 ## Quick start
 

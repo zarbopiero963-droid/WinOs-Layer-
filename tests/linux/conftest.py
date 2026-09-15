@@ -426,13 +426,33 @@ def event_recorder(window_manager, tmp_path):
             )
 
         # `windowactivate` above may have hung or been ignored. Read the focus
-        # back instead of trusting it, and ask once more if it went elsewhere:
-        # without focus the recorder receives no keystroke, and the test would
-        # report that the input layer delivered nothing.
+        # back instead of trusting it. Under Xvfb+Openbox on a loaded runner the
+        # first activate often loses the race to another mapped client; retry
+        # raise/activate/focus (and a last-ditch click-to-focus) before failing,
+        # so a transient focus steal does not red the whole Linux job.
         if not wait_for_focus(found, timeout=3.0, title=title):
-            focus_command = "windowactivate" if managed else "windowfocus"
-            xdo([focus_command, str(found)], timeout=5)
-            if not wait_for_focus(found, timeout=5.0, title=title):
+            focused = False
+            for attempt in range(4):
+                if managed:
+                    xdo(["windowraise", str(found)], timeout=5)
+                    xdo(["windowactivate", "--sync", str(found)], timeout=5)
+                xdo(["windowfocus", "--sync", str(found)], timeout=5)
+                if wait_for_focus(found, timeout=4.0, title=title):
+                    focused = True
+                    break
+                # Pointer click inside the measured rect can steal focus when the
+                # WM ignored activate; geometry may still be the default size.
+                rect_now = window_geometry(found) or rect
+                if rect_now:
+                    cx = rect_now["x"] + max(rect_now["width"] // 2, 1)
+                    cy = rect_now["y"] + max(rect_now["height"] // 2, 1)
+                    xdo(["mousemove", "--sync", str(cx), str(cy)], timeout=5)
+                    xdo(["click", "1"], timeout=5)
+                    if wait_for_focus(found, timeout=3.0, title=title):
+                        focused = True
+                        break
+                time.sleep(0.2 * (attempt + 1))
+            if not focused:
                 proc.kill()
                 pytest.fail(f"the xev window {title!r} never took the input focus")
 

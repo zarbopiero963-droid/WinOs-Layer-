@@ -1,0 +1,30 @@
+#!/bin/sh
+# remove: keep /opt/winos-api/api_key.txt; purge: delete DEST.
+set -e
+DEST=/opt/winos-api
+UNIT=/etc/systemd/system/winos-api.service
+
+case "$1" in
+  remove)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+    fi
+    rm -f "$UNIT" 2>/dev/null || true
+    # Keep DEST/api_key.txt and VERSION for upgrade/reinstall compat (R41/L093).
+    if [ -d "$DEST" ]; then
+      echo "winos-api removed; preserved $DEST (api_key/VERSION) — use purge to delete"
+    fi
+    ;;
+  purge)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl disable winos-api 2>/dev/null || true
+      systemctl daemon-reload || true
+    fi
+    rm -f "$UNIT" 2>/dev/null || true
+    rm -rf "$DEST" 2>/dev/null || true
+    echo "winos-api purged ($DEST removed)"
+    ;;
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+esac
+exit 0
