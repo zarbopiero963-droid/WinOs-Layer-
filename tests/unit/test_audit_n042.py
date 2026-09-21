@@ -271,3 +271,24 @@ def test_concurrent_writes_preserve_chain(tmp_path: Path):
     report = log.verify_integrity()
     assert report.ok is True
     assert report.entries_checked == 80
+
+
+def test_n042_correlation_context_reused_across_logs(tmp_path: Path):
+    from windows_os_api.core.security.audit import (
+        bind_correlation,
+        clear_correlation,
+        AuditLogger,
+    )
+
+    path = tmp_path / "corr.jsonl"
+    log = AuditLogger(path, integrity_secret=DEFAULT_INTEGRITY_SECRET)
+    bind_correlation(request_id="req-shared", execution_id="exec-shared")
+    try:
+        a = log.log("n042.corr.a", subject="s")
+        b = log.log("n042.corr.b", subject="s")
+    finally:
+        clear_correlation()
+    assert a["request_id"] == b["request_id"] == "req-shared"
+    assert a["execution_id"] == b["execution_id"] == "exec-shared"
+    c = log.log("n042.corr.c", subject="s")
+    assert c["request_id"] != "req-shared"

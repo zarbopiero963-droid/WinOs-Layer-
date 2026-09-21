@@ -207,6 +207,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if capped is not None:
             return capped
 
+        from windows_os_api.core.security.audit import bind_correlation, clear_correlation
+
+        bind_correlation(
+            request_id=request.headers.get("x-request-id") or None,
+            execution_id=request.headers.get("x-execution-id") or None,
+        )
+        try:
+            return await _metrics_and_remote_guard_inner(
+                request, call_next, settings, _peer_host, _LOOPBACK
+            )
+        finally:
+            clear_correlation()
+
+    async def _metrics_and_remote_guard_inner(
+        request, call_next, settings, _peer_host, _LOOPBACK
+    ):
         peer = _peer_host(request)
         # Forwarded headers are observed only to refuse spoof-as-loopback claims
         # from a non-loopback peer (never used to *grant* access).
