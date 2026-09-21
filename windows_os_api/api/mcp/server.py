@@ -347,10 +347,14 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         return {"app_id": a.app_id, "actions": [x.name for x in a.actions]}
     if name == "invoke_action":
         # N017/N020: never create adapters implicitly — shared gateway only.
+        from windows_os_api.core.runtime.config import get_settings
+
         outcome = execute_via_gateway(
             app_id=arguments["app_id"],
             action_name=arguments["action"],
             params=arguments.get("params") or {},
+            auth=current_mcp_auth(),
+            require_principal=bool(get_settings().require_auth),
         )
         return outcome
     if name == "verify_action":

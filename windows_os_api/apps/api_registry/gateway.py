@@ -45,6 +45,8 @@ class ExecutionCode(str, Enum):
     APP_REQUIRED = "APP_REQUIRED"
     ENGINE_DENIED = "ENGINE_DENIED"
     ENGINE_ERROR = "ENGINE_ERROR"
+    PRINCIPAL_REQUIRED = "PRINCIPAL_REQUIRED"
+    PRINCIPAL_REVOKED = "PRINCIPAL_REVOKED"
 
 
 @dataclass(frozen=True)
@@ -239,6 +241,8 @@ def authorize_execution(
     now: float | None = None,
     require_registry_record: bool = False,
     adapter_lookup: Any | None = None,
+    auth: Any | None = None,
+    require_principal: bool = False,
 ) -> AuthorizationDecision:
     """Decide whether an invocation may proceed.
 
@@ -256,6 +260,26 @@ def authorize_execution(
         Optional ``callable(app_id) -> adapter|None`` (tests). Default: ``get_adapter``.
     """
     clock = time.time() if now is None else now
+    # N017: when a principal is supplied, re-check revoke; optional hard require.
+    if auth is not None or require_principal:
+        from fastapi import HTTPException
+        from windows_os_api.core.security.auth import assert_active
+
+        if auth is None:
+            return _deny(
+                ExecutionCode.PRINCIPAL_REQUIRED,
+                "execution gateway requires an authenticated principal",
+                block_kind=BLOCK_SECURITY,
+            )
+        try:
+            assert_active(auth)
+        except HTTPException:
+            return _deny(
+                ExecutionCode.PRINCIPAL_REVOKED,
+                "principal revoked or session inactive",
+                block_kind=BLOCK_SECURITY,
+            )
+
     reg = registry if registry is not None else get_api_registry()
     max_age = getattr(reg, "_verification_max_age_sec", DEFAULT_VERIFICATION_MAX_AGE_SEC)
     lookup = adapter_lookup if adapter_lookup is not None else get_adapter
@@ -364,6 +388,8 @@ def execute_via_gateway(
     require_registry_record: bool = False,
     adapter_lookup: Any | None = None,
     invoke: Any | None = None,
+    auth: Any | None = None,
+    require_principal: bool = False,
 ) -> dict[str, Any]:
     """Authorize then invoke. Never calls ``create_adapter``.
 
@@ -379,6 +405,8 @@ def execute_via_gateway(
         now=now,
         require_registry_record=require_registry_record,
         adapter_lookup=adapter_lookup,
+        auth=auth,
+        require_principal=require_principal,
     )
     base = decision.to_dict()
     if not decision.allowed:
