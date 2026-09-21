@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+
 from windows_os_api.apps.adapters.engine import (
     create_adapter,
     get_adapter,
@@ -454,3 +455,30 @@ def test_authorization_decision_exportable():
     assert AuthorizationDecision is not None
     assert callable(authorize_execution)
     assert callable(execute_via_gateway)
+
+
+def test_gateway_requires_principal_when_auth_required(monkeypatch):
+    monkeypatch.setenv("WINOS_REQUIRE_AUTH", "true")
+    from windows_os_api.core.runtime.config import get_settings
+    get_settings.cache_clear()
+    from windows_os_api.apps.api_registry.gateway import execute_via_gateway, ExecutionCode
+
+    out = execute_via_gateway(app_id="x", action_name="y", params={}, require_principal=True)
+    assert out.get("ok") is False
+    assert out.get("code") == ExecutionCode.PRINCIPAL_REQUIRED.value
+    get_settings.cache_clear()
+
+
+def test_gateway_accepts_active_principal(monkeypatch):
+    monkeypatch.setenv("WINOS_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("WINOS_OPERATOR_API_KEYS", '["n017-op-key"]')
+    from windows_os_api.core.runtime.config import Settings, get_settings
+    get_settings.cache_clear()
+    from windows_os_api.core.security.auth import build_auth_context
+    from windows_os_api.apps.api_registry.gateway import authorize_execution
+
+    auth = build_auth_context("n017-op-key", Settings(operator_api_keys=["n017-op-key"], require_auth=True))
+    # Missing adapter → operational, but principal gate must pass first
+    d = authorize_execution(app_id="no-such", action_name="x", auth=auth)
+    assert d.code != "PRINCIPAL_REQUIRED"
+    get_settings.cache_clear()

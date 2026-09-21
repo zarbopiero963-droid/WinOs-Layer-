@@ -88,6 +88,7 @@ def invoke(app_id: str, action_name: str, body: InvokeBody, auth: AuthContext = 
         app_id=app_id,
         action_name=action_name,
         params=body.params,
+        auth=auth,
     )
     http_status = gateway_http_status(outcome)
     if not outcome.get("ok"):

@@ -11,6 +11,13 @@ import re
 from typing import Any, Iterable, Mapping
 
 from windows_os_api.apps.api_registry.gateway import execute_via_gateway
+
+
+def _mcp_auth():
+    """Lazy import to avoid mcp_tools ↔ mcp.server circular import."""
+    from windows_os_api.api.mcp.server import current_mcp_auth
+
+    return current_mcp_auth()
 from windows_os_api.apps.api_registry.model import (
     ApiRecord,
     ApiRegistry,
@@ -156,5 +163,6 @@ def call_registry_mcp_tool(
         action_name=action_name or None,
         params=params if isinstance(params, dict) else {},
         registry=registry,
+        auth=_mcp_auth(),
     )
     return outcome

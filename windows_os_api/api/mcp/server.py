@@ -347,10 +347,12 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         return {"app_id": a.app_id, "actions": [x.name for x in a.actions]}
     if name == "invoke_action":
         # N017/N020: never create adapters implicitly — shared gateway only.
+        # Principal forwarded when bound (N011/N017); mandatory MCP auth → N020.
         outcome = execute_via_gateway(
             app_id=arguments["app_id"],
             action_name=arguments["action"],
             params=arguments.get("params") or {},
+            auth=current_mcp_auth(),
         )
         return outcome
     if name == "verify_action":
