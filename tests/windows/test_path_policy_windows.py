@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from windows_os_api.os.filesystem.service import _reject_traversal
+from windows_os_api.os.filesystem.paths import PathRejected, normalize_user_path
 
 pytestmark = [
     pytest.mark.windows,
@@ -24,12 +24,12 @@ pytestmark = [
     ],
 )
 def test_reject_windows_traversal_shapes(bad):
-    with pytest.raises(PermissionError):
-        _reject_traversal(bad)
+    with pytest.raises(PathRejected):
+        normalize_user_path(bad)
 
 
 def test_allow_normal_windows_paths():
     # Relative sandbox-style paths without ..
-    _reject_traversal(r"sandbox\notes.txt")
-    _reject_traversal(r"C:\Users\Public\Documents\readme.txt")
-    _reject_traversal(".")
+    normalize_user_path(r"sandbox\notes.txt")
+    normalize_user_path(r"C:\Users\Public\Documents\readme.txt")
+    normalize_user_path(".")
