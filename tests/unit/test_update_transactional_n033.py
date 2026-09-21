@@ -296,3 +296,40 @@ def test_h63_n033_rollback_deletes_files_introduced_by_update(tmp_path: Path):
     assert rb["ok"] is True
     assert _snapshot(install) == expected
     assert not (install / "brand_new.bin").exists()
+
+
+def test_h63_n033_missing_hooks_fail_closed(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB"})
+    result = mgr.apply_linux_transactional(pkg)
+    assert result["ok"] is False
+    assert "hooks missing" in result.get("error", "").lower()
+    assert (install / "app.txt").read_text(encoding="utf-8") == "vA"
+
+
+def test_h63_n033_hook_exception_rolls_back(tmp_path: Path):
+    install = tmp_path / "install"
+    backup = tmp_path / "backup"
+    install.mkdir()
+    (install / "app.txt").write_text("vA", encoding="utf-8")
+    mgr = UpdateManager(install, backup)
+    expected = _snapshot(install)
+    pkg = _dir_package(tmp_path, "2.0.0", {"app.txt": b"vB", "new.bin": b"X"})
+
+    def boom_start() -> dict[str, Any]:
+        raise RuntimeError("SCM start exploded")
+
+    result = mgr.apply_linux_transactional(
+        pkg,
+        stop_service=lambda: {"ok": True},
+        start_service=boom_start,
+        health_check=lambda: {"ok": True, "status": "ok"},
+    )
+    assert result["ok"] is False
+    assert "raised" in result.get("error", "").lower() or "explod" in result.get("error", "").lower()
+    assert result.get("rolled_back") is True
+    assert _snapshot(install) == expected
