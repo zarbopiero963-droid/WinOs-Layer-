@@ -135,3 +135,74 @@ def test_h63_n030_disk_tamper_skips_load(trust_env):
     result = load_persisted_adapters()
     assert "crm" not in result["restored"]
     assert any(s["code"] == "TRUST_INSUFFICIENT" for s in result["skipped"])
+
+
+def test_h63_n030_tamper_demotes_registry_verified_apis(trust_env):
+    """N030: tamper withdraws VERIFIED registry records for the app."""
+    import time
+
+    from windows_os_api.apps.api_registry.model import (
+        ApiStatus,
+        issue_verification_proof,
+        reset_api_registry,
+    )
+    from windows_os_api.api.rest.apis import _registry_openapi_document
+
+    ks, _tmp = trust_env
+    priv = _key(ks)
+    body, _sig = _signed_manifest(priv)
+    adapter = Adapter(
+        app_id="crm",
+        app_name="crm",
+        hwnd=1001,
+        actions=[
+            AdapterAction(
+                name="click_ok",
+                description="ok",
+                automation_id="btnOk",
+                control_type="Button",
+                params=[],
+                risk="low",
+                verification={"state": "VERIFIED", "verification_id": "vid-1"},
+            )
+        ],
+        trust_level="publisher",
+        signature=body["signature"],
+        publisher="Contoso",
+    )
+    _adapters["crm"] = adapter
+
+    reg = reset_api_registry()
+    rec = reg.register(
+        {
+            "name": "click_ok",
+            "method": "POST",
+            "path": "/v1/apps/crm/actions/click_ok",
+            "source": "virtual_adapter",
+            "application_id": "crm",
+            "capability": "crm.click_ok",
+            "status": "VERIFIED",
+            "verification_id": issue_verification_proof("vid-n030-reg"),
+            "last_verified_at": time.time(),
+            "permissions": [],
+            "description": "x",
+            "authentication_required": True,
+        }
+    )
+    assert rec.status is ApiStatus.VERIFIED
+    assert "/v1/apps/crm/actions/click_ok" in _registry_openapi_document(
+        visible_app_ids=None
+    )["paths"]
+
+    adapter.actions[0].automation_id = "btnOk-TAMPERED"
+    out = invoke_action("crm", "click_ok")
+    assert out.get("ok") is False
+    assert out.get("tampered") is True
+    assert rec.id in (out.get("registry_demoted") or [])
+
+    stored = reg.get(rec.id)
+    assert stored is not None
+    assert stored.status is ApiStatus.DISABLED
+    assert stored.verification_id is None
+    doc = _registry_openapi_document(visible_app_ids=None)
+    assert "/v1/apps/crm/actions/click_ok" not in doc["paths"]
