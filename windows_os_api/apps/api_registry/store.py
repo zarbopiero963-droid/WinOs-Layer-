@@ -235,6 +235,15 @@ def _ingest_records(
         # Strip claimed id — register() recomputes; status re-gated.
         payload = dict(item)
         payload.pop("id", None)
+        # N014/N015: store integrity is the independent evidence carrier across
+        # process restart. Re-admit verification_ids from a trusted store into
+        # the proof ledger before authorize runs (live invent-via-register still
+        # demotes without issue_verification_proof).
+        vid = payload.get("verification_id")
+        if isinstance(vid, str) and vid.strip():
+            from windows_os_api.apps.api_registry.model import issue_verification_proof
+
+            issue_verification_proof(vid.strip())
         try:
             registry.register(payload)
         except (RegistrationRejected, ValueError, TypeError, KeyError) as exc:

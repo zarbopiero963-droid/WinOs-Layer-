@@ -12,7 +12,7 @@ import pytest
 
 from windows_os_api.apps.api_registry import reset_api_registry
 from windows_os_api.apps.api_registry.api_test import run_api_test
-from windows_os_api.apps.api_registry.model import ApiStatus
+from windows_os_api.apps.api_registry.model import ApiStatus, issue_verification_proof
 
 
 def _base(**overrides):
@@ -203,7 +203,7 @@ def test_create_simulate_evidence_publish_verified(client, admin_headers, regist
     # Simulate successful verify evidence without going through live UI postcondition
     payload = registry.get(api_id).to_dict()
     payload["status"] = "PARTIAL"
-    payload["verification_id"] = "ver_n024_sim"
+    payload["verification_id"] = issue_verification_proof("ver_n024_sim")
     payload["last_verified_at"] = time.time()
     registry.register(payload)
     mid = registry.get(api_id)
@@ -223,7 +223,7 @@ def test_disable_after_publish_and_try_fail_closed(client, admin_headers, auth_h
             path="/v1/apps/example/n024-dis",
             capability="ex.n024_dis",
             status="VERIFIED",
-            verification_id="ver_n024_dis",
+            verification_id=issue_verification_proof("ver_n024_dis"),
             last_verified_at=time.time(),
         )
     )

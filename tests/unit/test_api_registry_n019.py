@@ -14,6 +14,7 @@ from windows_os_api.apps.adapters.engine import (
     verify_and_record,
 )
 from windows_os_api.apps.api_registry.model import (
+    issue_verification_proof,
     ApiRegistry,
     ApiStatus,
     reset_api_registry,
@@ -49,7 +50,7 @@ def _register_verified(reg: ApiRegistry, **overrides):
         "application_id": "probe-app",
         "capability": "probe-app.search",
         "status": "VERIFIED",
-        "verification_id": "ver_n019_probe_1",
+        "verification_id": issue_verification_proof("ver_n019_probe_1"),
         "last_verified_at": now,
         "permissions": ["ui.read", "ui.control"],
         "authentication_required": True,

@@ -23,6 +23,8 @@ from windows_os_api.apps.api_registry import (
 from windows_os_api.apps.api_registry.model import (
     DEFAULT_VERIFICATION_MAX_AGE_SEC,
     authorize_verified_status,
+    issue_verification_proof,
+    clear_verification_proofs,
 )
 
 
@@ -194,16 +196,32 @@ def test_future_timestamp_treated_as_false_metadata():
 def test_fresh_verified_evidence_accepted():
     reg = get_api_registry()
     now = time.time()
+    vid = issue_verification_proof("verification_ok_001")
     rec = reg.register(
         _base(
             status="VERIFIED",
-            verification_id="verification_ok_001",
+            verification_id=vid,
             last_verified_at=now - 10,
         ),
         now=now,
     )
     assert rec.status is ApiStatus.VERIFIED
     assert rec.verification_id == "verification_ok_001"
+
+
+def test_invented_verification_id_and_timestamp_not_verified():
+    """Audit H63-N014: invented id+timestamp alone must not mint VERIFIED."""
+    reg = get_api_registry()
+    now = time.time()
+    rec = reg.register(
+        _base(
+            status="VERIFIED",
+            verification_id="invented-not-from-engine",
+            last_verified_at=now,
+        ),
+        now=now,
+    )
+    assert rec.status is ApiStatus.PARTIAL
     assert rec.last_verified_at == pytest.approx(now - 10)
 
 

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from windows_os_api.apps.api_registry import (
+    issue_verification_proof,
     API_REGISTRY_SCHEMA_VERSION,
     ApiRegistry,
     ApiStatus,
@@ -73,7 +74,7 @@ def test_round_trip_new_registry_keeps_same_id(store_tmpdir):
     rec = reg.register(
         _base(
             status="VERIFIED",
-            verification_id="verification_n015",
+            verification_id=issue_verification_proof("verification_n015"),
             last_verified_at=now,
         )
     )
@@ -298,7 +299,7 @@ def test_verified_only_with_registry_evidence_after_reload(store_tmpdir):
         adapter,
         registry_evidence={
             "demo.click_ok": {
-                "verification_id": "ver_independent_001",
+                "verification_id": issue_verification_proof("ver_independent_001"),
                 "last_verified_at": now,
             }
         },
