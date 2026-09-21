@@ -164,6 +164,5 @@ def call_registry_mcp_tool(
         params=params if isinstance(params, dict) else {},
         registry=registry,
         auth=_mcp_auth(),
-        require_principal=True,
     )
     return outcome
