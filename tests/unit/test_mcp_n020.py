@@ -23,6 +23,15 @@ from windows_os_api.apps.api_registry.model import (
 )
 
 
+
+def _mcp_params(extra: dict | None = None, **meta_extra) -> dict:
+    """Authenticated MCP params (N020 require_auth)."""
+    meta = {"api_key": "admin-key-change-me", **meta_extra}
+    params = dict(extra or {})
+    existing = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    params["_meta"] = {**meta, **existing}
+    return params
+
 @pytest.fixture(autouse=True)
 def _clean():
     reset_adapters()
@@ -76,7 +85,7 @@ def test_protocol_negotiation_accepts_supported_and_rejects_unknown():
 
 def test_tools_list_includes_verified_registry_tool_with_stable_name():
     rec, _ = _register_verified()
-    resp = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    resp = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": _mcp_params()})
     names = [t["name"] for t in resp["result"]["tools"]]
     expected = stable_mcp_tool_name(rec)
     assert expected in names
@@ -84,7 +93,7 @@ def test_tools_list_includes_verified_registry_tool_with_stable_name():
     assert tool["annotations"]["x-api-id"] == rec.id
     assert tool["annotations"]["x-verification-state"] == "VERIFIED"
     # twin list stable
-    resp2 = handle_request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    resp2 = handle_request({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": _mcp_params()})
     assert [t["name"] for t in resp["result"]["tools"]] == [
         t["name"] for t in resp2["result"]["tools"]
     ]
@@ -121,13 +130,13 @@ def test_runtime_revoke_removes_tool_and_blocks_call(tmp_sandbox):
         verification_id=verified["verification"]["verification_id"],
     )
     tool_name = stable_mcp_tool_name(rec)
-    listed = handle_request({"jsonrpc": "2.0", "id": 4, "method": "tools/list"})
+    listed = handle_request({"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": _mcp_params()})
     assert tool_name in [t["name"] for t in listed["result"]["tools"]]
 
     # Execute while VERIFIED — gateway path (adapter present)
     call = handle_request({
         "jsonrpc": "2.0", "id": 5, "method": "tools/call",
-        "params": {
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, 
             "name": tool_name,
             "arguments": {"params": {"value": "n020-effect"}},
         },
@@ -138,12 +147,12 @@ def test_runtime_revoke_removes_tool_and_blocks_call(tmp_sandbox):
 
     # Revoke
     reg.set_status(rec.id, ApiStatus.DISABLED)
-    listed2 = handle_request({"jsonrpc": "2.0", "id": 6, "method": "tools/list"})
+    listed2 = handle_request({"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": _mcp_params()})
     assert tool_name not in [t["name"] for t in listed2["result"]["tools"]]
 
     denied = handle_request({
         "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-        "params": {
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, 
             "name": tool_name,
             "arguments": {"params": {"value": "should-block"}},
         },
@@ -157,7 +166,7 @@ def test_invoke_action_does_not_implicitly_create_adapter():
     assert get_adapter("contoso-crm") is None
     resp = handle_request({
         "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-        "params": {
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, 
             "name": "invoke_action",
             "arguments": {"app_id": "contoso-crm", "action": "nope", "params": {}},
         },
@@ -169,3 +178,40 @@ def test_invoke_action_does_not_implicitly_create_adapter():
     body = json.loads(resp["result"]["content"][0]["text"])
     assert body.get("ok") is False
     assert body.get("created_adapter") is False
+
+
+def test_tools_list_requires_auth_when_require_auth():
+    _register_verified(application_id="private-app", capability="private-app.edit",
+                       path="/v1/apps/private-app/actions/edit", name="edit")
+    denied = handle_request({
+        "jsonrpc": "2.0", "id": 20, "method": "tools/list",
+        "params": {"_meta": {"app_scopes": ["different-app"]}},
+    })
+    assert denied["error"]["code"] == -32001
+    assert "authentication" in denied["error"]["message"].lower()
+
+
+def test_tools_list_hides_cross_app_when_scoped():
+    from windows_os_api.core.security.auth import get_auth_registry, reset_auth_registry
+
+    reset_auth_registry()
+    _register_verified(
+        application_id="private-app",
+        capability="private-app.edit",
+        path="/v1/apps/private-app/actions/edit",
+        name="edit",
+        verification_id=issue_verification_proof("ver_mcp_private"),
+    )
+    get_auth_registry().set_app_scopes("dev-key-change-me", ["different-app"])
+    # Client claims private-app in _meta — must not expand beyond principal scopes.
+    listed = handle_request({
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "tools/list",
+        "params": _mcp_params(
+            api_key="dev-key-change-me",
+            app_scopes=["private-app"],
+        ),
+    })
+    names = [t["name"] for t in listed["result"]["tools"]]
+    assert not any("private_app" in n for n in names)

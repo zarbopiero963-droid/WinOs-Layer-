@@ -28,6 +28,15 @@ from windows_os_api.core.runtime.config import get_settings
 from windows_os_api.core.security.auth import get_auth_registry, reset_auth_registry
 
 
+
+def _mcp_params(extra: dict | None = None, **meta_extra) -> dict:
+    """Authenticated MCP params (N020 require_auth)."""
+    meta = {"api_key": "admin-key-change-me", **meta_extra}
+    params = dict(extra or {})
+    existing = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    params["_meta"] = {**meta, **existing}
+    return params
+
 @pytest.fixture(autouse=True)
 def _clean():
     reset_adapters()
@@ -220,7 +229,7 @@ def test_rest_mcp_same_capability_same_effect():
     tool_name = stable_mcp_tool_name(rec)
     mcp = handle_request({
         "jsonrpc": "2.0", "id": 9, "method": "tools/call",
-        "params": {"name": tool_name, "arguments": {"params": params}},
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, "name": tool_name, "arguments": {"params": params}},
     })
     assert "error" not in mcp, mcp
     mcp_out = json.loads(mcp["result"]["content"][0]["text"])
@@ -249,7 +258,7 @@ def test_rest_mcp_deny_parity_on_revoke():
     tool_name = stable_mcp_tool_name(rec)
     mcp = handle_request({
         "jsonrpc": "2.0", "id": 10, "method": "tools/call",
-        "params": {"name": tool_name, "arguments": {"params": {}}},
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, "name": tool_name, "arguments": {"params": {}}},
     })
     assert rest_out.get("ok") is False
     assert rest_out.get("denied") is True

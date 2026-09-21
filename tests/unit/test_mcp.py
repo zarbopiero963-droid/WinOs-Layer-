@@ -7,13 +7,22 @@ from windows_os_api.backends.factory import reset_backend
 from windows_os_api.apps.adapters.engine import reset_adapters
 from windows_os_api.api.mcp.server import handle_request, TOOLS
 
+
+def _mcp_params(extra: dict | None = None, **meta_extra) -> dict:
+    """Authenticated MCP params (N020 require_auth)."""
+    meta = {"api_key": "admin-key-change-me", **meta_extra}
+    params = dict(extra or {})
+    existing = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    params["_meta"] = {**meta, **existing}
+    return params
+
 def setup_function():
     get_settings.cache_clear()
     reset_backend()
     reset_adapters()
 
 def test_tools_list():
-    resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": _mcp_params()})
     assert resp["id"] == 1
     names = [t["name"] for t in resp["result"]["tools"]]
     assert "system_info" in names
@@ -26,7 +35,7 @@ def test_initialize_and_call():
     assert init["result"]["serverInfo"]["name"] == "winos-mcp"
     call = handle_request({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "system_info", "arguments": {}},
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, "name": "system_info", "arguments": {}},
     })
     assert "result" in call
     assert "content" in call["result"]
@@ -34,7 +43,7 @@ def test_initialize_and_call():
 def test_create_adapter_tool():
     resp = handle_request({
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-        "params": {"name": "create_adapter", "arguments": {"app_id": "contoso-crm"}},
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, "name": "create_adapter", "arguments": {"app_id": "contoso-crm"}},
     })
     assert "error" not in resp
     text = resp["result"]["content"][0]["text"]
@@ -44,7 +53,7 @@ def test_create_adapter_tool():
 def test_verify_action_tool_observes_and_rolls_back():
     created = handle_request({
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-        "params": {"name": "create_adapter", "arguments": {"app_id": "contoso-crm"}},
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, "name": "create_adapter", "arguments": {"app_id": "contoso-crm"}},
     })
     assert "error" not in created, created
     from windows_os_api.apps.adapters.engine import get_adapter
@@ -53,7 +62,7 @@ def test_verify_action_tool_observes_and_rolls_back():
     action = next(a for a in adapter.actions if a.control_type == "Edit")
     response = handle_request({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-        "params": {
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, 
             "name": "verify_action",
             "arguments": {"app_id": "contoso-crm", "action": action.name, "times": 2},
         },
@@ -68,7 +77,7 @@ def test_verify_action_tool_observes_and_rolls_back():
 def test_verify_action_tool_rejects_unbounded_repetitions():
     response = handle_request({
         "jsonrpc": "2.0", "id": 5, "method": "tools/call",
-        "params": {
+        "params": {"_meta": {"api_key": "admin-key-change-me"}, 
             "name": "verify_action",
             "arguments": {"app_id": "contoso-crm", "action": "any", "times": 11},
         },
