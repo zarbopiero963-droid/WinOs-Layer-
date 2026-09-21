@@ -431,6 +431,92 @@ def finalize_openapi_export(doc: Mapping[str, Any] | dict[str, Any]) -> dict[str
 
 
 
+
+def _template_segment_matches(template_seg: str, concrete_seg: str) -> bool:
+    if template_seg.startswith("{") and template_seg.endswith("}") and len(template_seg) > 2:
+        return bool(concrete_seg)
+    return template_seg == concrete_seg
+
+
+def path_matches_route_template(concrete_path: str, template_path: str) -> bool:
+    """True when *concrete_path* is an instance of a FastAPI/Starlette path template."""
+    c = (concrete_path or "").rstrip("/") or "/"
+    t = (template_path or "").rstrip("/") or "/"
+    if c == t:
+        return True
+    c_parts = c.split("/")
+    t_parts = t.split("/")
+    if len(c_parts) != len(t_parts):
+        return False
+    return all(_template_segment_matches(ts, cs) for ts, cs in zip(t_parts, c_parts))
+
+
+def _iter_router_route_templates(router: Any, prefix: str = "") -> list[tuple[frozenset[str], str]]:
+    """Walk APIRouter / _IncludedRouter and yield (methods, full_path_template)."""
+    out: list[tuple[frozenset[str], str]] = []
+    for route in getattr(router, "routes", []) or []:
+        cls = type(route).__name__
+        if cls == "_IncludedRouter":
+            ctx = getattr(route, "include_context", None)
+            sub = getattr(route, "original_router", None)
+            if sub is None:
+                continue
+            sub_prefix = prefix + (getattr(ctx, "prefix", None) or "")
+            out.extend(_iter_router_route_templates(sub, sub_prefix))
+            continue
+        methods = getattr(route, "methods", None)
+        rpath = getattr(route, "path", None)
+        if not methods or not isinstance(rpath, str):
+            continue
+        verbs = frozenset(
+            m.lower() for m in methods if str(m).upper() not in {"HEAD", "OPTIONS"}
+        )
+        if not verbs:
+            continue
+        out.append((verbs, prefix + rpath))
+    return out
+
+
+_HTTP_ROUTE_TEMPLATE_CACHE: list[tuple[frozenset[str], str]] | None = None
+
+
+def reset_http_route_template_cache() -> None:
+    """Test helper — clear cached REST templates after router mutations."""
+    global _HTTP_ROUTE_TEMPLATE_CACHE
+    _HTTP_ROUTE_TEMPLATE_CACHE = None
+
+
+def http_route_templates() -> list[tuple[frozenset[str], str]]:
+    """Cached list of (methods, path_template) for the mounted ``/v1`` REST API."""
+    global _HTTP_ROUTE_TEMPLATE_CACHE
+    if _HTTP_ROUTE_TEMPLATE_CACHE is not None:
+        return _HTTP_ROUTE_TEMPLATE_CACHE
+    # Lazy import: apis → openapi_export; router → apis. Resolve after module load.
+    from windows_os_api.api.rest.router import api_router
+
+    _HTTP_ROUTE_TEMPLATE_CACHE = _iter_router_route_templates(api_router, "")
+    return _HTTP_ROUTE_TEMPLATE_CACHE
+
+
+def http_path_is_bound(path: str, method: str) -> bool:
+    """N019: export only paths that match a registered HTTP route template.
+
+    Arbitrary registry paths (e.g. ``/audit-only``) with no REST binding must
+    not appear in OpenAPI/SDK exports. Parameterized routes such as
+    ``/v1/apps/{app_id}/actions/{action_name}`` bind concrete instances.
+    """
+    verb = (method or "POST").strip().lower()
+    concrete = (path or "").strip()
+    if not concrete.startswith("/"):
+        return False
+    for methods, template in http_route_templates():
+        if verb not in methods:
+            continue
+        if path_matches_route_template(concrete, template):
+            return True
+    return False
+
+
 def merge_registry_paths_into_fastapi_schema(
     base_schema: Mapping[str, Any],
     registry_doc: Mapping[str, Any],

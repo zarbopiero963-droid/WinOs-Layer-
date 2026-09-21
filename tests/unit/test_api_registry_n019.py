@@ -236,3 +236,72 @@ def test_client_invokes_real_effect_from_published_path(client, auth_headers, tm
 def test_http_openapi_missing_adapter_is_404(client, auth_headers):
     r = client.get("/v1/apps/no-such-app/openapi.json", headers=auth_headers)
     assert r.status_code == 404
+
+
+def test_unbound_registry_path_omitted_from_export():
+    """N019 audit: /audit-only must not export without an HTTP route binding."""
+    from windows_os_api.api.rest.apis import _registry_openapi_document
+    from windows_os_api.apps.schema.openapi_export import http_path_is_bound
+    from windows_os_api.apps.schema.sdk_export import generate_python_sdk
+
+    assert http_path_is_bound("/audit-only", "POST") is False
+    assert http_path_is_bound(
+        "/v1/apps/probe-app/actions/search", "POST"
+    ) is True
+
+    reg = reset_api_registry()
+    _register_verified(
+        reg,
+        path="/audit-only",
+        capability="private-app.edit",
+        application_id="private-app",
+        name="Audit fixture",
+    )
+    _register_verified(reg)  # bound /v1/apps/probe-app/actions/search
+    doc = _registry_openapi_document(visible_app_ids=None)
+    assert "/audit-only" not in doc["paths"]
+    assert "/v1/apps/probe-app/actions/search" in doc["paths"]
+    sdk = generate_python_sdk(doc)
+    assert "/audit-only" not in sdk
+    assert "probe-app" in sdk or "search" in sdk
+
+
+def test_stale_verification_omitted_from_export():
+    """N019: export re-evaluates verification age — stale VERIFIED is omitted."""
+    from dataclasses import replace
+
+    from windows_os_api.api.rest.apis import _registry_openapi_document
+    from windows_os_api.apps.api_registry import model as model_mod
+    from windows_os_api.apps.api_registry.model import ApiRegistry
+
+    # Short max-age so export freshness fails without waiting 7d.
+    reg = ApiRegistry(verification_max_age_sec=60)
+    model_mod._REGISTRY = reg
+    try:
+        now = time.time()
+        stale = _register_verified(
+            reg,
+            path="/v1/apps/probe-app/actions/stale",
+            capability="probe-app.stale",
+            name="Stale Search",
+            last_verified_at=now,
+            verification_id=issue_verification_proof("ver_n019_stale"),
+        )
+        fresh = _register_verified(
+            reg,
+            path="/v1/apps/probe-app/actions/fresh",
+            capability="probe-app.fresh",
+            name="Fresh Search",
+            verification_id=issue_verification_proof("ver_n019_fresh"),
+            last_verified_at=now,
+        )
+        # register() demotes stale timestamps; mutate after insert to simulate
+        # a previously-VERIFIED record whose evidence aged out before export.
+        forced = replace(stale, status=ApiStatus.VERIFIED, last_verified_at=now - 120)
+        with reg._lock:
+            reg._by_id[forced.id] = forced
+        doc = _registry_openapi_document(visible_app_ids=None)
+        assert "/v1/apps/probe-app/actions/stale" not in doc["paths"]
+        assert fresh.path in doc["paths"]
+    finally:
+        reset_api_registry()
