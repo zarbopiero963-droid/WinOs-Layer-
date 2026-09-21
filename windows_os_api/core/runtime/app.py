@@ -18,6 +18,43 @@ from windows_os_api.core.security.audit import get_audit_logger
 from windows_os_api.observability.metrics import get_metrics
 
 
+async def _enforce_request_body_cap(request: Request, max_bytes: int) -> JSONResponse | None:
+    """Reject oversize bodies; cache a safe body on the request for downstream.
+
+    ``Content-Length`` alone is not enough: chunked requests may omit it and
+    still deliver an arbitrary payload. We stream-count bytes and fail closed
+    at ``max_bytes`` (HTTP 413). Empty/GET-like methods skip the stream read.
+    """
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+
+    if request.method in ("GET", "HEAD", "OPTIONS", "TRACE"):
+        return None
+
+    size = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large"},
+            )
+        chunks.append(chunk)
+    # Starlette caches via ``_body`` so call_next / handlers can re-read.
+    request._body = b"".join(chunks)
+    return None
+
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -163,17 +200,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def metrics_and_remote_guard(request: Request, call_next):
-        # --- body cap (Content-Length) ---
-        cl = request.headers.get("content-length")
-        if cl is not None:
-            try:
-                if int(cl) > settings.max_body_bytes:
-                    return JSONResponse(
-                        status_code=413,
-                        content={"detail": "Request body too large"},
-                    )
-            except ValueError:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+        # --- body cap (Content-Length AND streamed bytes) ---
+        # Audit H63-N013: CL-only checks were bypassed with Transfer-Encoding:
+        # chunked and no Content-Length (100 bytes accepted under a 32-byte cap).
+        capped = await _enforce_request_body_cap(request, settings.max_body_bytes)
+        if capped is not None:
+            return capped
 
         peer = _peer_host(request)
         # Forwarded headers are observed only to refuse spoof-as-loopback claims

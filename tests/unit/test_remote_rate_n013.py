@@ -160,3 +160,57 @@ def test_remote_policy_exposes_limits(client, auth_headers):
     assert body["forwarded_headers_trusted_for_loopback"] is False
     assert "max_body_bytes" in body
     assert "rate_limit_per_minute" in body
+
+
+def test_chunked_body_without_content_length_is_413(tmp_sandbox, monkeypatch):
+    """Audit H63-N013: chunked / missing Content-Length must not bypass the cap."""
+    import asyncio
+
+    monkeypatch.setenv("WINOS_API_KEYS", '["dev-key-change-me"]')
+    monkeypatch.setenv("WINOS_ADMIN_API_KEYS", '["admin-key-change-me"]')
+    monkeypatch.setenv("WINOS_MAX_BODY_BYTES", "32")
+    monkeypatch.setenv("WINOS_REQUIRE_AUTH", "true")
+    get_settings.cache_clear()
+    reset_limiter()
+    app = create_app(get_settings())
+
+    body = b"{" + (b"\"x\":\"" + b"y" * 80 + b"\"}")
+    assert len(body) > 32
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/v1/trust/sign",
+        "raw_path": b"/v1/trust/sign",
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"test"),
+            (b"transfer-encoding", b"chunked"),
+            (b"x-api-key", b"admin-key-change-me"),
+            (b"content-type", b"application/json"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 80),
+    }
+    messages: list[dict] = []
+
+    async def receive():
+        if not getattr(receive, "done", False):
+            receive.done = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        messages.append(message)
+
+    async def run():
+        await app(scope, receive, send)
+
+    asyncio.run(run())
+    starts = [m for m in messages if m.get("type") == "http.response.start"]
+    assert starts, messages
+    assert starts[0]["status"] == 413, starts[0]
