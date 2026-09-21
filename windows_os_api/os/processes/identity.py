@@ -40,12 +40,19 @@ CREATE_TIME_TOLERANCE = 0.05
 
 @dataclass(frozen=True)
 class ProcessIdentity:
-    """Ciò che rende un processo *quel* processo."""
+    """Ciò che rende un processo *quel* processo.
+
+    ``argv`` (N048) non entra nel confronto di identità: serve al restart, che
+    deve rilanciare *la stessa* riga di comando che avevamo autorizzato, non
+    inventarne una. Senza argv registrato il restart si rifiuta invece di
+    indovinare.
+    """
 
     pid: int
     create_time: float | None = None
     exe: str | None = None
     owner: str | None = None
+    argv: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +60,7 @@ class ProcessIdentity:
             "create_time": self.create_time,
             "exe": self.exe,
             "owner": self.owner,
+            "argv": list(self.argv),
         }
 
 

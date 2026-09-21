@@ -65,6 +65,13 @@ from windows_os_api.backends.linux_session import (
 from windows_os_api.apps.vision.ocr import tesseract_available
 
 
+
+def _psutil_attr(proc: Any, name: str) -> Any:
+    try:
+        return getattr(proc, name)()
+    except Exception:  # noqa: BLE001 — psutil raises typed errors per platform
+        return None
+
 class LinuxBackendUnavailable(RuntimeError):
     pass
 
@@ -325,10 +332,13 @@ class LinuxBackend:
                 "memory_mb": round(p.memory_info().rss / 1e6, 2),
                 "running": p.is_running(),
             }
+            # N048: ppid/num_threads are additive inventory, not identity.
             for key, getter in (
                 ("create_time", p.create_time),
                 ("exe", p.exe),
                 ("owner", p.username),
+                ("ppid", p.ppid),
+                ("num_threads", p.num_threads),
             ):
                 try:
                     info[key] = getter()
@@ -403,6 +413,96 @@ class LinuxBackend:
             return {"ok": False, "error": "not found", "pid": pid}
         except PermissionError as e:
             return {"ok": False, "error": str(e), "pid": pid}
+
+
+    def inspect_process(self, pid: int) -> dict[str, Any] | None:
+        """N048 — real inventory via psutil. Denied fields stay unavailable."""
+        if not self._psutil:
+            return None
+        try:
+            p = self._psutil.Process(pid)
+        except self._psutil.Error:
+            return None
+
+        basic = self.get_process(pid)
+        if basic is None:
+            return None
+
+        children: list[dict[str, Any]] = []
+        try:
+            for child in p.children(recursive=False):
+                try:
+                    children.append(
+                        {
+                            "pid": child.pid,
+                            "name": child.name(),
+                            "status": child.status(),
+                            "exe": _psutil_attr(child, "exe"),
+                        }
+                    )
+                except self._psutil.Error:
+                    children.append({"pid": child.pid})
+        except self._psutil.Error:
+            children = []
+
+        parent = None
+        try:
+            parent_proc = p.parent()
+            if parent_proc is not None:
+                parent = {
+                    "pid": parent_proc.pid,
+                    "name": parent_proc.name(),
+                    "exe": _psutil_attr(parent_proc, "exe"),
+                }
+        except self._psutil.Error:
+            parent = None
+
+        num_threads = basic.get("num_threads")
+        threads = {
+            "available": num_threads is not None,
+            "count": num_threads,
+        }
+
+        modules: dict[str, Any]
+        try:
+            maps = p.memory_maps(grouped=True)
+            items = []
+            for entry in maps[:64]:
+                path = getattr(entry, "path", None) or getattr(entry, "path", "") or ""
+                if path:
+                    items.append({"path": path})
+            modules = {"available": True, "items": items, "truncated": len(maps) > 64}
+        except (self._psutil.Error, OSError):
+            modules = {"available": False, "items": [], "reason": "access_denied_or_unsupported"}
+
+        handles: dict[str, Any]
+        try:
+            n = p.num_fds()
+            handles = {"available": True, "open_files_count": n, "kind": "fds"}
+        except (self._psutil.Error, OSError):
+            try:
+                files = p.open_files()
+                handles = {
+                    "available": True,
+                    "open_files_count": len(files),
+                    "kind": "open_files",
+                }
+            except (self._psutil.Error, OSError):
+                handles = {"available": False, "reason": "access_denied_or_unsupported"}
+
+        return {
+            **basic,
+            "parent": parent,
+            "children": children,
+            "threads": threads,
+            "modules": modules,
+            "handles": handles,
+            "resources": {
+                "cpu_percent": basic.get("cpu_percent"),
+                "memory_mb": basic.get("memory_mb"),
+            },
+        }
+
 
     # ------------------------------------------------------------------
     # Apps

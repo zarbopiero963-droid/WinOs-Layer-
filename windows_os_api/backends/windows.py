@@ -47,6 +47,13 @@ from windows_os_api.os.input.validation import (
 )
 
 
+
+def _psutil_attr(proc: Any, name: str) -> Any:
+    try:
+        return getattr(proc, name)()
+    except Exception:  # noqa: BLE001
+        return None
+
 class WindowsBackendUnavailable(RuntimeError):
     pass
 
@@ -482,10 +489,13 @@ class WindowsBackend:
                 "cpu_percent": p.cpu_percent(interval=0.0),
                 "memory_mb": round(p.memory_info().rss / 1e6, 2),
             }
+            # N048: ppid/num_threads additive inventory (not identity).
             for key, getter in (
                 ("create_time", p.create_time),
                 ("exe", p.exe),
                 ("owner", p.username),
+                ("ppid", p.ppid),
+                ("num_threads", p.num_threads),
             ):
                 try:
                     info[key] = getter()
@@ -510,6 +520,92 @@ class WindowsBackend:
             return {"ok": True, "pid": pid}
         except self._psutil.Error as e:
             return {"ok": False, "error": str(e), "pid": pid}
+
+
+    def inspect_process(self, pid: int) -> dict[str, Any] | None:
+        """N048 — inventory via psutil. Denied fields stay unavailable."""
+        if not self._psutil:
+            return None
+        try:
+            p = self._psutil.Process(pid)
+        except self._psutil.Error:
+            return None
+        basic = self.get_process(pid)
+        if basic is None:
+            return None
+
+        children: list[dict[str, Any]] = []
+        try:
+            for child in p.children(recursive=False):
+                try:
+                    children.append(
+                        {
+                            "pid": child.pid,
+                            "name": child.name(),
+                            "status": child.status(),
+                            "exe": _psutil_attr(child, "exe"),
+                        }
+                    )
+                except self._psutil.Error:
+                    children.append({"pid": child.pid})
+        except self._psutil.Error:
+            children = []
+
+        parent = None
+        try:
+            parent_proc = p.parent()
+            if parent_proc is not None:
+                parent = {
+                    "pid": parent_proc.pid,
+                    "name": parent_proc.name(),
+                    "exe": _psutil_attr(parent_proc, "exe"),
+                }
+        except self._psutil.Error:
+            parent = None
+
+        num_threads = basic.get("num_threads")
+        threads = {"available": num_threads is not None, "count": num_threads}
+
+        modules: dict[str, Any]
+        try:
+            maps = p.memory_maps()
+            items = []
+            for entry in maps[:64]:
+                path = getattr(entry, "path", "") or ""
+                if path:
+                    items.append({"path": path})
+            modules = {"available": True, "items": items, "truncated": len(maps) > 64}
+        except (self._psutil.Error, OSError):
+            modules = {"available": False, "items": [], "reason": "access_denied_or_unsupported"}
+
+        handles: dict[str, Any]
+        try:
+            n = p.num_handles()
+            handles = {"available": True, "handle_count": n, "kind": "handles"}
+        except (self._psutil.Error, OSError, AttributeError):
+            try:
+                files = p.open_files()
+                handles = {
+                    "available": True,
+                    "open_files_count": len(files),
+                    "kind": "open_files",
+                }
+            except (self._psutil.Error, OSError):
+                handles = {"available": False, "reason": "access_denied_or_unsupported"}
+
+        return {
+            **basic,
+            "parent": parent,
+            "children": children,
+            "threads": threads,
+            "modules": modules,
+            "handles": handles,
+            "resources": {
+                "cpu_percent": basic.get("cpu_percent"),
+                "memory_mb": basic.get("memory_mb"),
+            },
+        }
+
 
     # ------------------------------------------------------------------
     # Apps
