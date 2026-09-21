@@ -5,6 +5,8 @@ Coverage refs: R40 W092 L092 S61-10–S61-11 S61-25 G28 G29.
 """
 from __future__ import annotations
 
+from windows_os_api.apps.api_registry.model import issue_verification_proof
+
 import re
 import time
 
@@ -99,7 +101,7 @@ def test_verified_filter_still_excludes_partial(client, auth_headers, registry):
             path="/v1/apps/example/verified",
             capability="ex.verified",
             status="VERIFIED",
-            verification_id="v-n022",
+            verification_id=issue_verification_proof("v-n022"),
             last_verified_at=time.time(),
         )
     )

@@ -24,6 +24,7 @@ from windows_os_api.apps.api_registry import (
     reset_api_registry,
 )
 from windows_os_api.apps.api_registry.model import (
+    issue_verification_proof,
     DEFAULT_VERIFICATION_MAX_AGE_SEC,
     ApiStatus,
 )
@@ -212,7 +213,7 @@ def test_stale_verified_refuses_execute(registry, adapters):
     rec = registry.register(
         _base(
             status="VERIFIED",
-            verification_id="ver_old",
+            verification_id=issue_verification_proof("ver_old"),
             last_verified_at=stale_ts,
         )
     )
@@ -229,7 +230,7 @@ def test_stale_verified_refuses_execute(registry, adapters):
     rec2 = registry.register(
         _base(
             status="VERIFIED",
-            verification_id="ver_fresh",
+            verification_id=issue_verification_proof("ver_fresh"),
             last_verified_at=fresh,
             path=f"/v1/apps/{APP}/actions/set_field_phone",
             capability=f"{APP}.set_field_phone",

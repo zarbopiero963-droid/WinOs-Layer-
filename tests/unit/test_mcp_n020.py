@@ -17,6 +17,7 @@ from windows_os_api.apps.api_registry.mcp_tools import (
     stable_mcp_tool_name,
 )
 from windows_os_api.apps.api_registry.model import (
+    issue_verification_proof,
     ApiStatus,
     reset_api_registry,
 )
@@ -43,12 +44,16 @@ def _register_verified(**overrides):
         "application_id": "contoso-crm",
         "capability": "contoso-crm.search_probe",
         "status": "VERIFIED",
-        "verification_id": "ver_mcp_n020",
+        "verification_id": issue_verification_proof("ver_mcp_n020"),
         "last_verified_at": time.time(),
         "permissions": ["ui.read", "ui.control"],
         "authentication_required": True,
     }
     payload.update(overrides)
+    # reset_api_registry() clears the proof ledger — re-issue the final vid.
+    vid = payload.get("verification_id")
+    if isinstance(vid, str) and vid.strip():
+        payload["verification_id"] = issue_verification_proof(vid.strip())
     return reg.register(payload), reg
 
 
