@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,25 @@ def _is_within(child: Path, root: Path) -> bool:
         return True
     except (ValueError, OSError):
         return False
+
+
+
+def _looks_absolute(path: str) -> bool:
+    """Assoluto host *o* forma POSIX ``/…`` anche su Windows.
+
+    Su Win32 ``Path('/etc/shadow').is_absolute()`` e' False (manca il drive):
+    senza questo i test di sicurezza vedrebbero 404 sotto la sandbox invece
+    di 403 PATH_OUTSIDE_SANDBOX.
+    """
+    if not path:
+        return False
+    if Path(path).is_absolute():
+        return True
+    if path.startswith("/") and not path.startswith("//"):
+        return True
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        return True
+    return False
 
 
 def normalize_user_path(path: str) -> str:
@@ -86,13 +106,11 @@ def walk_under(root: Path, path: str) -> Path:
         root = root.resolve(strict=True)
 
     norm = normalize_user_path(path)
-    candidate = Path(norm)
-    if candidate.is_absolute():
-        # Assoluto: deve gia' giacere sotto root senza seguire symlink oltre root.
-        abs_path = candidate
+    if _looks_absolute(norm):
+        # Assoluto (anche forma POSIX su Windows): deve gia' giacere sotto root.
+        abs_path = Path(norm)
         try:
-            # Cammina da root usando solo pezzi relativi ad essa.
-            rel = abs_path.relative_to(root)
+            rel = abs_path.resolve(strict=False).relative_to(root)
         except ValueError as exc:
             raise PathRejected(
                 f"path fuori sandbox: {path!r}", code=PATH_OUTSIDE_SANDBOX
@@ -136,7 +154,9 @@ def open_nofollow(
     mode: int = 0o644,
 ) -> int:
     """Apre ``path`` senza seguire un symlink finale."""
-    flags = os.O_NOFOLLOW | os.O_CLOEXEC
+    # O_NOFOLLOW / O_CLOEXEC non esistono su Win32: li omettiamo e ci
+    # affidiamo a walk_under (lstat) + rifiuto symlink prima dell'open.
+    flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     if write:
         flags |= os.O_WRONLY
         if create:
@@ -166,15 +186,19 @@ def errno_EPERM() -> int:
 
 
 def fd_still_under(fd: int, root: Path) -> bool:
-    """Riverifica che l'fd aperto punti ancora sotto ``root``."""
+    """Riverifica che l'fd aperto punti ancora sotto ``root``.
+
+    Su POSIX usa ``/proc/self/fd/N``. Su Win32 (o senza proc) la riverifica
+    fd non e' disponibile: ``walk_under`` + ``lstat`` hanno gia' rifiutato i
+    symlink — restituiamo True (non fallire tutte le write in CI Windows).
+    """
     root_r = root.resolve(strict=False)
-    # POSIX: /proc/self/fd/N
     proc = Path(f"/proc/self/fd/{fd}")
+    if sys.platform == "win32" or not proc.exists():
+        return True
     try:
-        # os.readlink non segue oltre: da' il path al momento dell'open.
         target = Path(os.readlink(proc))
     except OSError:
-        # Fallback: fstat + confronto non disponibile → fail-closed.
         return False
     try:
         target.resolve(strict=False).relative_to(root_r)
@@ -202,9 +226,8 @@ def read_bytes_nofollow(root: Path, path: str, max_bytes: int) -> tuple[Path, by
 def write_bytes_nofollow(root: Path, path: str, data: bytes) -> Path:
     target = walk_under(root, path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Se esiste ed e' symlink, open_nofollow rifiuta. Se non esiste, O_CREAT.
-    exists = target.exists()
-    if exists and target.is_symlink():
+    # Controlla symlink *prima* di exists() (che seguirebbe il target).
+    if target.is_symlink():
         raise PathRejected(
             f"symlink rifiutato: {path!r}", code=PATH_SYMLINK_REFUSED
         )

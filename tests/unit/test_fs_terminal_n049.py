@@ -24,16 +24,22 @@ from windows_os_api.os.filesystem import service as fs
 from windows_os_api.os.terminal import allowlist as al
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlink non disponibile: {exc}")
+
+
 @pytest.fixture
 def sandboxed(monkeypatch, tmp_path):
+    """Portable: FakeBackend + root reale (symlink/TOCTOU come su disco)."""
     root = tmp_path / "sandbox"
     root.mkdir()
-    monkeypatch.setenv("WINOS_BACKEND", "linux")
-    monkeypatch.setenv("WINOS_ALLOW_FAKE_FALLBACK", "false")
+    monkeypatch.setenv("WINOS_BACKEND", "fake")
     monkeypatch.setenv("WINOS_SANDBOX_ROOT", str(root))
     get_settings.cache_clear()
     reset_backend()
-    # Force backend to use our root even if env mapping differs.
     b = get_backend()
     b.sandbox = root.resolve()
     yield root.resolve()
@@ -73,12 +79,12 @@ def test_traversal_and_unc_are_blocked_without_touching_sentinel(sandboxed):
 
 
 def test_symlink_leaf_write_is_refused_and_outside_untouched(sandboxed):
-    outside = Path("/tmp/n049_unit_victim.txt")
+    outside = sandboxed.parent / "n049_unit_victim.txt"
     outside.write_text("SAFE", encoding="utf-8")
     link = sandboxed / "escape"
     if link.exists() or link.is_symlink():
         link.unlink()
-    link.symlink_to(outside)
+    _symlink_or_skip(link, outside)
     try:
         out = fs.write_file("escape", "PWNED")
         assert out["ok"] is False
@@ -91,7 +97,7 @@ def test_symlink_leaf_write_is_refused_and_outside_untouched(sandboxed):
 
 def test_toctou_symlink_swap_cannot_escape_sandbox(sandboxed):
     """Il falso successo di Phase 0: resolve ok → swap → write fuori."""
-    outside = Path("/tmp/n049_unit_toctou.txt")
+    outside = sandboxed.parent / "n049_unit_toctou.txt"
     outside.write_text("ORIGINAL", encoding="utf-8")
     name = "race"
     final = sandboxed / name
@@ -105,7 +111,7 @@ def test_toctou_symlink_swap_cannot_escape_sandbox(sandboxed):
     def swapper():
         time.sleep(0.0005)
         final.unlink()
-        final.symlink_to(outside)
+        _symlink_or_skip(final, outside)
         box["sw"] = True
 
     t1 = threading.Thread(target=writer)
@@ -134,10 +140,10 @@ def test_partial_failure_in_dedicated_root_leaves_recovery_path(sandboxed):
 
 
 def test_delete_refuses_symlink_without_removing_target(sandboxed):
-    outside = Path("/tmp/n049_unit_del.txt")
+    outside = sandboxed.parent / "n049_unit_del.txt"
     outside.write_text("KEEP", encoding="utf-8")
     link = sandboxed / "dellink"
-    link.symlink_to(outside)
+    _symlink_or_skip(link, outside)
     try:
         out = fs.delete_file("dellink")
         assert out["ok"] is False
@@ -176,4 +182,5 @@ def test_terminal_allowlisted_command_resolves_to_argv_without_shell():
     assert isinstance(argv, list)
     assert len(argv) >= 1
     assert os.path.isabs(argv[0])
-    assert argv[0].endswith("whoami") or Path(argv[0]).name == "whoami"
+    name = Path(argv[0]).name.lower()
+    assert name in {"whoami", "whoami.exe"}
