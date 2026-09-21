@@ -365,6 +365,29 @@ def test_injection_string_in_goal_does_not_enable_denied_action(tmp_sandbox):
     assert decision.reason == REASON_POLICY
 
 
+def test_ai_provider_client_disables_trust_env(monkeypatch):
+    """N027 audit: default httpx trust_env=True would honor HTTP_PROXY and
+    re-resolve destinations outside the validated URL boundary.
+    """
+    captured: dict = {}
+
+    class CapturingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(httpx, "Client", CapturingClient)
+    client = AIProviderClient(
+        AIRuntimeSettings(provider="openai", api_key="sk-testkey1234567890abcd"),
+        resolve_dns=False,
+    )
+    assert captured.get("follow_redirects") is False
+    assert captured.get("trust_env") is False
+    client.close()
+
+
 def test_planner_ai_hint_does_not_raise_confidence(ai_tmp, monkeypatch):
     """Even if remote returns an injection, confidence stays deterministic."""
     from windows_os_api.apps import planner

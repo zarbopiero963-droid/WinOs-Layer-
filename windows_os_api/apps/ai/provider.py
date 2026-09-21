@@ -76,6 +76,9 @@ class AIProviderClient:
             kwargs: dict[str, Any] = {
                 "timeout": timeout,
                 "follow_redirects": False,
+                # N027: never honor HTTP(S)_PROXY / ALL_PROXY / trust_env DNS
+                # side-channels that could bypass SSRF URL validation.
+                "trust_env": False,
             }
             if transport is not None:
                 kwargs["transport"] = transport
