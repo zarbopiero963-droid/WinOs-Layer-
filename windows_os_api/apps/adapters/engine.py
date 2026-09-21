@@ -203,6 +203,15 @@ def load_persisted_adapters() -> dict[str, Any]:
                     ),
                 )
             )
+            # N030: disk trust fail → withdraw VERIFIED registry APIs for app.
+            try:
+                from windows_os_api.apps.api_registry.trust_sync import (
+                    demote_verified_apis_for_app,
+                )
+
+                demote_verified_apis_for_app(app_id)
+            except Exception:  # noqa: BLE001
+                pass
             continue
         adapter = Adapter(
             app_id=app_id,
@@ -424,6 +433,7 @@ def _invoke_action_locked(
 
     trust_gate = revalidate_adapter_trust(adapter, required="verified")
     if not trust_gate["allowed"]:
+        registry_demoted: list[str] = []
         if trust_gate.get("tampered"):
             for act in adapter.actions:
                 if isinstance(act.verification, dict) and act.verification.get("state") == "VERIFIED":
@@ -433,6 +443,15 @@ def _invoke_action_locked(
                     demoted.pop("verification_id", None)
                     act.verification = demoted
             adapter.trust_level = trust_gate.get("trust_level") or "unsigned"
+            # N030: withdraw VERIFIED registry/export for this app (not action-only).
+            try:
+                from windows_os_api.apps.api_registry.trust_sync import (
+                    demote_verified_apis_for_app,
+                )
+
+                registry_demoted = demote_verified_apis_for_app(app_id)
+            except Exception:  # noqa: BLE001 — never mask the trust deny
+                registry_demoted = []
         return {
             "ok": False,
             "denied": True,
@@ -440,6 +459,7 @@ def _invoke_action_locked(
             "code": "TRUST_INSUFFICIENT",
             "trust_level": trust_gate["trust_level"],
             "tampered": bool(trust_gate.get("tampered")),
+            "registry_demoted": registry_demoted,
             "app_id": app_id,
             "action": action_name,
         }
