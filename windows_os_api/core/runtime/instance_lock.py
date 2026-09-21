@@ -29,7 +29,7 @@ LOCK_FILENAME = ".winos-instance.lock"
 # Quanti giri di «recupera un lock morto e riprova a crearlo» prima di
 # rinunciare. Senza un tetto, due processi che si recuperano il lock a vicenda
 # girerebbero all'infinito invece di fallire in modo visibile.
-_RECLAIM_ATTEMPTS = 5
+_RECLAIM_ATTEMPTS = 20
 
 
 class InstanceLockTaken(RuntimeError):
@@ -122,7 +122,10 @@ class InstanceLock:
         # gate. Nessuna decisione di liveness lo guarda (vedi docstring del modulo).
         blob = json.dumps(payload, indent=2).encode("utf-8")
 
-        for _attempt in range(_RECLAIM_ATTEMPTS):
+        # I wait su file mid-write non consumano tentativi di reclaim: altrimenti
+        # 12 contendenti bruciano il tetto in pochi ms mentre il vincitore scrive.
+        reclaim_attempts = 0
+        while reclaim_attempts < _RECLAIM_ATTEMPTS:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
@@ -134,17 +137,29 @@ class InstanceLock:
                         f"sovrascrivono i manifest a vicenda. Fermare l'altra "
                         f"istanza o usare WINOS_ADAPTER_STORE diverso."
                     ) from None
-                # Lock di un processo morto, o file illeggibile: si recupera. Il
-                # ciclo riprova la creazione esclusiva, cosi' anche fra due
-                # recuperanti ne resta comunque uno solo.
+                if holder is None and self._lock_file_looks_like_mid_write():
+                    # Creato con O_EXCL ma JSON non ancora scritto: non scartare.
+                    time.sleep(0.005)
+                    continue
+                # Lock di un processo morto, o spazzatura vecchia: si recupera.
+                # rename-to-unique (non unlink) cosi' un solo recuperante vince.
                 self._discard_stale()
+                reclaim_attempts += 1
                 continue
             except OSError as exc:
                 raise InstanceLockTaken(
                     f"impossibile prendere il lock di istanza su {self.store_dir}: {exc}"
                 ) from exc
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(blob)
+            try:
+                # Scrivi+fsync subito sul fd esclusivo: riduce la finestra in cui
+                # il file esiste vuoto e un contendente lo vede come «stale».
+                os.write(fd, blob)
+                try:
+                    os.fsync(fd)
+                except OSError:
+                    pass
+            finally:
+                os.close(fd)
             self.held = True
             self._payload = payload
             return payload
@@ -154,20 +169,53 @@ class InstanceLock:
             f"{_RECLAIM_ATTEMPTS} tentativi: nessun avvio, invece di due istanze"
         )
 
+    def _lock_file_looks_like_mid_write(self, *, window_sec: float = 0.05) -> bool:
+        """True se il lock sembra una creazione `O_EXCL` ancora senza JSON.
+
+        Fra `os.open(O_EXCL)` e la `write` il file esiste ma e' vuoto:
+        `read_holder` torna ``None``. Scartarlo in quella finestra regala
+        l'inode a un secondo acquirer (due vincitori). Un file malformato
+        *con contenuto* non e' mid-write: quello si recupera subito.
+        """
+        try:
+            st = self.path.stat()
+        except (FileNotFoundError, OSError):
+            return False
+        if st.st_size > 0:
+            return False
+        return (time.time() - st.st_mtime) < window_sec
+
     def _discard_stale(self) -> None:
         """Toglie un lock che nessun processo vivo possiede.
 
-        Rilegge e ricontrolla la liveness immediatamente prima di cancellare: fra
+        Rilegge e ricontrolla la liveness immediatamente prima di spostare: fra
         il controllo del chiamante e questo punto un'altra istanza puo' avere
-        preso il lock, e quella non va toccata. Se sparisce da sola nel
-        frattempo, va bene lo stesso — il ciclo riprova la creazione esclusiva.
+        preso il lock, e quella non va toccata.
+
+        Lo spostamento e' `rename` verso un nome unico, non `unlink`. Su POSIX
+        un solo processo riesce a rinominare la stessa sorgente: il secondo
+        prende `FileNotFoundError`. Con `unlink` due recuperanti potevano
+        cancellare il file mentre un terzo ci scriveva ancora (fd sull'inode
+        orfano) e poi ricrearlo entrambi — due vincitori.
         """
         holder = read_holder(self.store_dir)
         if holder is not None and _pid_alive(int(holder["pid"])):
             return
+        # Non toccare un file vuoto ancora in scrittura.
+        if holder is None and self._lock_file_looks_like_mid_write():
+            return
+        trash = self.path.with_name(
+            f"{self.path.name}.stale.{os.getpid()}.{time.time_ns()}"
+        )
         try:
-            self.path.unlink()
-        except (FileNotFoundError, OSError):
+            os.rename(self.path, trash)
+        except FileNotFoundError:
+            return
+        except OSError:
+            return
+        try:
+            os.unlink(trash)
+        except OSError:
             return
 
     def release(self) -> bool:
