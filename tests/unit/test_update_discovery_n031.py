@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from pathlib import Path
 
@@ -16,6 +17,12 @@ from windows_os_api.update.discovery import (
     version_cmp,
 )
 from windows_os_api.update.manager import UpdateManager
+
+def _hmac_sig(sha256_hex: str) -> str:
+    from windows_os_api.apps.trust.signing import _dev_secret
+    digest = sha256_hex.strip().lower().encode("ascii")
+    return "hmac-dev:" + hmac.new(_dev_secret(), digest, hashlib.sha256).hexdigest()
+
 
 
 def test_version_cmp_and_downgrade_gate(tmp_path: Path):
@@ -51,6 +58,7 @@ def test_discover_and_download_verified(monkeypatch: pytest.MonkeyPatch, tmp_pat
         "version": "3.1.0",
         "artifact_url": "https://releases.example.com/winos-3.1.0.bin",
         "sha256": digest,
+        "signature": _hmac_sig(digest),
         "channel": "stable",
     }
 
@@ -105,6 +113,7 @@ def test_update_manager_discover_and_stage(monkeypatch: pytest.MonkeyPatch, tmp_
         "version": "1.1.0",
         "artifact_url": "https://releases.example.com/a.bin",
         "sha256": digest,
+        "signature": _hmac_sig(digest),
     }
 
     def fake_fetch(url: str, *, max_bytes: int, timeout: float = 30.0) -> bytes:
@@ -131,3 +140,45 @@ def test_update_manager_discover_and_stage(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     assert out2["ok"] is False
     assert "same version" in out2["error"] or "refused" in out2["error"]
+
+
+def test_invalid_signature_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    payload = b"ARTIFACT-N031-BADSIG"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fake_fetch(url: str, *, max_bytes: int, timeout: float = 30.0) -> bytes:
+        return payload
+
+    monkeypatch.setattr("windows_os_api.update.discovery._fetch_bytes", fake_fetch)
+    monkeypatch.setattr(
+        "windows_os_api.update.discovery._host_blocked", lambda host: False
+    )
+    bad = ReleaseInfo(
+        version="9.0.0",
+        artifact_url="https://releases.example.com/x.bin",
+        sha256=digest,
+        signature="invalid-signature",
+    )
+    with pytest.raises(ReleaseDiscoveryError, match="signature"):
+        download_verified(bad, tmp_path / "stage", current_version="1.0.0")
+
+
+def test_missing_signature_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    payload = b"ARTIFACT-N031-NOSIG"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fake_fetch(url: str, *, max_bytes: int, timeout: float = 30.0) -> bytes:
+        return payload
+
+    monkeypatch.setattr("windows_os_api.update.discovery._fetch_bytes", fake_fetch)
+    monkeypatch.setattr(
+        "windows_os_api.update.discovery._host_blocked", lambda host: False
+    )
+    info = ReleaseInfo(
+        version="9.0.1",
+        artifact_url="https://releases.example.com/y.bin",
+        sha256=digest,
+        signature=None,
+    )
+    with pytest.raises(ReleaseDiscoveryError, match="signature required"):
+        download_verified(info, tmp_path / "stage", current_version="1.0.0")

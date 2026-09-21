@@ -1,6 +1,6 @@
 """Release channel discovery + verified download (N031).
 
-HTTPS-only channel JSON → version / artifact URL / sha256 (+ optional signature).
+HTTPS-only channel JSON → version / artifact URL / sha256 + required signature.
 Downloads land in a staging dir, are size-capped, hash-verified (N028), and
 refuse downgrades unless ``allow_downgrade=True``.
 """
@@ -115,6 +115,78 @@ def validate_https_url(url: str) -> str:
     return url
 
 
+def verify_release_signature(*, sha256_hex: str, signature: str | None) -> None:
+    """N031: require and verify release signature over the artifact sha256.
+
+    Accepted forms (same prefixes as adapter trust):
+    * ``ed25519:<key_id>:<b64url>`` — Ed25519 over ASCII sha256 hex, active keystore key
+    * ``hmac-dev:<hex>`` — HMAC-SHA256 over ASCII sha256 hex (dev only)
+
+    Missing or invalid → ``ReleaseDiscoveryError`` (fail-closed).
+    """
+    sig = (signature or "").strip()
+    if not sig:
+        raise ReleaseDiscoveryError("release signature required")
+    digest = (sha256_hex or "").strip().lower().encode("ascii")
+    if len(digest) != 64:
+        raise ReleaseDiscoveryError("cannot verify signature: invalid sha256")
+
+    # Lazy import — keep discovery usable without crypto stack for URL-only helpers.
+    from windows_os_api.apps.trust.signing import (
+        _DEV_SECRET,
+        _b64url_decode,
+        _dev_secret,
+        _parse_signature,
+    )
+    from windows_os_api.apps.trust.keystore import TrustKeystoreError, get_keystore
+    from cryptography.exceptions import InvalidSignature
+
+    try:
+        alg, material, key_id = _parse_signature(sig)
+    except TrustKeystoreError as exc:
+        raise ReleaseDiscoveryError(f"release signature rejected: {exc}") from exc
+
+    if alg == "hmac-dev":
+        import hmac
+        import hashlib
+
+        expected = hmac.new(_dev_secret(), digest, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, material.lower()):
+            raise ReleaseDiscoveryError("release signature invalid (hmac-dev)")
+        return
+
+    if alg == "ed25519":
+        assert key_id is not None
+        try:
+            key = get_keystore().require_active(key_id)
+            sig_bytes = _b64url_decode(material)
+            key.public_key().verify(sig_bytes, digest)
+        except (TrustKeystoreError, InvalidSignature, ValueError) as exc:
+            raise ReleaseDiscoveryError(
+                "release signature invalid (ed25519)"
+            ) from exc
+        return
+
+    raise ReleaseDiscoveryError(f"unsupported release signature algorithm: {alg}")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """N031: never auto-follow redirects — validate Location without connecting."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        loc = headers.get("Location") or headers.get("location") or newurl
+        # Validate the redirect target *before* any connection to it.
+        try:
+            validate_https_url(str(loc))
+        except ReleaseDiscoveryError as exc:
+            raise ReleaseDiscoveryError(
+                f"redirect blocked before connect: {exc}"
+            ) from exc
+        raise ReleaseDiscoveryError(
+            f"HTTP redirect denied (HTTP {code} → {loc})"
+        )
+
+
 def _fetch_bytes(url: str, *, max_bytes: int, timeout: float = 30.0) -> bytes:
     validate_https_url(url)
     req = urllib.request.Request(
@@ -123,9 +195,8 @@ def _fetch_bytes(url: str, *, max_bytes: int, timeout: float = 30.0) -> bytes:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — validated https
-            # Refuse redirects to non-https by not enabling custom redirect handler;
-            # urllib follows redirects — re-validate final URL.
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        with opener.open(req, timeout=timeout) as resp:  # noqa: S310 — validated https
             final = resp.geturl()
             validate_https_url(final)
             chunks: list[bytes] = []
@@ -214,6 +285,15 @@ def download_verified(
         raise ReleaseDiscoveryError(
             f"checksum mismatch: expected {release.sha256}, got {actual}"
         )
+    # N031: signature required + verified over sha256 (fail-closed).
+    try:
+        verify_release_signature(sha256_hex=actual, signature=release.signature)
+    except ReleaseDiscoveryError:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        raise
     # Sidecar manifest for the staged artifact (N028)
     try:
         write_checksum_manifest([dest], staging_dir / "checksums.txt", root=staging_dir)
