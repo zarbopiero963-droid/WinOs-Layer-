@@ -734,8 +734,8 @@ Full installed W/L H63-N046 not claimed PASS here (MANUAL_ONLY / #21).
 Contratto (#67 / H63-N047, B-OS, Q04): policy eseguibile/argv **separata dal
 terminale**; identità `PID + create_time + exe/owner`; nessun avvio arbitrario
 da ingressi alternativi. Coverage: R05 R21 W007 W008 L007 L008 G08 G20 G21.
-Out of scope: N048+, N005 D6, chiusura #67/#63/#21, claim H63-N047 installed
-W/L PASS.
+Out of scope (al merge N047): N048+, N005 D6, chiusura #67/#63/#21, claim H63-N047 installed
+W/L PASS. N048: vedi sezione sotto.
 
 **Due moduli, due domande.** `os/processes/exec_policy.py` risponde a «questo
 avvio è permesso?», `os/processes/identity.py` a «questo PID è ancora il
@@ -772,3 +772,27 @@ pytest tests/unit/test_process_identity_n047.py -q
 ```
 
 Full installed W/L H63-N047 not claimed PASS here (MANUAL_ONLY / #21).
+
+## N048 — Process tree, restart e teardown
+
+Contratto (#67 / H63-N048, B-OS, Q04/Q12): inventario parent/children/modules/
+threads/handles/resources; restart e terminate limitati ai processi
+**posseduti**; albero reale osservato; terminate estraneo negato; **zero figli
+residui** dopo teardown; restart riuscito con lo stesso exe/argv registrato.
+Coverage: R05 W007 W008 L007 L008 G01 G21. Out of scope: N049+, N005 D6,
+chiusura #67/#63/#21, claim H63-N048 installed W/L PASS.
+
+**Tre pezzi.** `os/processes/tree.py` costruisce inventario e lista discendenti.
+`terminate_process` (service) dopo il gate N047 abbatte i figli prima del root e
+fallisce con `PROCESS_RESIDUAL_CHILDREN` se restano orfani — il falso successo
+riprodotto in Phase 0 (padre `ok`, figlio vivo) non e' piu' un successo.
+`restart_process` e' teardown + `start_process` dello stesso exe/argv registrato;
+senza exe nel registro si rifiuta invece di inventare un comando. `inspect_process`
+/ `get_process_tree` espongono l'inventario; REST: `GET /v1/processes/{pid}/inspect`,
+`GET /v1/processes/{pid}/tree`, `POST /v1/processes/{pid}/restart`.
+
+```bash
+pytest tests/unit/test_process_tree_n048.py -q
+```
+
+Full installed W/L H63-N048 not claimed PASS here (MANUAL_ONLY / #21).

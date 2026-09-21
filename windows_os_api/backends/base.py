@@ -57,6 +57,15 @@ class OSBackend(Protocol):
         """Terminate / kill a process."""
         ...
 
+    def inspect_process(self, pid: int) -> dict[str, Any] | None:
+        """N048 — inventory: parent/children/threads/modules/handles/resources.
+
+        Returns ``None`` when the PID does not exist. Fields that the OS
+        refuses (AccessDenied) are reported as ``available: False``, never as
+        an invented empty list that looks like a successful read.
+        """
+        ...
+
     # Apps
     def discover_apps(self) -> list[dict[str, Any]]:
         """Installed / discoverable applications."""

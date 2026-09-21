@@ -144,11 +144,11 @@ class FakeBackend:
         _seeded_at = time.time() - 3600.0
         self._processes: dict[int, dict[str, Any]] = {
             1: {"pid": 1, "name": "System", "status": "running", "cpu_percent": 0.1, "memory_mb": 8.0,
-                "create_time": _seeded_at, "exe": "System", "owner": _fake_owner()},
+                "create_time": _seeded_at, "exe": "System", "owner": _fake_owner(), "ppid": 0, "num_threads": 1},
             42: {"pid": 42, "name": "ContosoCRM.exe", "status": "running", "cpu_percent": 2.5, "memory_mb": 128.0,
-                 "create_time": _seeded_at, "exe": "C:\\Contoso\\ContosoCRM.exe", "owner": _fake_owner()},
+                 "create_time": _seeded_at, "exe": "C:\\Contoso\\ContosoCRM.exe", "owner": _fake_owner(), "ppid": 1, "num_threads": 4},
             100: {"pid": 100, "name": "notepad.exe", "status": "running", "cpu_percent": 0.0, "memory_mb": 16.0,
-                  "create_time": _seeded_at, "exe": "C:\\Windows\\notepad.exe", "owner": _fake_owner()},
+                  "create_time": _seeded_at, "exe": "C:\\Windows\\notepad.exe", "owner": _fake_owner(), "ppid": 1, "num_threads": 2},
         }
         self._next_pid = 1000
         self._windows: dict[int, dict[str, Any]] = {
@@ -225,9 +225,21 @@ class FakeBackend:
         # N047: anche il backend finto espone l'identita', altrimenti il gate
         # che la verifica non sarebbe collaudabile nella suite portabile — e un
         # gate non collaudato e' un gate di cui non si sa niente.
-        proc = {"pid": pid, "name": name, "status": "running", "cpu_percent": 0.0, "memory_mb": 10.0,
-                "command": command, "args": args or [],
-                "create_time": time.time(), "exe": command, "owner": _fake_owner()}
+        proc = {
+            "pid": pid,
+            "name": name,
+            "status": "running",
+            "cpu_percent": 0.0,
+            "memory_mb": 10.0,
+            "command": command,
+            "args": args or [],
+            "create_time": time.time(),
+            "exe": command,
+            "owner": _fake_owner(),
+            # N048: albero sintetico — i figli si collegano via ppid.
+            "ppid": 1,
+            "num_threads": 1,
+        }
         self._processes[pid] = proc
         return proc
 
@@ -236,6 +248,71 @@ class FakeBackend:
             return {"ok": False, "error": "not found", "pid": pid}
         self._processes[pid]["status"] = "terminated"
         return {"ok": True, "pid": pid, "status": "terminated"}
+
+    def inspect_process(self, pid: int) -> dict[str, Any] | None:
+        """N048 — inventario sintetico ricavato da ``ppid`` del registro finto."""
+        basic = self._processes.get(pid)
+        if basic is None:
+            return None
+        children = [
+            {
+                "pid": child["pid"],
+                "name": child.get("name"),
+                "status": child.get("status"),
+                "exe": child.get("exe"),
+            }
+            for child in self._processes.values()
+            if child.get("ppid") == pid and child.get("status") != "terminated"
+        ]
+        parent = None
+        ppid = basic.get("ppid")
+        if isinstance(ppid, int) and ppid in self._processes:
+            parent_proc = self._processes[ppid]
+            parent = {
+                "pid": parent_proc["pid"],
+                "name": parent_proc.get("name"),
+                "exe": parent_proc.get("exe"),
+            }
+        num_threads = basic.get("num_threads")
+        return {
+            **basic,
+            "parent": parent,
+            "children": children,
+            "threads": {"available": num_threads is not None, "count": num_threads},
+            "modules": {
+                "available": True,
+                "items": [{"path": basic.get("exe") or basic.get("name") or "fake.module"}],
+                "truncated": False,
+            },
+            "handles": {"available": True, "open_files_count": 3, "kind": "fake"},
+            "resources": {
+                "cpu_percent": basic.get("cpu_percent"),
+                "memory_mb": basic.get("memory_mb"),
+            },
+        }
+
+    def attach_child_process(self, parent_pid: int, *, name: str = "child.exe") -> dict[str, Any]:
+        """Test helper N048: crea un figlio sintetico sotto ``parent_pid``."""
+        if parent_pid not in self._processes:
+            raise KeyError(parent_pid)
+        self._next_pid += 1
+        pid = self._next_pid
+        proc = {
+            "pid": pid,
+            "name": name,
+            "status": "running",
+            "cpu_percent": 0.0,
+            "memory_mb": 4.0,
+            "command": name,
+            "args": [],
+            "create_time": time.time(),
+            "exe": name,
+            "owner": _fake_owner(),
+            "ppid": parent_pid,
+            "num_threads": 1,
+        }
+        self._processes[pid] = proc
+        return proc
 
     # --- Apps ---
     def discover_apps(self) -> list[dict[str, Any]]:
