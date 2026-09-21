@@ -247,7 +247,7 @@ class UpdateManager:
         Stages: preflight verify → [permissions] → backup → stop → replace →
         start → health. Always verifies. On failure after backup (or stop with
         need_rollback), rollback deletes files newly introduced by the update.
-        Ambiguous health ≠ success. Injectable hooks — no live SCM/systemctl.
+        Ambiguous health ≠ success. stop/start/health hooks are required (fail-closed if missing); hook exceptions trigger rollback. No live SCM/systemctl in CI.
         """
         stages: list[str] = ["preflight"]
         journal: list[str] = ["preflight: verify"]
@@ -290,6 +290,20 @@ class UpdateManager:
 
         journal.append("preflight: ok")
 
+        missing_hooks = [
+            name
+            for name, hook in (
+                ("stop", stop_service),
+                ("start", start_service),
+                ("health", health_check),
+            )
+            if hook is None
+        ]
+        if missing_hooks:
+            msg = "required lifecycle hooks missing: " + ", ".join(missing_hooks)
+            journal.append(f"preflight: {msg}")
+            return _result(ok=False, stage="preflight", error=msg)
+
         if check_writable:
             stages.append("permissions")
             journal.append("permissions: check install_dir writable")
@@ -323,17 +337,17 @@ class UpdateManager:
                 rolled_back=rolled,
             )
 
-        # stop (systemd/user or Windows SCM via injectable hook)
+        # stop (systemd/user or Windows SCM via injectable hook) — required
         stages.append("stop")
         journal.append("stop: begin")
-        if stop_service is not None:
-            ok, err = self._hook_succeeded(stop_service(), kind="stop")
-            if not ok:
-                # No tree change yet — still rollback to restore consistent state/version
-                return _fail("stop", err, need_rollback=True)
-            journal.append("stop: ok")
-        else:
-            journal.append("stop: skipped (no hook)")
+        try:
+            stop_result = stop_service()  # type: ignore[misc]
+        except Exception as exc:  # noqa: BLE001
+            return _fail("stop", f"stop hook raised: {exc}", need_rollback=True)
+        ok, err = self._hook_succeeded(stop_result, kind="stop")
+        if not ok:
+            return _fail("stop", err, need_rollback=True)
+        journal.append("stop: ok")
 
         # replace
         stages.append("replace")
@@ -348,27 +362,29 @@ class UpdateManager:
         except Exception as exc:  # noqa: BLE001 — boundary: any replace failure → rollback
             return _fail("replace", f"replace failed: {exc}", need_rollback=True)
 
-        # start
+        # start — required
         stages.append("start")
         journal.append("start: begin")
-        if start_service is not None:
-            ok, err = self._hook_succeeded(start_service(), kind="start")
-            if not ok:
-                return _fail("start", err, need_rollback=True)
-            journal.append("start: ok")
-        else:
-            journal.append("start: skipped (no hook)")
+        try:
+            start_result = start_service()  # type: ignore[misc]
+        except Exception as exc:  # noqa: BLE001
+            return _fail("start", f"start hook raised: {exc}", need_rollback=True)
+        ok, err = self._hook_succeeded(start_result, kind="start")
+        if not ok:
+            return _fail("start", err, need_rollback=True)
+        journal.append("start: ok")
 
-        # health
+        # health — required
         stages.append("health")
         journal.append("health: begin")
-        if health_check is not None:
-            ok, err = self._hook_succeeded(health_check(), kind="health")
-            if not ok:
-                return _fail("health", err, need_rollback=True)
-            journal.append("health: ok")
-        else:
-            journal.append("health: skipped (no hook)")
+        try:
+            health_result = health_check()  # type: ignore[misc]
+        except Exception as exc:  # noqa: BLE001
+            return _fail("health", f"health hook raised: {exc}", need_rollback=True)
+        ok, err = self._hook_succeeded(health_result, kind="health")
+        if not ok:
+            return _fail("health", err, need_rollback=True)
+        journal.append("health: ok")
 
         stages.append("done")
         journal.append("done")
