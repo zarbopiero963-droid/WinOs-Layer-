@@ -224,7 +224,7 @@ def verify_signature(
 
 
 class NullTransport:
-    """Default transport — refuses real network (tests inject a fake)."""
+    """Test/fail-closed transport — refuses real network until replaced."""
 
     def post(
         self,
@@ -240,9 +240,38 @@ class NullTransport:
         )
 
 
+class UrllibTransport:
+    """Production HTTP POST via ``urllib.request`` (stdlib).
+
+    Audit H63-N041: singleton previously defaulted to NullTransport with no
+    ``set_transport`` on the production path → TRANSPORT_MISSING forever.
+    """
+
+    def post(
+        self,
+        url: str,
+        *,
+        body: bytes,
+        headers: dict[str, str],
+        timeout: float,
+    ) -> tuple[int, bytes]:
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — URL gated by validate_webhook_url
+                return int(getattr(resp, "status", 200) or 200), resp.read()
+        except urllib.error.HTTPError as exc:
+            raw = exc.read() if hasattr(exc, "read") else b""
+            return int(exc.code), raw
+        except Exception as exc:  # noqa: BLE001
+            raise WebhookDeliveryError(str(exc), code="TRANSPORT_ERROR") from exc
+
+
 @dataclass
 class WebhookDispatcher:
-    transport: HttpTransport = field(default_factory=NullTransport)
+    transport: HttpTransport = field(default_factory=UrllibTransport)
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS
     backoff_seconds: tuple[float, ...] = _DEFAULT_BACKOFF
     timeout_s: float = _DEFAULT_TIMEOUT_S
