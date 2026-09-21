@@ -16,56 +16,37 @@ class WriteBody(BaseModel):
 
 @router.get("/fs")
 def list_dir(path: str = ".", auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_READ))):
-    result = fs.list_dir(path)
-    if isinstance(result, dict) and result.get("ok") is False:
-        raise HTTPException(403, {"detail": result.get("error"), "code": result.get("code")})
-    return {"entries": result}
+    try:
+        return {"entries": fs.list_dir(path)}
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
 
 @router.get("/fs/read")
 def read_file(path: str, auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_READ))):
-    result = fs.read_file(path)
-    if not result.get("ok", True):
-        status = 404 if result.get("code") == "PATH_NOT_FOUND" else 403
-        raise HTTPException(status, {"detail": result.get("error"), "code": result.get("code")})
-    return result
+    try:
+        return fs.read_file(path)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
 
 @router.put("/fs")
 def write_file(body: WriteBody, auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_WRITE))):
-    result = fs.write_file(body.path, body.content)
-    audit("fs.write", auth, resource=body.path, detail=result)
-    if not result.get("ok", True):
-        raise HTTPException(403, {"detail": result.get("error"), "code": result.get("code")})
-    return result
+    try:
+        result = fs.write_file(body.path, body.content)
+        audit("fs.write", auth, resource=body.path)
+        return result
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
 
 @router.delete("/fs")
 def delete_file(path: str, auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_WRITE))):
-    result = fs.delete_file(path)
-    audit("fs.delete", auth, resource=path, detail=result)
-    if not result.get("ok", True):
-        raise HTTPException(403, {"detail": result.get("error"), "code": result.get("code")})
-    return result
-
-
-
-@router.get("/fs/stat")
-def stat_file(path: str, auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_READ))):
-    """N049 — metadati file sotto sandbox (lstat, no follow)."""
-    result = fs.stat_file(path)
-    if not result.get("ok", True):
-        raise HTTPException(403, {"detail": result.get("error"), "code": result.get("code")})
-    return result
-
-@router.get("/fs/hash")
-def hash_file(
-    path: str,
-    algo: str = "sha256",
-    auth: AuthContext = Depends(require_permission(Permission.FILESYSTEM_READ)),
-):
-    """N049 — hash file sotto sandbox senza seguire symlink."""
-    result = fs.hash_file(path, algo=algo)
-    if not result.get("ok", True):
-        raise HTTPException(403, {"detail": result.get("error"), "code": result.get("code")})
-    return result
+    try:
+        result = fs.delete_file(path)
+        audit("fs.delete", auth, resource=path)
+        return result
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
 
 @router.get("/storage/drives")
 def drives(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_READ))):
