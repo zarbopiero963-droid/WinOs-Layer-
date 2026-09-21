@@ -45,7 +45,9 @@ def _mint_execution_id() -> str:
 
 
 def _mint_verification_id() -> str:
-    return f"ver_{uuid.uuid4().hex}"
+    from windows_os_api.apps.api_registry.model import issue_verification_proof
+
+    return issue_verification_proof()
 
 
 def _node(tree: dict[str, Any], automation_id: str) -> dict[str, Any] | None:
