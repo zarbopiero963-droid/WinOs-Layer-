@@ -348,6 +348,66 @@ def test_a_failed_start_does_not_leave_the_lock_behind(runtime_env, monkeypatch)
         assert client.get("/v1/live").status_code == 200
 
 
+def test_only_one_of_many_concurrent_acquirers_wins(runtime_env):
+    """Il caso che i test sequenziali non vedevano: due processi insieme.
+
+    `read_holder()` seguito da una scrittura lascia una finestra fra il
+    controllo e l'effetto: chi legge «libero» nello stesso istante scrive tutti,
+    e ognuno crede di avere il lock. Provato con 12 processi reali: ne
+    acquisivano 3.
+    """
+    from windows_os_api.core.runtime.instance_lock import (
+        InstanceLock,
+        InstanceLockTaken,
+    )
+
+    winners: list[int] = []
+    errors: list[BaseException] = []
+    start = threading.Barrier(12)
+
+    def contend(n: int) -> None:
+        try:
+            start.wait(timeout=10)
+            InstanceLock(runtime_env).acquire()
+            winners.append(n)
+        except InstanceLockTaken:
+            pass
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=contend, args=(i,)) for i in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+        assert not t.is_alive()
+
+    assert not errors, f"un acquirente e' morto invece di essere rifiutato: {errors}"
+    assert len(winners) == 1, f"lock acquisito da {len(winners)} contendenti: {winners}"
+
+
+def test_a_refused_acquirer_fails_cleanly_not_with_a_stray_oserror(runtime_env):
+    """Il rifiuto deve essere InstanceLockTaken, non un FileNotFoundError.
+
+    Con un file temporaneo condiviso fra i contendenti, il `replace` di uno
+    faceva sparire il tmp dell'altro: nella riproduzione a 12 processi, 9
+    morivano con FileNotFoundError non gestito — in produzione avrebbero fatto
+    esplodere il lifespan invece di essere respinti.
+    """
+    from windows_os_api.core.runtime.instance_lock import (
+        InstanceLock,
+        InstanceLockTaken,
+    )
+
+    held = InstanceLock(runtime_env)
+    held.acquire()
+    try:
+        with pytest.raises(InstanceLockTaken):
+            InstanceLock(runtime_env).acquire()
+    finally:
+        held.release()
+
+
 def test_the_lock_is_not_stolen_from_a_live_holder(runtime_env):
     with TestClient(create_app()):
         holder = json.loads((runtime_env / LOCK_NAME).read_text(encoding="utf-8"))
