@@ -33,6 +33,135 @@ MAX_PROCESS_CHILDREN = 32
 MAX_AUDIT_TAIL = 50
 MAX_LOG_LINES = 100
 BUNDLE_FILE_MODE = 0o600
+DEFAULT_PID_FILE = "logs/winos-api.pid"
+
+
+def default_pid_file() -> Path:
+    """Canonical service pidfile path (sibling of audit log under logs/)."""
+    return Path(DEFAULT_PID_FILE)
+
+
+def write_service_pid_file(
+    path: str | Path | None = None,
+    *,
+    pid: int | None = None,
+) -> Path:
+    """Persist the live service PID so an external CLI can diagnose a hung runtime."""
+    dest = Path(path) if path is not None else default_pid_file()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    value = int(os.getpid() if pid is None else pid)
+    tmp = dest.with_suffix(dest.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(f"{value}\n", encoding="utf-8")
+    os.replace(str(tmp), str(dest))
+    try:
+        os.chmod(str(dest), BUNDLE_FILE_MODE)
+    except OSError:
+        pass
+    return dest
+
+
+def clear_service_pid_file(
+    path: str | Path | None = None,
+    *,
+    expected_pid: int | None = None,
+) -> bool:
+    """Remove pidfile if present; optionally only when it still names ``expected_pid``."""
+    dest = Path(path) if path is not None else default_pid_file()
+    try:
+        raw = dest.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return False
+    if expected_pid is not None:
+        try:
+            if int(raw.split()[0]) != int(expected_pid):
+                return False
+        except (ValueError, IndexError):
+            return False
+    try:
+        dest.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _read_pid_file(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return None
+    if not raw:
+        return None
+    try:
+        pid = int(raw.split()[0])
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Reuse instance-lock liveness (PID-based, never clock-based)."""
+    if pid <= 0:
+        return False
+    try:
+        from windows_os_api.core.runtime.instance_lock import _pid_alive as lock_alive
+
+        return bool(lock_alive(pid))
+    except Exception:  # noqa: BLE001
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return True
+        return True
+
+
+def resolve_target_pid(
+    *,
+    pid: int | None = None,
+    pid_file: str | Path | None = None,
+    prefer_service: bool = False,
+) -> tuple[int, str]:
+    """Resolve which process the bundle should describe.
+
+    Returns ``(pid, source)`` where source is one of:
+    ``explicit``, ``pid_file``, ``default_pid_file``, ``instance_lock``, ``self``.
+
+    When ``prefer_service`` is True (CLI path), discover the live service via
+    pidfile / instance lock before falling back to the collector process.
+    """
+    if pid is not None:
+        target = int(pid)
+        if target <= 0:
+            raise DiagnoseParamError("pid must be a positive integer")
+        return target, "explicit"
+
+    if pid_file is not None:
+        found = _read_pid_file(Path(pid_file))
+        if found is None:
+            raise DiagnoseParamError(f"pid file unreadable or empty: {pid_file}")
+        return found, "pid_file"
+
+    if prefer_service:
+        found = _read_pid_file(default_pid_file())
+        if found is not None and _pid_alive(found):
+            return found, "default_pid_file"
+        try:
+            from windows_os_api.apps.adapters.store import store_dir
+            from windows_os_api.core.runtime.instance_lock import read_holder
+
+            holder = read_holder(store_dir())
+            if holder and isinstance(holder.get("pid"), int):
+                hpid = int(holder["pid"])
+                if hpid > 0 and _pid_alive(hpid):
+                    return hpid, "instance_lock"
+        except Exception:  # noqa: BLE001 — discovery is best-effort
+            pass
+
+    return os.getpid(), "self"
+
 
 # Settings / config key names that must never appear with values in a bundle.
 _SECRET_SETTING_SUFFIXES = (
@@ -128,40 +257,130 @@ def redact_config(settings_map: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def capture_stack_snapshot(
     *,
+    pid: int | None = None,
     max_threads: int = MAX_STACK_THREADS,
     max_frames: int = MAX_STACK_FRAMES,
 ) -> list[dict[str, Any]]:
-    """Capture limited per-thread stacks (no locals — avoid secret leakage)."""
-    frames = sys._current_frames()  # noqa: SLF001 — intentional diagnose aid
-    names = {t.ident: t.name for t in threading.enumerate()}
+    """Capture limited per-thread stacks (no locals — avoid secret leakage).
+
+    When ``pid`` is this process (or omitted), use in-process frames. When
+    targeting another (possibly hung) service PID, use best-effort external
+    collection — Python frames are not available without a debugger.
+    """
+    target = os.getpid() if pid is None else int(pid)
+    if target == os.getpid():
+        frames = sys._current_frames()  # noqa: SLF001 — intentional diagnose aid
+        names = {t.ident: t.name for t in threading.enumerate()}
+        items: list[dict[str, Any]] = []
+        for i, (tid, frame) in enumerate(frames.items()):
+            if i >= max_threads:
+                break
+            stack = traceback.format_stack(frame, limit=max_frames)
+            safe_stack = [sanitize_audit_string(line.rstrip(), max_len=512) for line in stack]
+            items.append(
+                {
+                    "thread_id": int(tid) if tid is not None else None,
+                    "thread_name": sanitize_audit_string(names.get(tid, "?"), max_len=128),
+                    "stack": safe_stack,
+                    "source": "in_process",
+                }
+            )
+        return items
+    return _capture_external_stacks(target, max_threads=max_threads, max_frames=max_frames)
+
+
+def _capture_external_stacks(
+    pid: int,
+    *,
+    max_threads: int,
+    max_frames: int,
+) -> list[dict[str, Any]]:
+    """Best-effort stacks for another process (hung-service diagnose path)."""
     items: list[dict[str, Any]] = []
-    for i, (tid, frame) in enumerate(frames.items()):
-        if i >= max_threads:
-            break
-        stack = traceback.format_stack(frame, limit=max_frames)
-        # Sanitize control chars; drop path noise only lightly.
-        safe_stack = [sanitize_audit_string(line.rstrip(), max_len=512) for line in stack]
+    # Linux: /proc/<pid>/task/<tid>/stack (kernel stacks; may be empty/EPERM).
+    task_dir = Path(f"/proc/{pid}/task")
+    if task_dir.is_dir():
+        try:
+            tids = sorted(int(p.name) for p in task_dir.iterdir() if p.name.isdigit())
+        except OSError:
+            tids = []
+        for i, tid in enumerate(tids[:max_threads]):
+            stack_lines: list[str] = []
+            try:
+                raw = (task_dir / str(tid) / "stack").read_text(encoding="utf-8", errors="replace")
+                for line in raw.splitlines()[:max_frames]:
+                    stack_lines.append(sanitize_audit_string(line, max_len=512))
+            except OSError as exc:
+                stack_lines = [
+                    sanitize_audit_string(f"<unavailable:{type(exc).__name__}>", max_len=128)
+                ]
+            items.append(
+                {
+                    "thread_id": tid,
+                    "thread_name": f"tid-{tid}",
+                    "stack": stack_lines,
+                    "source": "procfs",
+                }
+            )
+        if items:
+            return items
+    # Portable fallback: thread ids/status via psutil (no Python frames).
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        for i, th in enumerate(proc.threads()[:max_threads]):
+            items.append(
+                {
+                    "thread_id": int(getattr(th, "id", 0) or 0),
+                    "thread_name": f"tid-{getattr(th, 'id', '?')}",
+                    "stack": [
+                        sanitize_audit_string(
+                            "external_limited:no_python_frames",
+                            max_len=128,
+                        )
+                    ],
+                    "source": "psutil",
+                    "user_time": float(getattr(th, "user_time", 0.0) or 0.0),
+                    "system_time": float(getattr(th, "system_time", 0.0) or 0.0),
+                }
+            )
+    except Exception as exc:  # noqa: BLE001
         items.append(
             {
-                "thread_id": int(tid) if tid is not None else None,
-                "thread_name": sanitize_audit_string(names.get(tid, "?"), max_len=128),
-                "stack": safe_stack,
+                "thread_id": None,
+                "thread_name": "external",
+                "stack": [
+                    sanitize_audit_string(
+                        f"external_unavailable:{type(exc).__name__}",
+                        max_len=128,
+                    )
+                ],
+                "source": "unavailable",
             }
         )
     return items
 
 
-def capture_process_snapshot(*, max_children: int = MAX_PROCESS_CHILDREN) -> dict[str, Any]:
-    """Snapshot of *this* process (and limited children), not a full host dump."""
-    pid = os.getpid()
+def capture_process_snapshot(
+    *,
+    pid: int | None = None,
+    max_children: int = MAX_PROCESS_CHILDREN,
+) -> dict[str, Any]:
+    """Snapshot of the target process (and limited children), not a full host dump."""
+    pid = os.getpid() if pid is None else int(pid)
+    collector = os.getpid()
     out: dict[str, Any] = {
         "pid": pid,
-        "ppid": os.getppid(),
-        "executable": sanitize_audit_string(sys.executable, max_len=512),
-        "argv0": sanitize_audit_string(sys.argv[0] if sys.argv else "", max_len=512),
-        "cwd": sanitize_audit_string(os.getcwd(), max_len=512),
-        "threads": threading.active_count(),
+        "collector_pid": collector,
+        "self": pid == collector,
     }
+    if pid == collector:
+        out["ppid"] = os.getppid()
+        out["executable"] = sanitize_audit_string(sys.executable, max_len=512)
+        out["argv0"] = sanitize_audit_string(sys.argv[0] if sys.argv else "", max_len=512)
+        out["cwd"] = sanitize_audit_string(os.getcwd(), max_len=512)
+        out["threads"] = threading.active_count()
     try:
         import psutil
 
@@ -170,6 +389,33 @@ def capture_process_snapshot(*, max_children: int = MAX_PROCESS_CHILDREN) -> dic
             out["name"] = sanitize_audit_string(proc.name(), max_len=128)
             out["status"] = sanitize_audit_string(str(proc.status()), max_len=64)
             out["create_time"] = float(proc.create_time())
+            if pid != collector:
+                try:
+                    out["ppid"] = int(proc.ppid())
+                except (psutil.Error, OSError):
+                    pass
+                try:
+                    out["executable"] = sanitize_audit_string(proc.exe(), max_len=512)
+                except (psutil.Error, OSError):
+                    pass
+                try:
+                    cmdline = proc.cmdline()
+                    out["argv0"] = sanitize_audit_string(
+                        cmdline[0] if cmdline else "", max_len=512
+                    )
+                    out["cmdline"] = [
+                        sanitize_audit_string(c, max_len=256) for c in cmdline[:32]
+                    ]
+                except (psutil.Error, OSError):
+                    pass
+                try:
+                    out["cwd"] = sanitize_audit_string(proc.cwd(), max_len=512)
+                except (psutil.Error, OSError):
+                    pass
+                try:
+                    out["threads"] = int(proc.num_threads())
+                except (psutil.Error, OSError):
+                    pass
             try:
                 mem = proc.memory_info()
                 out["memory_rss"] = int(mem.rss)
@@ -316,13 +562,26 @@ def build_support_bundle(
     before_restart: bool = False,
     max_bytes: int | None = None,
     include_audit: bool = True,
+    target_pid: int | None = None,
+    pid_file: str | Path | None = None,
+    prefer_service: bool = False,
 ) -> dict[str, Any]:
-    """Assemble a redacted support bundle, truncating to ``max_bytes`` if needed."""
+    """Assemble a redacted support bundle, truncating to ``max_bytes`` if needed.
+
+    When ``prefer_service`` / ``target_pid`` / ``pid_file`` select another process
+    (CLI diagnosing a hung service), process + stacks describe that target, not
+    the collector CLI PID.
+    """
     max_b = clamp_max_bytes(max_bytes)
     bundle_id = str(uuid.uuid4())
     req = request_id or str(uuid.uuid4())
     exe = execution_id or str(uuid.uuid4())
     collected_at = datetime.now(timezone.utc).isoformat()
+    resolved_pid, target_source = resolve_target_pid(
+        pid=target_pid,
+        pid_file=pid_file,
+        prefer_service=prefer_service,
+    )
 
     from windows_os_api import __version__
 
@@ -339,8 +598,13 @@ def build_support_bundle(
             "system": sys.platform,
             "python": sanitize_audit_string(sys.version.split()[0], max_len=32),
         },
-        "process": capture_process_snapshot(),
-        "stacks": capture_stack_snapshot(),
+        "collector": {
+            "pid": os.getpid(),
+            "target_pid": resolved_pid,
+            "target_source": target_source,
+        },
+        "process": capture_process_snapshot(pid=resolved_pid),
+        "stacks": capture_stack_snapshot(pid=resolved_pid),
         "config": redact_config(_settings_map()),
         "health": capture_health_snapshot(),
         "metrics": capture_metrics_snapshot(),
@@ -404,6 +668,9 @@ def write_support_bundle(
     before_restart: bool = False,
     reason: str = "manual",
     request_id: str | None = None,
+    target_pid: int | None = None,
+    pid_file: str | Path | None = None,
+    prefer_service: bool = False,
 ) -> BundleWriteResult:
     """Atomically write a redacted bundle with owner-only file mode (0o600)."""
     dest = Path(path)
@@ -422,6 +689,9 @@ def write_support_bundle(
             request_id=request_id,
             before_restart=before_restart,
             max_bytes=max_bytes,
+            target_pid=target_pid,
+            pid_file=pid_file,
+            prefer_service=prefer_service,
         )
     )
     if before_restart:
@@ -438,6 +708,9 @@ def write_support_bundle(
             request_id=request_id or payload.get("request_id"),
             before_restart=before_restart,
             max_bytes=max_b,
+            target_pid=target_pid,
+            pid_file=pid_file,
+            prefer_service=prefer_service,
         )
         data = json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
         encoded = data.encode("utf-8")
@@ -494,6 +767,9 @@ def collect_before_restart(
     max_bytes: int | None = None,
     request_id: str | None = None,
     subject: str = "cli",
+    target_pid: int | None = None,
+    pid_file: str | Path | None = None,
+    prefer_service: bool = False,
 ) -> BundleWriteResult:
     """Collect a support bundle *before* any restart action.
 
@@ -506,6 +782,9 @@ def collect_before_restart(
         reason=reason,
         max_bytes=max_bytes,
         request_id=request_id,
+        target_pid=target_pid,
+        pid_file=pid_file,
+        prefer_service=prefer_service,
     )
     try:
         from windows_os_api.core.security.audit import get_audit_logger
