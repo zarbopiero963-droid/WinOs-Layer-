@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 PACKAGE_NAME = "winos-api"
+
+
+class PackagingError(RuntimeError):
+    """Fail-closed packaging error (N036)."""
 DEB_ARCH_MAP = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 RPM_ARCH_MAP = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}
 
@@ -500,11 +504,10 @@ def build_appimage(
     dist: Path,
     dry_run: bool = False,
 ) -> Path:
-    """Build a portable executable AppImage (self-extracting AppDir tarball).
+    """Build a Type-2 AppImage via ``appimagetool`` only (N036).
 
-    Type-2 ELF AppImage requires appimagetool; when absent we produce a
-    POSIX self-extracting ``.AppImage`` that embeds the AppDir — runnable
-    without FUSE. If ``appimagetool`` is on PATH, prefer it on the staged AppDir.
+    Fail-closed: missing tool or non-zero exit must **not** emit a shell
+    self-extracting file labeled ``.AppImage`` (audit H63-N036).
     """
     rpm_arch = normalize_rpm_arch(arch)
     out_name = f"{PACKAGE_NAME}-{version}-{rpm_arch}.AppImage"
@@ -547,47 +550,34 @@ def build_appimage(
         )  # truncated marker — structural only
 
         tool = shutil.which("appimagetool")
-        if tool:
-            if out_path.exists():
-                out_path.unlink()
-            r = subprocess.run(
-                [tool, str(appdir), str(out_path)],
-                check=False,
-                capture_output=True,
-                text=True,
+        if not tool:
+            raise PackagingError(
+                "appimagetool not found on PATH; refusing shell .AppImage fallback (N036)"
             )
-            if r.returncode == 0 and out_path.is_file():
-                out_path.chmod(out_path.stat().st_mode | 0o111)
-                return out_path
-            # fall through to self-extracting format
-
-        # Self-extracting AppImage (bash + tar.gz payload)
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-            tf.add(appdir, arcname=f"{PACKAGE_NAME}.AppDir")
-        payload = buf.getvalue()
-        stub = f"""#!/usr/bin/env bash
-# WinOs-Layer N036 self-extracting AppImage (no FUSE required).
-# Version: {version}  Arch: {rpm_arch}
-set -euo pipefail
-export WINOS_BACKEND="${{WINOS_BACKEND:-auto}}"
-TMPDIR="${{TMPDIR:-/tmp}}"
-EXTRACT="$(mktemp -d "${{TMPDIR}}/winos-api-appimage.XXXXXX")"
-cleanup() {{ rm -rf "${{EXTRACT}}"; }}
-trap cleanup EXIT
-ARCHIVE_LINE=$(awk '/^__APPIMAGE_ARCHIVE__/ {{print NR + 1; exit 0;}}' "$0")
-tail -n +"${{ARCHIVE_LINE}}" "$0" | tar -xz -C "${{EXTRACT}}"
-APPDIR="${{EXTRACT}}/{PACKAGE_NAME}.AppDir"
-exec "${{APPDIR}}/AppRun" "$@"
-__APPIMAGE_ARCHIVE__
-"""
         if out_path.exists():
             out_path.unlink()
-        with out_path.open("wb") as fh:
-            fh.write(stub.encode("utf-8"))
-            fh.write(payload)
+        r = subprocess.run(
+            [tool, str(appdir), str(out_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0 or not out_path.is_file():
+            err = (r.stderr or r.stdout or "").strip()
+            raise PackagingError(
+                "appimagetool failed (exit "
+                f"{r.returncode}); refusing shell .AppImage fallback (N036)"
+                + (f": {err[:400]}" if err else "")
+            )
+        head = out_path.read_bytes()[:4]
+        if head.startswith(b"#!"):
+            out_path.unlink(missing_ok=True)
+            raise PackagingError(
+                "appimagetool produced a shell script; refusing non-ELF .AppImage (N036)"
+            )
         out_path.chmod(out_path.stat().st_mode | 0o111)
-    return out_path
+        return out_path
+
 
 
 def package_format_summary(paths: list[Path]) -> dict[str, Any]:
