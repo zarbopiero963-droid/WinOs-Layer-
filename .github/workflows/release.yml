@@ -115,10 +115,17 @@ jobs:
             -o -name 'checksums-linux.txt' \
             -o -name 'winos-api' \
           \) -exec cp -t release-dist {} +
-          cd release-dist
-          sha256sum * > SHA256SUMS.txt || true
-          cat SHA256SUMS.txt
-          ls -la
+          # N028: never hash SHA256SUMS.txt into itself; fail-closed (no || true);
+          # stable order; platform checksums.txt may be included as artifacts.
+          mapfile -t ARTIFACTS < <(find release-dist -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' | sort)
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "N028: no release artifacts to checksum" >&2
+            exit 1
+          fi
+          python scripts/build_installer.py checksums "${ARTIFACTS[@]}" -o release-dist/SHA256SUMS.txt
+          python scripts/build_installer.py verify-checksums release-dist/SHA256SUMS.txt --root release-dist
+          cat release-dist/SHA256SUMS.txt
+          ls -la release-dist
       - name: Upload checksums artifact
         uses: actions/upload-artifact@v4
         with:
