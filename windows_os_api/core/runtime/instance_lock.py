@@ -26,6 +26,11 @@ from typing import Any
 
 LOCK_FILENAME = ".winos-instance.lock"
 
+# Quanti giri di «recupera un lock morto e riprova a crearlo» prima di
+# rinunciare. Senza un tetto, due processi che si recuperano il lock a vicenda
+# girerebbero all'infinito invece di fallire in modo visibile.
+_RECLAIM_ATTEMPTS = 5
+
 
 class InstanceLockTaken(RuntimeError):
     """Un'altra istanza viva possiede gia' questo store."""
@@ -97,15 +102,17 @@ class InstanceLock:
         self._payload: dict[str, Any] | None = None
 
     def acquire(self) -> dict[str, Any]:
+        """Prende il lock, o solleva `InstanceLockTaken`.
+
+        Il vincitore lo decide il kernel, non noi: la creazione con
+        ``O_CREAT | O_EXCL`` riesce a **un solo** chiamante, qualunque sia
+        l'interleaving. Leggere e poi scrivere, com'era prima, lascia fra il
+        controllo e l'effetto una finestra in cui due processi leggono entrambi
+        «libero» e scrivono entrambi: con 12 processi concorrenti il lock
+        risultava acquisito da 3, e 9 morivano con `FileNotFoundError` perche'
+        condividevano lo stesso file temporaneo.
+        """
         self.store_dir.mkdir(parents=True, exist_ok=True)
-        holder = read_holder(self.store_dir)
-        if holder is not None and _pid_alive(int(holder["pid"])):
-            raise InstanceLockTaken(
-                f"un'altra istanza WinOs (pid {holder['pid']}) usa gia' lo store "
-                f"{self.store_dir}: due istanze sullo stesso store si sovrascrivono "
-                f"i manifest a vicenda. Fermare l'altra istanza o usare "
-                f"WINOS_ADAPTER_STORE diverso."
-            )
         payload = {
             "pid": os.getpid(),
             "host": _hostname(),
@@ -113,12 +120,55 @@ class InstanceLock:
         }
         # `started_at` e' diagnostico: serve a un umano che legge il file, non al
         # gate. Nessuna decisione di liveness lo guarda (vedi docstring del modulo).
-        tmp = self.path.with_suffix(".lock.tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
-        self.held = True
-        self._payload = payload
-        return payload
+        blob = json.dumps(payload, indent=2).encode("utf-8")
+
+        for _attempt in range(_RECLAIM_ATTEMPTS):
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                holder = read_holder(self.store_dir)
+                if holder is not None and _pid_alive(int(holder["pid"])):
+                    raise InstanceLockTaken(
+                        f"un'altra istanza WinOs (pid {holder['pid']}) usa gia' lo "
+                        f"store {self.store_dir}: due istanze sullo stesso store si "
+                        f"sovrascrivono i manifest a vicenda. Fermare l'altra "
+                        f"istanza o usare WINOS_ADAPTER_STORE diverso."
+                    ) from None
+                # Lock di un processo morto, o file illeggibile: si recupera. Il
+                # ciclo riprova la creazione esclusiva, cosi' anche fra due
+                # recuperanti ne resta comunque uno solo.
+                self._discard_stale()
+                continue
+            except OSError as exc:
+                raise InstanceLockTaken(
+                    f"impossibile prendere il lock di istanza su {self.store_dir}: {exc}"
+                ) from exc
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(blob)
+            self.held = True
+            self._payload = payload
+            return payload
+
+        raise InstanceLockTaken(
+            f"contesa irrisolta sul lock di istanza in {self.store_dir} dopo "
+            f"{_RECLAIM_ATTEMPTS} tentativi: nessun avvio, invece di due istanze"
+        )
+
+    def _discard_stale(self) -> None:
+        """Toglie un lock che nessun processo vivo possiede.
+
+        Rilegge e ricontrolla la liveness immediatamente prima di cancellare: fra
+        il controllo del chiamante e questo punto un'altra istanza puo' avere
+        preso il lock, e quella non va toccata. Se sparisce da sola nel
+        frattempo, va bene lo stesso — il ciclo riprova la creazione esclusiva.
+        """
+        holder = read_holder(self.store_dir)
+        if holder is not None and _pid_alive(int(holder["pid"])):
+            return
+        try:
+            self.path.unlink()
+        except (FileNotFoundError, OSError):
+            return
 
     def release(self) -> bool:
         """Toglie il lock solo se e' ancora nostro. ``False`` se non c'era."""
