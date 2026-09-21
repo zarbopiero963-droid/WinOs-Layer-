@@ -9,6 +9,8 @@ Documented test/dev default: ``winos-audit-dev-secret`` — override in producti
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import hashlib
 import hmac
 import json
@@ -65,6 +67,33 @@ class IntegrityReport:
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+# N042: shared correlation ids for the in-flight request (REST/MCP/WS/gateway).
+_request_id_var: ContextVar[str | None] = ContextVar("winos_audit_request_id", default=None)
+_execution_id_var: ContextVar[str | None] = ContextVar("winos_audit_execution_id", default=None)
+
+
+def current_request_id() -> str | None:
+    return _request_id_var.get()
+
+
+def current_execution_id() -> str | None:
+    return _execution_id_var.get()
+
+
+def bind_correlation(*, request_id: str | None = None, execution_id: str | None = None) -> tuple[str, str]:
+    """Bind (and return) request/execution ids for the current context."""
+    rid = (request_id or _request_id_var.get() or _new_id()).strip()
+    eid = (execution_id or _execution_id_var.get() or _new_id()).strip()
+    _request_id_var.set(rid)
+    _execution_id_var.set(eid)
+    return rid, eid
+
+
+def clear_correlation() -> None:
+    _request_id_var.set(None)
+    _execution_id_var.set(None)
 
 
 def sanitize_audit_string(value: str, *, max_len: int = 1024) -> str:
@@ -219,8 +248,12 @@ class AuditLogger:
             )
 
         # Redact / sanitize outside the lock (CPU); chain fields under lock.
-        rid = sanitize_audit_string(request_id or _new_id(), max_len=64)
-        eid = sanitize_audit_string(execution_id or _new_id(), max_len=64)
+        rid = sanitize_audit_string(
+            request_id or current_request_id() or _new_id(), max_len=64
+        )
+        eid = sanitize_audit_string(
+            execution_id or current_execution_id() or _new_id(), max_len=64
+        )
         clean_detail = redact_audit_value(detail or {})
         if not isinstance(clean_detail, dict):
             clean_detail = {"value": clean_detail}

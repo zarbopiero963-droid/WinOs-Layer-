@@ -289,6 +289,21 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
     rid = req.get("id")
     method = req.get("method", "")
     params = req.get("params") or {}
+    from windows_os_api.core.security.audit import bind_correlation, clear_correlation
+
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    bind_correlation(
+        request_id=meta.get("request_id") or meta.get("x-request-id"),
+        execution_id=meta.get("execution_id") or meta.get("x-execution-id"),
+    )
+    try:
+        return _handle_request_bound(req, rid, method, params)
+    finally:
+        clear_correlation()
+
+
+def _handle_request_bound(req: dict[str, Any], rid: Any, method: str, params: Any) -> dict[str, Any]:
     try:
         _bind_mcp_auth(params)
     except Exception as exc:  # noqa: BLE001 — map FastAPI HTTPException to JSON-RPC
