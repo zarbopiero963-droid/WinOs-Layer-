@@ -2049,9 +2049,12 @@ class LinuxBackend:
 
     def fs_read(self, path: str, max_bytes: int = 65536) -> dict[str, Any]:
         import base64
+        from windows_os_api.os.filesystem import paths as fspaths
 
-        target = self._safe_path(path)
-        data = target.read_bytes()[:max_bytes]
+        try:
+            target, data = fspaths.read_bytes_nofollow(self.sandbox, path, max_bytes)
+        except fspaths.PathRejected as exc:
+            raise PermissionError(str(exc)) from exc
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -2061,21 +2064,30 @@ class LinuxBackend:
             "size": len(data),
             "text": text,
             "base64": base64.b64encode(data).decode(),
+            "abs_path": str(target),
         }
 
     def fs_write(self, path: str, content: str) -> dict[str, Any]:
-        target = self._safe_path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": path, "bytes": len(content.encode())}
+        # N049: anche il backend rifiuta symlink/TOCTOU (O_NOFOLLOW). Il gate
+        # autorevole resta il service; questo e' cintura e bretelle.
+        from windows_os_api.os.filesystem import paths as fspaths
+
+        try:
+            target = fspaths.write_bytes_nofollow(
+                self.sandbox, path, content.encode("utf-8")
+            )
+        except fspaths.PathRejected as exc:
+            raise PermissionError(str(exc)) from exc
+        return {"ok": True, "path": path, "bytes": len(content.encode()), "abs_path": str(target)}
 
     def fs_delete(self, path: str) -> dict[str, Any]:
-        target = self._safe_path(path)
-        if target.is_dir():
-            target.rmdir()
-        else:
-            target.unlink(missing_ok=True)
-        return {"ok": True, "path": path}
+        from windows_os_api.os.filesystem import paths as fspaths
+
+        try:
+            target = fspaths.unlink_nofollow(self.sandbox, path)
+        except fspaths.PathRejected as exc:
+            raise PermissionError(str(exc)) from exc
+        return {"ok": True, "path": path, "abs_path": str(target)}
 
     # ------------------------------------------------------------------
     # Storage / network
