@@ -50,10 +50,14 @@ def test_mouse_move_refuses_out_of_range_coordinates(linux_backend, window_manag
 # ---------------------------------------------------------------------------
 def test_double_click_delivers_two_presses_not_one(linux_backend, event_recorder):
     # Xvfb+Openbox can FocusOut between ensure_focus and xdotool delivery
-    # (seen sticky on CI 2026-09-21). One re-focus + retry keeps the contract.
+    # (sticky on CI 2026-09-21; 1 retry still failed on #135). Re-focus + settle
+    # + several attempts keep the two-press contract without widening scope.
+    import time
+
     last_text = ""
-    for attempt in range(2):
+    for attempt in range(5):
         event_recorder.ensure_focus()
+        time.sleep(0.05 * (attempt + 1))
         cx, cy = event_recorder.center
         result = linux_backend.double_click(cx, cy)
         assert result["ok"] is True, result
@@ -61,7 +65,7 @@ def test_double_click_delivers_two_presses_not_one(linux_backend, event_recorder
 
         # The claim is "two", so two is what is asserted — a single click reaching
         # the window would satisfy `ok` but not this.
-        presses = event_recorder.wait_for(r"^ButtonPress", at_least=2)
+        presses = event_recorder.wait_for(r"^ButtonPress", at_least=2, timeout=3.0)
         if presses >= 2:
             assert event_recorder.count(r"button 1\b") >= 4  # 2 presses + 2 releases
             return
@@ -71,6 +75,7 @@ def test_double_click_delivers_two_presses_not_one(linux_backend, event_recorder
             event_recorder.start_offset = event_recorder.path.stat().st_size
         except OSError:
             pass
+        time.sleep(0.2)
     assert False, last_text
 
 
