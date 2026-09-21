@@ -5,6 +5,9 @@ runtime revoke (DISABLED / demoted) removes tools and fails ``tools/call``;
 ``invoke_action`` never implicitly ``create_adapter`` (N017); protocol
 negotiation accepts known versions only.
 
+N011: ``auth_context_from_mcp_params`` builds the shared AuthContext from
+``params._meta`` (same subject/fingerprint as REST/WS).
+
 N021: ``resources/list`` / ``resources/read`` expose VERIFIED registry state
 (``winos://api/{id}``) without secrets; ``resources.listChanged`` capability +
 pending ``notifications/resources/list_changed`` (and tools twin) on snapshot
@@ -37,6 +40,7 @@ from windows_os_api.apps.api_registry.mcp_tools import (
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.agent.computer import ComputerAgent
 from windows_os_api.backends.factory import get_backend
+from windows_os_api.core.security.auth import AuthContext, auth_context_from_mcp_params
 from windows_os_api.os.system import service as system
 
 SUPPORTED_PROTOCOL_VERSIONS = frozenset({"2024-11-05", "2025-03-26"})
@@ -104,6 +108,36 @@ _pending_notifications: list[dict[str, Any]] = []
 _last_resource_snapshot: tuple[str, ...] | None = None
 _last_tool_snapshot: tuple[str, ...] | None = None
 
+_last_tool_snapshot: tuple[str, ...] | None = None
+
+# N011 — shared principal for the in-flight MCP request (None = unauthenticated).
+_current_mcp_auth: AuthContext | None = None
+
+
+def current_mcp_auth() -> AuthContext | None:
+    """AuthContext built for the current MCP request, if any (N011)."""
+    return _current_mcp_auth
+
+
+def _bind_mcp_auth(params: Any) -> AuthContext | None:
+    """Construct shared AuthContext from ``params._meta`` (no parallel identity)."""
+    global _current_mcp_auth
+    p = params if isinstance(params, dict) else {}
+    # Only build when a key is offered, or when require_auth is off (anonymous VIEWER).
+    # Missing credentials under require_auth stay None — deny/list gating is N020.
+    meta = p.get("_meta") if isinstance(p.get("_meta"), dict) else {}
+    has_key = isinstance(meta, dict) and (
+        meta.get("api_key") is not None or meta.get("x-api-key") is not None
+    )
+    from windows_os_api.core.runtime.config import get_settings
+    settings = get_settings()
+    if has_key or not settings.require_auth:
+        _current_mcp_auth = auth_context_from_mcp_params(p, settings)
+    else:
+        _current_mcp_auth = None
+    return _current_mcp_auth
+
+
 
 def take_pending_notifications() -> list[dict[str, Any]]:
     """Drain server→client notifications queued since the last take (N021)."""
@@ -116,9 +150,11 @@ def take_pending_notifications() -> list[dict[str, Any]]:
 def reset_mcp_session_state() -> None:
     """Clear notification queue and listChanged snapshots (tests / restart)."""
     global _pending_notifications, _last_resource_snapshot, _last_tool_snapshot
+    global _current_mcp_auth
     _pending_notifications = []
     _last_resource_snapshot = None
     _last_tool_snapshot = None
+    _current_mcp_auth = None
 
 
 def _enqueue_notification(method: str, params: dict[str, Any] | None = None) -> None:
@@ -203,6 +239,17 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
     rid = req.get("id")
     method = req.get("method", "")
     params = req.get("params") or {}
+    try:
+        _bind_mcp_auth(params)
+    except Exception as exc:  # noqa: BLE001 — map FastAPI HTTPException to JSON-RPC
+        from fastapi import HTTPException
+        if isinstance(exc, HTTPException):
+            return {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "error": {"code": -32001, "message": str(exc.detail)},
+            }
+        raise
 
     def ok(result: Any) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": rid, "result": result}

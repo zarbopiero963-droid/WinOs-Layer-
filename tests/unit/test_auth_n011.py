@@ -161,3 +161,72 @@ def test_build_auth_context_redacts_key_material():
     assert ctx.api_key == "abcdefgh..."
     assert "ijklmnop" not in ctx.api_key
     assert ctx.role == Role.AUTOMATOR
+
+
+def test_subject_is_fingerprint_not_key_prefix_collision():
+    """Audit H63-N011: distinct keys sharing first 8 chars must not share subject."""
+    prefix = "abcdefgh"
+    k1 = prefix + "SAME_SUFFIX_ONE_AAAA"
+    k2 = prefix + "DIFFERENT_TWO_BBBB"
+    s = Settings(
+        operator_api_keys=[k1, k2],
+        require_auth=True,
+    )
+    a1 = build_auth_context(k1, s)
+    a2 = build_auth_context(k2, s)
+    assert a1.subject.startswith("key:")
+    assert a2.subject.startswith("key:")
+    assert a1.subject != a2.subject
+    assert a1.subject == f"key:{a1.key_fingerprint}"
+    assert a2.subject == f"key:{a2.key_fingerprint}"
+    # Cross-owner isolation must deny (N012 surface fed by N011 subject).
+    from windows_os_api.core.security.auth import ensure_resource_owner
+
+    with pytest.raises(HTTPException) as ei:
+        ensure_resource_owner(a2, a1.subject)
+    assert ei.value.status_code == 403
+
+
+def test_mcp_builds_shared_auth_context_from_meta():
+    """N011: MCP uses the same AuthContext builder as REST (no parallel identity)."""
+    from windows_os_api.api.mcp import server as mcp
+    from windows_os_api.core.security.auth import auth_context_from_mcp_params
+
+    k = "mcp-operator-key-n011-unique"
+    s = Settings(operator_api_keys=[k], require_auth=True)
+    get_settings.cache_clear()
+    # Helper path
+    ctx = auth_context_from_mcp_params({"_meta": {"api_key": k}}, s)
+    assert ctx.role == Role.OPERATOR
+    assert ctx.subject == f"key:{ctx.key_fingerprint}"
+    assert ctx.subject != f"key:{k[:8]}"
+
+    # Server request path binds current_mcp_auth
+    mcp.reset_mcp_session_state()
+    # Patch settings via env for get_settings used inside _bind_mcp_auth
+    import os
+
+    import json
+
+    os.environ["WINOS_OPERATOR_API_KEYS"] = json.dumps([k])
+    os.environ["WINOS_REQUIRE_AUTH"] = "true"
+    get_settings.cache_clear()
+    try:
+        resp = mcp.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "ping",
+                "params": {"_meta": {"api_key": k}},
+            }
+        )
+        assert resp.get("result", {}).get("ok") is True
+        bound = mcp.current_mcp_auth()
+        assert bound is not None
+        assert bound.subject == ctx.subject
+        assert bound.role == Role.OPERATOR
+    finally:
+        os.environ.pop("WINOS_OPERATOR_API_KEYS", None)
+        os.environ.pop("WINOS_REQUIRE_AUTH", None)
+        get_settings.cache_clear()
+        mcp.reset_mcp_session_state()

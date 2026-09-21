@@ -327,10 +327,13 @@ def build_auth_context(api_key: str | None, settings: Settings) -> AuthContext:
         )
     role = resolve_role(api_key, settings)
     perms = set(ROLE_PERMISSIONS.get(role, set()))
+    # Display redaction only — never use a key prefix as the principal id.
+    # Audit H63-N011: two distinct keys sharing the first 8 chars collided on
+    # ``subject``, so ``ensure_resource_owner`` allowed cross-owner access.
     redacted = (api_key[:8] + "...") if len(api_key) >= 8 else "***"
-    subject = f"key:{api_key[:8]}" if len(api_key) >= 8 else "key:***"
     registry = get_auth_registry()
     fp = _fingerprint(api_key)
+    subject = f"key:{fp}"
     user_id = registry.get_user_id(api_key) or subject
     scopes = registry.get_app_scopes(api_key)
     session_id = registry.issue_session(key_fingerprint=fp, subject=subject, role=role)
@@ -378,6 +381,31 @@ def ensure_app_access(auth: AuthContext, app_id: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"App scope denied: {app_id}",
         )
+
+
+
+def auth_context_from_mcp_params(
+    params: dict | None,
+    settings: Settings | None = None,
+) -> AuthContext:
+    """Build the same ``AuthContext`` REST/WS use, from MCP ``params._meta``.
+
+    N011: MCP must not invent a parallel identity. Credentials come from
+    ``params._meta.api_key`` / ``x-api-key`` (never from query strings).
+    Tool-level gating / tools/list deny without credentials remains N020;
+    this helper only constructs the shared principal when called.
+    """
+    settings = settings or get_settings()
+    api_key: str | None = None
+    if isinstance(params, dict):
+        meta = params.get("_meta")
+        if isinstance(meta, dict):
+            raw = meta.get("api_key")
+            if raw is None:
+                raw = meta.get("x-api-key")
+            if raw is not None:
+                api_key = str(raw)
+    return build_auth_context(api_key, settings)
 
 
 def ensure_resource_owner(auth: AuthContext, owner_subject: str) -> None:
