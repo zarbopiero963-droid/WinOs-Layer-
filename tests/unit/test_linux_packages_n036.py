@@ -47,19 +47,46 @@ def _uninstall_sh() -> str:
 
 
 def _install_fake_appimagetool(monkeypatch, tmp_path: Path) -> Path:
-    """N036: tests must not rely on shell .AppImage fallback."""
-    tool = tmp_path / "appimagetool"
-    tool.write_bytes(
-        b"""#!/bin/sh
-out="$2"
-# Minimal ELF magic + padding so size checks pass
-printf "\177ELF" > "$out"
-dd if=/dev/zero bs=1 count=200 >> "$out" 2>/dev/null || true
-chmod +x "$out"
-"""
+    """N036: cross-platform fake appimagetool (ELF stub; no shell .AppImage).
+
+    Windows CI cannot exec a #!/bin/sh script via subprocess, and
+    shutil.which only finds PATHEXT entries (.cmd/.bat/.exe). Use a
+    small Python writer plus a .cmd launcher on win32.
+    """
+    impl = tmp_path / "_fake_appimagetool.py"
+    impl.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "out = Path(sys.argv[2])\n"
+        "out.write_bytes(b'\\x7fELF' + b'\\x00' * 200)\n"
+        "try:\n"
+        "    out.chmod(0o755)\n"
+        "except OSError:\n"
+        "    pass\n",
+        encoding="utf-8",
     )
-    tool.chmod(0o755)
-    monkeypatch.setenv("PATH", str(tmp_path) + ":" + os.environ.get("PATH", ""))
+    if sys.platform == "win32":
+        tool = tmp_path / "appimagetool.cmd"
+        tool.write_text(
+            f'@echo off\r\n"{sys.executable}" "{impl}" %*\r\n',
+            encoding="utf-8",
+        )
+    else:
+        tool = tmp_path / "appimagetool"
+        tool.write_text(
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "out = Path(sys.argv[2])\n"
+            "out.write_bytes(b'\\x7fELF' + b'\\x00' * 200)\n"
+            "out.chmod(0o755)\n",
+            encoding="utf-8",
+        )
+        tool.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH",
+        str(tmp_path) + os.pathsep + os.environ.get("PATH", ""),
+    )
     return tool
 
 def test_h63_n036_packaging_templates_present():
