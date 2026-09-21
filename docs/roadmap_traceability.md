@@ -112,19 +112,21 @@ pytest tests/unit/test_fixture_isolation_n002.py -q
 
 Out of scope: harness prodotto installato (N003), farm matrix completa.
 
-## N003 — Harness del prodotto installato (preflight)
+## N003 — Harness del prodotto installato (preflight + hook fail-closed)
 
-Contratto (#67 / H63-N003, famiglie Q00/Q01) — **scaffolding fail-closed only**:
+Contratto (#67 / H63-N003, famiglie Q00/Q01) — **scaffolding fail-closed**:
 
 1. Porta destinazione occupata → blocco (`require_port_free`).
 2. `FakeBackend` / `backend==fake` rilevato → blocco.
 3. Checksum artifact assente o hash mismatch → blocco.
 4. API key di sessione **realmente generata** (`secrets.token_urlsafe`); chiavi
    statiche di suite/smoke rifiutate.
+5. `download_artifact`: solo path locale + checksum; URL http(s) → fail-closed.
+6. `install_artifact`: sempre fail-closed (install OS reale → #21).
+7. Stub client esterni tcp/mcp/ws/browser → `require_external_client` fail-closed;
+   `clients_implemented=()` (nessun false-success).
 
-Helpers: `tests/harness/installed_product_preflight.py`
-(`run_session_preflight`, raccolta version/hash/backend, stub clients_allowed
-tcp/mcp/ws/browser).
+Helpers: `tests/harness/installed_product_preflight.py`.
 
 ```bash
 pytest tests/unit/test_installed_product_preflight_n003.py -q
