@@ -179,7 +179,21 @@ def create_api_route(
         "status": ApiStatus.PARTIAL.value,
         "verification_id": None,
         "last_verified_at": None,
+        "input_schema": body.input_schema,
+        "output_schema": body.output_schema,
     }
+
+    # N024: virtual_adapter create must materialize an adapter (not record-only).
+    adapter_created = False
+    if (body.source or "").strip() == "virtual_adapter" and app_id:
+        from windows_os_api.apps.adapters.engine import create_adapter, get_adapter
+
+        if get_adapter(app_id) is None:
+            create_adapter(app_id)
+            adapter_created = True
+            if not payload["adapter_id"]:
+                payload["adapter_id"] = app_id
+
     try:
         rec = registry.register(payload)
     except RegistrationRejected as exc:
@@ -198,7 +212,14 @@ def create_api_route(
         auth,
         resource=rec.id,
         outcome="success",
-        detail={"status": rec.status.value, "path": rec.path, "method": rec.method},
+        detail={
+            "status": rec.status.value,
+            "path": rec.path,
+            "method": rec.method,
+            "adapter_created": adapter_created,
+            "has_input_schema": rec.input_schema is not None,
+            "has_output_schema": rec.output_schema is not None,
+        },
     )
     return rec.to_dict()
 

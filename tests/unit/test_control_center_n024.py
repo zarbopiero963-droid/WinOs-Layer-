@@ -307,3 +307,36 @@ def test_hostile_metadata_markers_still_present(client, admin_headers, registry)
     assert "textContent" in html
     assert "cvpCreate" in html
     assert 'id="key" value=""' in html or re.search(r'id="key"[^>]*value=""', html)
+
+
+def test_rest_create_persists_input_output_schemas(client, admin_headers, registry):
+    """N024 audit: schemas must not be discarded on create."""
+    from windows_os_api.apps.adapters.engine import get_adapter, reset_adapters
+
+    reset_adapters()
+    r = client.post(
+        "/v1/apis",
+        headers=admin_headers,
+        json={
+            "name": "Schema fixture",
+            "method": "POST",
+            "path": "/v1/apps/n024-schema-app/actions/count",
+            "source": "virtual_adapter",
+            "application_id": "n024-schema-app",
+            "capability": "n024-schema-app.count",
+            "permissions": [],
+            "input_schema": {"type": "object", "required": ["count"]},
+            "output_schema": {"type": "integer"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "PARTIAL"
+    assert body.get("input_schema") == {"type": "object", "required": ["count"]}
+    assert body.get("output_schema") == {"type": "integer"}
+    stored = registry.get(body["id"])
+    assert stored is not None
+    assert stored.input_schema == {"type": "object", "required": ["count"]}
+    assert stored.output_schema == {"type": "integer"}
+    # virtual_adapter create materializes adapter
+    assert get_adapter("n024-schema-app") is not None
