@@ -11,6 +11,12 @@ import re
 from typing import Any, Iterable, Mapping
 
 from windows_os_api.apps.api_registry.gateway import execute_via_gateway
+from windows_os_api.apps.api_registry.model import (
+    ApiRecord,
+    ApiRegistry,
+    ApiStatus,
+    get_api_registry,
+)
 
 
 def _mcp_auth():
@@ -18,12 +24,6 @@ def _mcp_auth():
     from windows_os_api.api.mcp.server import current_mcp_auth
 
     return current_mcp_auth()
-from windows_os_api.apps.api_registry.model import (
-    ApiRecord,
-    ApiRegistry,
-    ApiStatus,
-    get_api_registry,
-)
 
 _SAFE = re.compile(r"[^a-zA-Z0-9_]+")
 
@@ -80,15 +80,27 @@ def record_to_mcp_tool(record: ApiRecord) -> dict[str, Any]:
     }
 
 
+def _tool_record_visible(record: ApiRecord, visible_app_ids: frozenset[str] | None) -> bool:
+    """REST-catalog parity: None = unrestricted; empty/missing app denied when scoped."""
+    if visible_app_ids is None:
+        return True
+    app = (record.application_id or "").strip()
+    if not app:
+        return False
+    return app in visible_app_ids
+
+
 def list_registry_mcp_tools(
     registry: ApiRegistry | None = None,
+    *,
+    visible_app_ids: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """VERIFIED registry tools only, sorted by stable name."""
+    """VERIFIED registry tools only, sorted by stable name (N020 scope filter)."""
     reg = registry if registry is not None else get_api_registry()
     tools = [
         record_to_mcp_tool(r)
         for r in reg.list()
-        if _is_mcp_publishable(r)
+        if _is_mcp_publishable(r) and _tool_record_visible(r, visible_app_ids)
     ]
     tools.sort(key=lambda t: t["name"])
     return tools

@@ -40,7 +40,12 @@ from windows_os_api.apps.api_registry.mcp_tools import (
 from windows_os_api.apps.discovery import service as discovery
 from windows_os_api.apps.agent.computer import ComputerAgent
 from windows_os_api.backends.factory import get_backend
-from windows_os_api.core.security.auth import AuthContext, auth_context_from_mcp_params
+from windows_os_api.core.permissions.model import Permission, Role
+from windows_os_api.core.security.auth import (
+    AuthContext,
+    auth_context_from_mcp_params,
+    get_auth_registry,
+)
 from windows_os_api.os.system import service as system
 
 SUPPORTED_PROTOCOL_VERSIONS = frozenset({"2024-11-05", "2025-03-26"})
@@ -170,6 +175,10 @@ def _visible_app_ids_from_params(params: Any) -> frozenset[str] | None:
 
     ``None`` = unrestricted (default, matches ADMIN / unbound REST principals).
     A list/tuple (even empty) = scoped allowlist.
+
+    N020/N021: when authentication is bound, prefer auth-derived scopes via
+    ``_resolve_tools_visible_app_ids`` — client ``app_scopes`` must not expand
+    visibility beyond the principal.
     """
     if not isinstance(params, dict):
         return None
@@ -188,15 +197,53 @@ def _visible_app_ids_from_params(params: Any) -> frozenset[str] | None:
     return frozenset(str(s).strip() for s in scopes if str(s).strip())
 
 
-def _tool_snapshot() -> tuple[str, ...]:
-    return tuple(t["name"] for t in list_all_tools())
+def _visible_app_ids_from_auth(auth: AuthContext) -> frozenset[str] | None:
+    """REST-catalog parity for MCP (N020): ADMIN/unbound → None unrestricted."""
+    if auth.role == Role.ADMIN or Permission.ADMIN in auth.permissions:
+        return None
+    registry = get_auth_registry()
+    scopes = (
+        registry.get_app_scopes_fp(auth.key_fingerprint)
+        if auth.key_fingerprint
+        else auth.app_scopes
+    )
+    if not scopes:
+        return None
+    return frozenset(scopes)
+
+
+def _resolve_tools_visible_app_ids(params: Any) -> frozenset[str] | None:
+    """Auth-derived scopes win; client ``_meta.app_scopes`` never expand them."""
+    auth = current_mcp_auth()
+    if auth is not None:
+        return _visible_app_ids_from_auth(auth)
+    return _visible_app_ids_from_params(params)
+
+
+def _require_mcp_auth_or_error(rid: Any) -> dict[str, Any] | None:
+    """When require_auth, refuse unauthenticated MCP tool discovery/call."""
+    from windows_os_api.core.runtime.config import get_settings
+
+    if not get_settings().require_auth:
+        return None
+    if current_mcp_auth() is not None:
+        return None
+    return {
+        "jsonrpc": "2.0",
+        "id": rid,
+        "error": {"code": -32001, "message": "authentication required"},
+    }
+
+
+def _tool_snapshot(visible: frozenset[str] | None = None) -> tuple[str, ...]:
+    return tuple(t["name"] for t in list_all_tools(visible_app_ids=visible))
 
 
 def _maybe_emit_list_changed(visible: frozenset[str] | None) -> None:
     """Compare snapshots and enqueue list_changed notifications (N021)."""
     global _last_resource_snapshot, _last_tool_snapshot
     res_now = resource_snapshot_uris(visible_app_ids=visible)
-    tools_now = _tool_snapshot()
+    tools_now = _tool_snapshot(visible)
     if _last_resource_snapshot is not None and res_now != _last_resource_snapshot:
         _enqueue_notification("notifications/resources/list_changed")
     if _last_tool_snapshot is not None and tools_now != _last_tool_snapshot:
@@ -205,9 +252,12 @@ def _maybe_emit_list_changed(visible: frozenset[str] | None) -> None:
     _last_tool_snapshot = tools_now
 
 
-def list_all_tools() -> list[dict[str, Any]]:
-    """Platform tools + VERIFIED registry tools (stable order)."""
-    dyn = list_registry_mcp_tools()
+def list_all_tools(
+    *,
+    visible_app_ids: frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Platform tools + VERIFIED registry tools (stable order, N020 scoped)."""
+    dyn = list_registry_mcp_tools(visible_app_ids=visible_app_ids)
     # Drop registry tools whose names collide with platform names (fail-closed skip).
     platform_names = {t["name"] for t in PLATFORM_TOOLS}
     dyn = [t for t in dyn if t["name"] not in platform_names]
@@ -277,10 +327,16 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
             "serverInfo": {"name": "winos-mcp", "version": "1.0.0"},
         })
     if method == "tools/list":
-        visible = _visible_app_ids_from_params(params)
+        denied = _require_mcp_auth_or_error(rid)
+        if denied is not None:
+            return denied
+        visible = _resolve_tools_visible_app_ids(params)
         _maybe_emit_list_changed(visible)
-        return ok({"tools": list_all_tools()})
+        return ok({"tools": list_all_tools(visible_app_ids=visible)})
     if method == "tools/call":
+        denied = _require_mcp_auth_or_error(rid)
+        if denied is not None:
+            return denied
         name = params.get("name") if isinstance(params, dict) else None
         arguments = (params.get("arguments") or {}) if isinstance(params, dict) else {}
         try:
