@@ -40,6 +40,7 @@ from windows_os_api.apps.schema.openapi_export import (
     assemble_openapi_document,
     build_registry_operation,
     finalize_openapi_export,
+    http_path_is_bound,
 )
 from windows_os_api.apps.schema.sdk_export import (
     SdkExportRejected,
@@ -209,10 +210,21 @@ def _registry_openapi_document(*, visible_app_ids: frozenset[str] | None) -> dic
     except RegistryUnavailable:
         raise
     paths: dict = {}
+    max_age = getattr(registry, "_verification_max_age_sec", None)
     for rec in registry.list():
         if rec.status is not ApiStatus.VERIFIED:
             continue
         if not rec.verification_id:
+            continue
+        # N019: re-evaluate verification age at export (stale → omit).
+        gate_kwargs: dict = {
+            "status": ApiStatus.VERIFIED,
+            "verification_id": rec.verification_id,
+            "last_verified_at": rec.last_verified_at,
+        }
+        if max_age is not None:
+            gate_kwargs["max_age_sec"] = float(max_age)
+        if authorize_verified_status(**gate_kwargs) is not ApiStatus.VERIFIED:
             continue
         if visible_app_ids is not None and rec.application_id:
             if rec.application_id not in visible_app_ids:
@@ -220,6 +232,9 @@ def _registry_openapi_document(*, visible_app_ids: frozenset[str] | None) -> dic
         method = (rec.method or "POST").strip().lower()
         path = rec.path
         if not path.startswith("/"):
+            continue
+        # N019: omit unbound paths (no matching REST route template).
+        if not http_path_is_bound(path, method):
             continue
         op = build_registry_operation(rec.to_dict())
         item = paths.setdefault(path, {})
