@@ -257,7 +257,7 @@ class LinuxBackend:
 
     def get_resources(self) -> dict[str, Any]:
         if not self._psutil:
-            return {"cpu_percent": 0, "memory": {}, "disk": {}, "note": "psutil unavailable"}
+            return {"ok": False, "code": "RESOURCES_UNAVAILABLE", "error": "psutil unavailable", "note": "psutil unavailable"}
         vm = self._psutil.virtual_memory()
         disk = self._psutil.disk_usage(str(self.sandbox))
         return {

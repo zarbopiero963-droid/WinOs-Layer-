@@ -417,7 +417,7 @@ class WindowsBackend:
                     "percent": disk.percent,
                 },
             }
-        return {"cpu_percent": 0, "memory": {}, "disk": {}, "note": "psutil unavailable"}
+        return {"ok": False, "code": "RESOURCES_UNAVAILABLE", "error": "psutil unavailable", "note": "psutil unavailable"}
 
     def get_uptime(self) -> dict[str, Any]:
         if self._psutil:

@@ -185,6 +185,9 @@ class FakeBackend:
     # --- System ---
     def get_system_info(self) -> dict[str, Any]:
         return {
+            "ok": True,
+            "source": "fixture",
+            "fixture": True,
             "hostname": "fake-win-host",
             "os": "Windows",
             "os_version": "10.0.19045 (Fake)",
@@ -196,6 +199,9 @@ class FakeBackend:
 
     def get_resources(self) -> dict[str, Any]:
         return {
+            "ok": True,
+            "source": "fixture",
+            "fixture": True,
             "cpu_percent": 12.5,
             "memory": {"total_mb": 16384, "used_mb": 6144, "percent": 37.5},
             "disk": {"total_gb": 512, "used_gb": 200, "percent": 39.0},
@@ -203,13 +209,29 @@ class FakeBackend:
 
     def get_uptime(self) -> dict[str, Any]:
         secs = time.time() - self._start
-        return {"uptime_seconds": round(secs, 2), "boot_time": self._start}
+        return {
+            "ok": True,
+            "source": "fixture",
+            "fixture": True,
+            "uptime_seconds": round(secs, 2),
+            "boot_time": self._start,
+        }
 
     def power_action(self, action: str) -> dict[str, Any]:
-        allowed = {"sleep", "hibernate", "shutdown", "reboot", "lock"}
-        if action not in allowed:
-            return {"ok": False, "error": f"unknown action: {action}"}
-        return {"ok": True, "action": action, "simulated": True}
+        """N050 — anche il fake non mentisce con ok=True (falso successo Phase 0).
+
+        La fixture puo' *descrivere* una simulazione, ma ``ok`` resta False:
+        power e' gated da R04/#64. Il service rifiuta comunque; questo e'
+        defense in depth.
+        """
+        from windows_os_api.core.security.privilege import deny_structured
+
+        return deny_structured(
+            "power actions gated by owner decision R04 (#64); fake does not simulate success",
+            code="owner_decision_pending",
+            detail={"action": action, "fixture": True, "simulated": False},
+        )
+
 
     # --- Processes ---
     def list_processes(self) -> list[dict[str, Any]]:

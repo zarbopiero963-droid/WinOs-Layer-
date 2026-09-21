@@ -178,4 +178,13 @@ def get_uptime(auth: AuthContext = Depends(require_permission(Permission.SYSTEM_
 
 @router.post("/system/power/{action}")
 def power(action: str, auth: AuthContext = Depends(require_permission(Permission.ADMIN))):
-    return system.power(action)
+    """N050 — power gated (R04/#64). Denial → 403, never ok=True."""
+    from fastapi import HTTPException
+
+    result = system.power(action)
+    if isinstance(result, dict) and result.get("ok") is False:
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": result.get("error"), "code": result.get("code"), **{k: result[k] for k in ("denied", "detail") if k in result}},
+        )
+    return result

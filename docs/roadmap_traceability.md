@@ -816,3 +816,22 @@ pytest tests/unit/test_fs_terminal_n049.py -q
 ```
 
 Full installed W/L H63-N049 not claimed PASS here (MANUAL_ONLY / #21).
+
+## N050 — System/resources e power subordinato a decisione
+
+Contratto (#67 / H63-N050, B-OS, Q04): inventario/uptime/resources senza
+valori inventati come successo; power resta gate owner R04 (#64) —
+implementazione effetti solo dopo decisione specifica. Coverage: R02 R04
+W006 L006 G01 G06. Out of scope: power reale, N051+, chiusura #67/#63/#21,
+claim H63-N050 installed W/L PASS.
+
+**Falso successo Phase 0.** Fake `power` tornava `ok: True, simulated: True`.
+Ora il service rifiuta sempre con `owner_decision_pending` (anche fake);
+REST mappa denial → 403. Resources/uptime espongono `ok`/`source`; la shape
+psutil-missing non e' piu' `cpu_percent: 0` leggibile come idle.
+
+```bash
+pytest tests/unit/test_system_resources_n050.py -q
+```
+
+Full installed W/L H63-N050 not claimed PASS here (MANUAL_ONLY / #21).
