@@ -185,6 +185,14 @@ def test_no_adapter_is_registered_for_a_rejected_app_id(tmp_sandbox):
 # ---------------------------------------------------------------------------
 # The MCP surface
 # ---------------------------------------------------------------------------
+def _mcp_params(extra: dict | None = None) -> dict:
+    """Authenticated MCP params (N020 require_auth)."""
+    params = dict(extra or {})
+    existing = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    params["_meta"] = {"api_key": "admin-key-change-me", **existing}
+    return params
+
+
 def test_the_mcp_agent_tool_declares_app_id_required():
     """It was the one tool on this server that did not.
 
@@ -203,7 +211,7 @@ def test_the_mcp_server_refuses_an_agent_run_with_no_app(tmp_sandbox):
     """
     resp = mcp_server.handle_request({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "agent_run", "arguments": {"goal": "search"}},
+        "params": _mcp_params({"name": "agent_run", "arguments": {"goal": "search"}}),
     })
     assert "error" in resp, resp
     message = resp["error"]["message"]
@@ -223,7 +231,7 @@ def test_every_mcp_tool_enforces_the_arguments_it_declares(tmp_sandbox):
             continue
         resp = mcp_server.handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": tool["name"], "arguments": {}},
+            "params": _mcp_params({"name": tool["name"], "arguments": {}}),
         })
         assert "error" in resp, f"{tool['name']} accepted an empty argument set"
         for field in required:
@@ -235,7 +243,9 @@ def test_every_mcp_tool_enforces_the_arguments_it_declares(tmp_sandbox):
 def test_the_mcp_agent_tool_runs_when_the_app_is_named(tmp_sandbox):
     resp = mcp_server.handle_request({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "agent_run",
-                   "arguments": {"goal": "search", "app_id": "contoso-crm"}},
+        "params": _mcp_params({
+            "name": "agent_run",
+            "arguments": {"goal": "search", "app_id": "contoso-crm"},
+        }),
     })
     assert "result" in resp, resp
