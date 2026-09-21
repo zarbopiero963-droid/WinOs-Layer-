@@ -45,6 +45,42 @@ def _uninstall_sh() -> str:
     return (LINUX / "uninstall.sh").read_text(encoding="utf-8")
 
 
+
+def _install_fake_appimagetool(monkeypatch, tmp_path: Path) -> Path:
+    """N036: cross-platform fake appimagetool (ELF stub; no shell .AppImage).
+
+    Patch stdlib ``shutil.which`` / ``subprocess.run`` so dynamically loaded
+    ``linux_package_formats`` modules (and Windows CI without a real
+    appimagetool) never depend on executing a #!/bin/sh or .cmd launcher.
+    """
+    sentinel = tmp_path / "appimagetool-sentinel"
+    sentinel.write_text("fake-appimagetool\n", encoding="utf-8")
+    real_which = shutil.which
+    real_run = subprocess.run
+
+    def fake_which(cmd: str, mode: int = os.F_OK | os.X_OK, path: str | None = None):
+        if cmd == "appimagetool":
+            return str(sentinel)
+        return real_which(cmd, mode=mode, path=path)
+
+    def fake_run(cmd, *args, **kwargs):
+        argv = [str(c) for c in (cmd or [])]
+        if argv and (argv[0] == str(sentinel) or Path(argv[0]).name.startswith("appimagetool")):
+            out = Path(argv[2] if len(argv) > 2 else argv[-1])
+            out.write_bytes(b"\x7fELF" + b"\x00" * 200)
+            try:
+                out.chmod(0o755)
+            except OSError:
+                pass
+            return subprocess.CompletedProcess(list(cmd), 0, stdout="", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return sentinel
+
+
+
 def test_h63_n036_packaging_templates_present():
     assert (PACKAGING / "debian" / "control.in").is_file()
     assert (PACKAGING / "debian" / "postinst").is_file()
@@ -124,7 +160,7 @@ def test_h63_n036_lpf_validate_templates(lpf_mod):
     assert errs == []
 
 
-def test_h63_n036_build_deb_rpm_appimage(tmp_path, lpf_mod):
+def test_h63_n036_build_deb_rpm_appimage(tmp_path, lpf_mod, monkeypatch):
     binary = tmp_path / "winos-api"
     binary.write_bytes(b"#!/bin/sh\necho winos-api-n036\n")
     binary.chmod(0o755)
@@ -183,6 +219,7 @@ def test_h63_n036_build_deb_rpm_appimage(tmp_path, lpf_mod):
     assert b"1.0.0" in blob
     assert b"LinuxBackend" in blob or b"linux" in blob
 
+    _install_fake_appimagetool(monkeypatch, tmp_path)
     app = lpf_mod.build_appimage(
         binary=binary,
         version=version,
@@ -194,7 +231,7 @@ def test_h63_n036_build_deb_rpm_appimage(tmp_path, lpf_mod):
     assert app.name.endswith(".AppImage")
     assert os.access(app, os.X_OK)
     head = app.read_bytes()[:200]
-    assert head.startswith(b"#!") or head[:4] == b"\x7fELF"
+    assert head[:4] == b"\x7fELF"
     assert b"WINOS_BACKEND" in app.read_bytes()[:4096] or True  # may be past stub
 
 
@@ -211,6 +248,7 @@ def test_h63_n036_package_linux_native_formats(bi_mod, tmp_path, monkeypatch):
     monkeypatch.setattr(bi_mod, "validate", lambda verbose=False: {"ok": True, "errors": []})
     monkeypatch.setattr(bi_mod, "read_package_version", lambda: "1.0.0")
 
+    _install_fake_appimagetool(monkeypatch, tmp_path)
     rc = bi_mod.package_linux(
         dry_run=False,
         build_if_missing=False,
@@ -331,3 +369,23 @@ def test_h63_n036_no_flatpak_implementation():
     assert not (PACKAGING / "flatpak").exists()
     assert not list(LINUX.rglob("*.yaml"))
     assert not list(LINUX.rglob("*flatpak*"))
+
+
+def test_h63_n036_appimage_refuses_shell_fallback(lpf_mod, tmp_path, monkeypatch):
+    """Missing appimagetool must not emit a shell file named .AppImage."""
+    monkeypatch.setenv("PATH", str(tmp_path))  # empty of appimagetool
+    binary = tmp_path / "winos-api"
+    binary.write_bytes(b"#!/bin/sh\necho x\n")
+    binary.chmod(0o755)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    with pytest.raises(Exception) as ei:
+        lpf_mod.build_appimage(
+            binary=binary,
+            version="1.0.0",
+            arch="x86_64",
+            linux_installer=LINUX,
+            dist=dist,
+        )
+    assert "appimagetool" in str(ei.value).lower() or "fallback" in str(ei.value).lower()
+    assert not list(dist.glob("*.AppImage"))
