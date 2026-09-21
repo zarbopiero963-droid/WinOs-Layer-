@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -95,32 +93,32 @@ def test_symlink_leaf_write_is_refused_and_outside_untouched(sandboxed):
         outside.unlink(missing_ok=True)
 
 
-def test_toctou_symlink_swap_cannot_escape_sandbox(sandboxed):
-    """Il falso successo di Phase 0: resolve ok → swap → write fuori."""
+@pytest.mark.linux
+def test_toctou_symlink_swap_cannot_escape_sandbox(sandboxed, monkeypatch):
+    """Il falso successo di Phase 0: resolve ok → swap → write fuori.
+
+    Richiede O_NOFOLLOW POSIX (mark linux). Lo swap e' iniettato in modo
+    deterministico fra walk_under e open_nofollow (niente race timing).
+    """
     outside = sandboxed.parent / "n049_unit_toctou.txt"
     outside.write_text("ORIGINAL", encoding="utf-8")
     name = "race"
     final = sandboxed / name
     final.write_text("inside", encoding="utf-8")
-    box: dict = {}
+    real_open = fspaths.open_nofollow
 
-    def writer():
-        time.sleep(0.001)
-        box["w"] = fs.write_file(name, "FROM_API")
+    def open_after_swap(path, **kwargs):
+        # Finestra TOCTOU: dopo walk (file reale) e prima di open.
+        if path == final and final.exists() and not final.is_symlink():
+            final.unlink()
+            _symlink_or_skip(final, outside)
+        return real_open(path, **kwargs)
 
-    def swapper():
-        time.sleep(0.0005)
-        final.unlink()
-        _symlink_or_skip(final, outside)
-        box["sw"] = True
-
-    t1 = threading.Thread(target=writer)
-    t2 = threading.Thread(target=swapper)
-    t1.start(); t2.start(); t1.join(); t2.join()
+    monkeypatch.setattr(fspaths, "open_nofollow", open_after_swap)
     try:
-        assert box.get("sw") is True
-        assert box["w"]["ok"] is False
-        assert box["w"]["code"] == fspaths.PATH_SYMLINK_REFUSED
+        out = fs.write_file(name, "FROM_API")
+        assert out["ok"] is False
+        assert out["code"] == fspaths.PATH_SYMLINK_REFUSED
         assert outside.read_text(encoding="utf-8") == "ORIGINAL"
     finally:
         if final.is_symlink() or final.exists():

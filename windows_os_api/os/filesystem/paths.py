@@ -154,9 +154,19 @@ def open_nofollow(
     mode: int = 0o644,
 ) -> int:
     """Apre ``path`` senza seguire un symlink finale."""
-    # O_NOFOLLOW / O_CLOEXEC non esistono su Win32: li omettiamo e ci
-    # affidiamo a walk_under (lstat) + rifiuto symlink prima dell'open.
+    # O_NOFOLLOW / O_CLOEXEC non esistono su Win32: getattr(..., 0) da solo
+    # non basta — rifiutiamo il leaf symlink via lstat prima dell'open.
     flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    if not getattr(os, "O_NOFOLLOW", 0):
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            st = None
+        if st is not None and stat.S_ISLNK(st.st_mode):
+            raise PathRejected(
+                f"symlink rifiutato all'apertura di {path}",
+                code=PATH_SYMLINK_REFUSED,
+            )
     if write:
         flags |= os.O_WRONLY
         if create:
@@ -185,17 +195,60 @@ def errno_EPERM() -> int:
     return getattr(__import__("errno"), "EPERM", 1)
 
 
+def _win32_final_path(fd: int) -> Path | None:
+    """Best-effort GetFinalPathNameByHandleW; None se non disponibile."""
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+    except ImportError:
+        return None
+    try:
+        handle = msvcrt.get_osfhandle(fd)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        GetFinalPathNameByHandleW = kernel32.GetFinalPathNameByHandleW
+        GetFinalPathNameByHandleW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        ]
+        GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        buf = ctypes.create_unicode_buffer(4096)
+        n = GetFinalPathNameByHandleW(handle, buf, 4096, 0)
+        if n == 0 or n >= 4096:
+            return None
+        final = buf.value
+        unc_prefix = chr(92) + chr(92) + "?" + chr(92)  # \\?\
+        if final.startswith(unc_prefix):
+            final = final[4:]
+        return Path(final)
+    except OSError:
+        return None
+
+
 def fd_still_under(fd: int, root: Path) -> bool:
     """Riverifica che l'fd aperto punti ancora sotto ``root``.
 
-    Su POSIX usa ``/proc/self/fd/N``. Su Win32 (o senza proc) la riverifica
-    fd non e' disponibile: ``walk_under`` + ``lstat`` hanno gia' rifiutato i
-    symlink — restituiamo True (non fallire tutte le write in CI Windows).
+    Su POSIX usa ``/proc/self/fd/N``. Su Win32 usa GetFinalPathNameByHandleW;
+    se l'handle check non e' disponibile → fail-closed (False).
     """
     root_r = root.resolve(strict=False)
+    if sys.platform == "win32":
+        target = _win32_final_path(fd)
+        if target is None:
+            return False
+        try:
+            # Win32: Path.relative_to e' case-sensitive; normalizziamo.
+            t = Path(os.path.normcase(str(target.resolve(strict=False))))
+            r = Path(os.path.normcase(str(root_r)))
+            t.relative_to(r)
+            return True
+        except (ValueError, OSError):
+            return False
     proc = Path(f"/proc/self/fd/{fd}")
-    if sys.platform == "win32" or not proc.exists():
-        return True
+    if not proc.exists():
+        return False
     try:
         target = Path(os.readlink(proc))
     except OSError:
@@ -235,6 +288,12 @@ def write_bytes_nofollow(root: Path, path: str, data: bytes) -> Path:
         target, write=True, create=True, truncate=True
     )
     try:
+        # Su Win32 senza O_NOFOLLOW: se tra check e open e' diventato symlink
+        # abbiamo seguito il target — non scrivere, chiudi e rifiuta.
+        if not getattr(os, "O_NOFOLLOW", 0) and target.is_symlink():
+            raise PathRejected(
+                f"symlink rifiutato dopo open: {path!r}", code=PATH_SYMLINK_REFUSED
+            )
         if not fd_still_under(fd, root):
             raise PathRejected(
                 f"fd fuori sandbox dopo open: {path!r}", code=PATH_OUTSIDE_SANDBOX
