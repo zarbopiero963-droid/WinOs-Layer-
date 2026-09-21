@@ -239,6 +239,8 @@ class ApiRecord:
     last_verified_at: float | None
     verification_id: str | None
     schema_version: str = API_REGISTRY_SCHEMA_VERSION
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -419,6 +421,16 @@ class ApiRegistry:
         description = str(payload.get("description") or "")
         adapter_id = str(payload.get("adapter_id") or "")
 
+        def _coerce_schema(raw: Any, *, field: str) -> dict[str, Any] | None:
+            if raw is None:
+                return None
+            if not isinstance(raw, Mapping):
+                raise RegistrationRejected(f"{field} must be a JSON object")
+            return dict(raw)
+
+        input_schema = _coerce_schema(payload.get("input_schema"), field="input_schema")
+        output_schema = _coerce_schema(payload.get("output_schema"), field="output_schema")
+
         with self._lock:
             existing = self._by_id.get(api_id)
             created_at = existing.created_at if existing is not None else clock
@@ -451,6 +463,16 @@ class ApiRegistry:
                     else None
                 ),
                 schema_version=API_REGISTRY_SCHEMA_VERSION,
+                input_schema=(
+                    input_schema
+                    if input_schema is not None or existing is None
+                    else existing.input_schema
+                ),
+                output_schema=(
+                    output_schema
+                    if output_schema is not None or existing is None
+                    else existing.output_schema
+                ),
             )
             # If VERIFIED, both evidence fields must be present on the record
             if record.status is ApiStatus.VERIFIED and (
