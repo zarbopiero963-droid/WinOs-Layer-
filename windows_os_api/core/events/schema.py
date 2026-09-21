@@ -50,6 +50,7 @@ SECRET_KEYS: frozenset[str] = frozenset(
         "refresh_token",
         "authorization",
         "x_api_key",
+        "x-api-key",
     }
 )
 
@@ -63,7 +64,8 @@ def redact_secrets(value: Any) -> Any:
     if isinstance(value, Mapping):
         out: dict[str, Any] = {}
         for k, v in value.items():
-            if str(k).strip().lower() in SECRET_KEYS:
+            key_l = str(k).strip().lower()
+            if key_l in SECRET_KEYS or key_l.replace("-", "_") in SECRET_KEYS:
                 continue
             out[str(k)] = redact_secrets(v)
         return out

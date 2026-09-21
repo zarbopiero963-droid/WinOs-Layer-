@@ -155,3 +155,19 @@ def test_agent_goal_proposed_before_gate_not_as_executed(tmp_path, monkeypatch):
     assert types[0] == "agent.goal.proposed"
     assert "agent.goal.executed" in types or "agent.goal.denied" in types
     assert types.count("agent.goal.proposed") == 1
+
+
+def test_x_api_key_hyphen_alias_is_redacted():
+    """Audit H63-N038: alias x-api-key must not survive fan-out."""
+    clean, reason = validate_and_sanitize(
+        "system.probe",
+        {"x-api-key": "synthetic-secret", "password": "p", "ok": True},
+        provenance="system",
+    )
+    assert reason is None
+    assert clean is not None
+    assert "x-api-key" not in clean
+    assert "password" not in clean
+    assert clean.get("ok") is True
+    # underscore form already allowlisted; hyphen must match too
+    assert "x-api-key" in {k.replace("_", "-") for k in SECRET_KEYS} or "x-api-key" in SECRET_KEYS
