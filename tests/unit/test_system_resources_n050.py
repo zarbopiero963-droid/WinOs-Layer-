@@ -59,6 +59,8 @@ def test_fake_system_info_and_uptime_declare_fixture(fake_backend):
 def test_linux_resources_match_proc_when_available():
     if os.name == "nt":
         pytest.skip("linux")
+    prev_backend = os.environ.get("WINOS_BACKEND")
+    prev_fallback = os.environ.get("WINOS_ALLOW_FAKE_FALLBACK")
     os.environ["WINOS_BACKEND"] = "linux"
     os.environ["WINOS_ALLOW_FAKE_FALLBACK"] = "false"
     get_settings.cache_clear()
@@ -78,6 +80,16 @@ def test_linux_resources_match_proc_when_available():
         p = syssvc.power("shutdown")
         assert p["ok"] is False and p["code"] == "owner_decision_pending"
     finally:
+        # Restore env — leaving WINOS_BACKEND=linux poisons later fake/UI tests
+        # (workflows/heal expect Contoso fixture on fake backend).
+        if prev_backend is None:
+            os.environ.pop("WINOS_BACKEND", None)
+        else:
+            os.environ["WINOS_BACKEND"] = prev_backend
+        if prev_fallback is None:
+            os.environ.pop("WINOS_ALLOW_FAKE_FALLBACK", None)
+        else:
+            os.environ["WINOS_ALLOW_FAKE_FALLBACK"] = prev_fallback
         reset_backend()
         get_settings.cache_clear()
 
