@@ -49,45 +49,37 @@ def _uninstall_sh() -> str:
 def _install_fake_appimagetool(monkeypatch, tmp_path: Path) -> Path:
     """N036: cross-platform fake appimagetool (ELF stub; no shell .AppImage).
 
-    Windows CI cannot exec a #!/bin/sh script via subprocess, and
-    shutil.which only finds PATHEXT entries (.cmd/.bat/.exe). Use a
-    small Python writer plus a .cmd launcher on win32.
+    Patch stdlib ``shutil.which`` / ``subprocess.run`` so dynamically loaded
+    ``linux_package_formats`` modules (and Windows CI without a real
+    appimagetool) never depend on executing a #!/bin/sh or .cmd launcher.
     """
-    impl = tmp_path / "_fake_appimagetool.py"
-    impl.write_text(
-        "import sys\n"
-        "from pathlib import Path\n"
-        "out = Path(sys.argv[2])\n"
-        "out.write_bytes(b'\\x7fELF' + b'\\x00' * 200)\n"
-        "try:\n"
-        "    out.chmod(0o755)\n"
-        "except OSError:\n"
-        "    pass\n",
-        encoding="utf-8",
-    )
-    if sys.platform == "win32":
-        tool = tmp_path / "appimagetool.cmd"
-        tool.write_text(
-            f'@echo off\r\n"{sys.executable}" "{impl}" %*\r\n',
-            encoding="utf-8",
-        )
-    else:
-        tool = tmp_path / "appimagetool"
-        tool.write_text(
-            f"#!{sys.executable}\n"
-            "import sys\n"
-            "from pathlib import Path\n"
-            "out = Path(sys.argv[2])\n"
-            "out.write_bytes(b'\\x7fELF' + b'\\x00' * 200)\n"
-            "out.chmod(0o755)\n",
-            encoding="utf-8",
-        )
-        tool.chmod(0o755)
-    monkeypatch.setenv(
-        "PATH",
-        str(tmp_path) + os.pathsep + os.environ.get("PATH", ""),
-    )
-    return tool
+    sentinel = tmp_path / "appimagetool-sentinel"
+    sentinel.write_text("fake-appimagetool\n", encoding="utf-8")
+    real_which = shutil.which
+    real_run = subprocess.run
+
+    def fake_which(cmd: str, mode: int = os.F_OK | os.X_OK, path: str | None = None):
+        if cmd == "appimagetool":
+            return str(sentinel)
+        return real_which(cmd, mode=mode, path=path)
+
+    def fake_run(cmd, *args, **kwargs):
+        argv = [str(c) for c in (cmd or [])]
+        if argv and (argv[0] == str(sentinel) or Path(argv[0]).name.startswith("appimagetool")):
+            out = Path(argv[2] if len(argv) > 2 else argv[-1])
+            out.write_bytes(b"\x7fELF" + b"\x00" * 200)
+            try:
+                out.chmod(0o755)
+            except OSError:
+                pass
+            return subprocess.CompletedProcess(list(cmd), 0, stdout="", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return sentinel
+
+
 
 def test_h63_n036_packaging_templates_present():
     assert (PACKAGING / "debian" / "control.in").is_file()
