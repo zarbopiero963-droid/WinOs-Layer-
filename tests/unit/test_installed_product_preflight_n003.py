@@ -1,10 +1,13 @@
-"""N003 — installed-product session preflight (H63-N003 / #67).
+"""N003 — installed-product session preflight + fail-closed hooks (H63-N003 / #67).
 
-Unit-level fail-closed contract only:
+Unit-level fail-closed contract:
 - occupied port blocks
 - FakeBackend / backend==fake blocks
 - missing / mismatched artifact hash blocks
 - auth key must be really generated (static suite keys rejected)
+- local download staging + checksum; network URL fail-closed
+- OS install hook always fail-closed
+- external client stubs (tcp/mcp/ws/browser) fail-closed
 
 Does NOT claim installed W/L (#21) PASS or MANUAL_ONLY PASS.
 """
@@ -17,15 +20,21 @@ from pathlib import Path
 import pytest
 
 from tests.harness.installed_product_preflight import (
+    EXTERNAL_CLIENT_KINDS,
     PreflightError,
     collect_artifact_identity,
+    download_artifact,
     generate_session_api_key,
+    install_artifact,
+    open_external_client,
     require_artifact_checksum,
+    require_external_client,
     require_generated_api_key,
     require_not_fake_backend,
     require_port_free,
     run_session_preflight,
     sha256_file,
+    stage_local_artifact,
 )
 
 
@@ -151,7 +160,10 @@ def test_h63_n003_collect_identity_and_session_preflight(tmp_path: Path):
     assert result.identity.sha256 == digest
     require_generated_api_key(result.api_key)
     payload = result.as_dict()
-    assert payload["clients_allowed"] == ("tcp", "mcp", "ws", "browser")
+    declared = tuple(sorted(EXTERNAL_CLIENT_KINDS))
+    assert payload["clients_declared"] == declared
+    assert payload["clients_implemented"] == ()
+    assert payload["clients_allowed"] == declared  # alias; not "ready"
 
 
 def test_h63_n003_session_preflight_blocks_occupied_or_fake(tmp_path: Path):
@@ -185,3 +197,65 @@ def test_h63_n003_session_preflight_blocks_occupied_or_fake(tmp_path: Path):
             checksums_file=checksums,
             version="0.0.0-n003",
         )
+
+
+def test_h63_n003_stage_local_artifact_and_download_hook(tmp_path: Path):
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    artifact, checksums, digest = _write_artifact(source_dir, "winos-api", b"stage-n003")
+    dest_dir = tmp_path / "staged"
+    staged = stage_local_artifact(
+        source=artifact,
+        dest_dir=dest_dir,
+        checksums_file=checksums,
+    )
+    assert staged.is_file()
+    assert sha256_file(staged) == digest
+
+    via_download = download_artifact(
+        source=artifact,
+        dest_dir=tmp_path / "dl",
+        checksums_file=checksums,
+    )
+    assert via_download.is_file()
+    assert sha256_file(via_download) == digest
+
+
+def test_h63_n003_network_download_fail_closed(tmp_path: Path):
+    checksums = tmp_path / "checksums.txt"
+    checksums.write_text(("0" * 64) + "  winos-api\n", encoding="utf-8")
+    with pytest.raises(PreflightError, match="network artifact download not implemented"):
+        download_artifact(
+            source="https://example.invalid/release/winos-api",
+            dest_dir=tmp_path / "dl",
+            checksums_file=checksums,
+        )
+
+
+def test_h63_n003_install_artifact_always_fail_closed(tmp_path: Path):
+    artifact, checksums, _ = _write_artifact(tmp_path, "winos-api", b"install-n003")
+    with pytest.raises(PreflightError, match="OS install not implemented"):
+        install_artifact(
+            artifact=artifact,
+            target_os="linux",
+            checksums_file=checksums,
+        )
+    with pytest.raises(PreflightError, match="OS install not implemented"):
+        install_artifact(artifact=artifact, target_os="windows")
+    with pytest.raises(PreflightError, match="target_os"):
+        install_artifact(artifact=artifact, target_os="darwin")
+    with pytest.raises(PreflightError, match="install artifact missing"):
+        install_artifact(artifact=tmp_path / "missing.bin", target_os="linux")
+
+
+@pytest.mark.parametrize("kind", sorted(EXTERNAL_CLIENT_KINDS))
+def test_h63_n003_external_client_stubs_fail_closed(kind: str):
+    with pytest.raises(PreflightError, match="not implemented"):
+        require_external_client(kind)
+    with pytest.raises(PreflightError, match="not implemented"):
+        open_external_client(kind)
+
+
+def test_h63_n003_unknown_external_client_rejected():
+    with pytest.raises(PreflightError, match="unknown external client"):
+        require_external_client("grpc")

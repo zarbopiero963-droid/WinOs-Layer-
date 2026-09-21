@@ -1,1 +1,1 @@
-"""Test harness helpers (N003+). Not a claim of installed-product W/L PASS."""
+"""Test harness helpers (N003+). Fail-closed stubs; not installed-product W/L PASS."""
