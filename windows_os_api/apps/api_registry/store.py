@@ -331,6 +331,19 @@ def load_registry(
 class PersistentApiRegistry(ApiRegistry):
     """``ApiRegistry`` that saves after successful mutations."""
 
+    @classmethod
+    def from_loaded(cls, loaded: ApiRegistry) -> "PersistentApiRegistry":
+        """Promote an in-memory load result without re-saving during ingest.
+
+        ``load_registry`` must keep using plain ``ApiRegistry`` so ingest does
+        not rewrite the store on every record; the runtime singleton then wraps
+        the loaded map in this class so mutations persist (audit H63-N015).
+        """
+        preg = cls(verification_max_age_sec=loaded._verification_max_age_sec)
+        with preg._lock:
+            preg._by_id = dict(loaded._by_id)
+        return preg
+
     def register(self, payload, *, now=None, force_id=None):  # type: ignore[override]
         record = super().register(payload, now=now, force_id=force_id)
         save_registry(self)
