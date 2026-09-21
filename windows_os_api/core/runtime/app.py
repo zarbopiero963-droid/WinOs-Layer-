@@ -1,6 +1,8 @@
 """FastAPI application factory."""
 from __future__ import annotations
 
+import os
+
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -119,9 +121,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if instance_lock is not None:
                 instance_lock.release()
             raise
+        # N044 — durable service PID for external `winos-api diagnose` of a hung runtime.
+        try:
+            from windows_os_api.observability.diagnose import write_service_pid_file
+
+            write_service_pid_file()
+        except Exception:  # noqa: BLE001 — pidfile is best-effort; serve must still start
+            pass
         try:
             yield
         finally:
+            try:
+                from windows_os_api.observability.diagnose import clear_service_pid_file
+
+                clear_service_pid_file(expected_pid=os.getpid())
+            except Exception:  # noqa: BLE001
+                pass
             # N046 — un ciclo runtime possiede le proprie risorse e le restituisce
             # tutte qui. Lasciare vivo il bus di processo significa che un
             # subscriber aperto nel ciclo precedente continua a leggere gli eventi

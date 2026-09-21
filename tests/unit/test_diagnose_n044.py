@@ -230,3 +230,77 @@ def test_default_bundle_path_under_logs():
 def test_write_rejects_directory(tmp_path: Path):
     with pytest.raises(DiagnoseParamError):
         write_support_bundle(tmp_path)
+
+
+def test_n044_resolve_target_pid_explicit_and_pidfile(tmp_path: Path):
+    from windows_os_api.observability.diagnose import (
+        resolve_target_pid,
+        write_service_pid_file,
+        clear_service_pid_file,
+        DiagnoseParamError,
+    )
+
+    pid, source = resolve_target_pid(pid=12345)
+    assert pid == 12345 and source == "explicit"
+
+    pf = tmp_path / "svc.pid"
+    write_service_pid_file(pf, pid=4242)
+    assert pf.read_text(encoding="utf-8").strip() == "4242"
+    pid, source = resolve_target_pid(pid_file=pf)
+    assert pid == 4242 and source == "pid_file"
+    assert clear_service_pid_file(pf, expected_pid=4242) is True
+    assert not pf.exists()
+
+    with pytest.raises(DiagnoseParamError):
+        resolve_target_pid(pid=0)
+
+
+def test_n044_cli_diagnose_targets_service_pid_not_self(tmp_path: Path, monkeypatch):
+    """CLI must describe the hung service PID, not the collector process."""
+    from windows_os_api.observability.diagnose import write_service_pid_file
+
+    # A live PID we can snapshot: parent or self-written as "service".
+    # Use a short-lived child so collector PID != target PID.
+    import subprocess
+    import sys
+    import time
+
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+    )
+    try:
+        pf = tmp_path / "winos-api.pid"
+        write_service_pid_file(pf, pid=child.pid)
+        monkeypatch.chdir(tmp_path)
+        # default_pid_file is logs/winos-api.pid relative to cwd
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        (logs / "winos-api.pid").write_text(f"{child.pid}\n", encoding="utf-8")
+
+        out = tmp_path / "ext-bundle.json"
+        rc = cli_main.main(["diagnose", "-o", str(out), "--pid", str(child.pid)])
+        assert rc == 0, out.read_text() if out.exists() else "no out"
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["collector"]["pid"] == os.getpid() or data["collector"]["target_pid"] == child.pid
+        assert data["collector"]["target_pid"] == child.pid
+        assert data["process"]["pid"] == child.pid
+        assert data["process"]["pid"] != data["collector"]["pid"]
+        assert data["process"]["self"] is False
+        assert isinstance(data["stacks"], list)
+        assert data["stacks"], "expected external stack entries"
+        assert all(s.get("source") != "in_process" for s in data["stacks"])
+    finally:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except Exception:
+            child.kill()
+
+
+def test_n044_in_process_bundle_still_self(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WINOS_AUDIT_LOG_PATH", str(tmp_path / "a.jsonl"))
+    reset_audit_logger()
+    bundle = build_support_bundle(reason="self", prefer_service=False)
+    assert bundle["process"]["pid"] == os.getpid()
+    assert bundle["collector"]["target_source"] == "self"
+    assert bundle["process"]["self"] is True

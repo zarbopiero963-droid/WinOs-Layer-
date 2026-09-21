@@ -97,8 +97,14 @@ def _diagnose_collect(
     *,
     before_restart: bool,
     max_bytes: int | None,
+    target_pid: int | None = None,
+    pid_file: str | None = None,
 ) -> int:
-    """N044 — write a redacted support bundle (optionally marked before-restart)."""
+    """N044 — write a redacted support bundle (optionally marked before-restart).
+
+    Prefers the live service PID (pidfile / instance lock / --pid) so a hung
+    runtime is described — not the short-lived CLI collector process.
+    """
     from windows_os_api.observability.diagnose import (
         DiagnoseError,
         collect_before_restart,
@@ -114,6 +120,9 @@ def _diagnose_collect(
                 reason="cli.before_restart",
                 max_bytes=max_bytes,
                 subject="cli",
+                target_pid=target_pid,
+                pid_file=pid_file,
+                prefer_service=True,
             )
         else:
             result = write_support_bundle(
@@ -121,6 +130,9 @@ def _diagnose_collect(
                 reason="cli.diagnose",
                 max_bytes=max_bytes,
                 before_restart=False,
+                target_pid=target_pid,
+                pid_file=pid_file,
+                prefer_service=True,
             )
     except DiagnoseError as exc:
         print(
@@ -206,6 +218,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="hard size cap for the bundle (default 262144, max 1048576)",
     )
+    diag.add_argument(
+        "--pid",
+        type=int,
+        default=None,
+        help="target service PID (default: logs/winos-api.pid or instance lock)",
+    )
+    diag.add_argument(
+        "--pid-file",
+        default=None,
+        help="path to service pidfile (default: logs/winos-api.pid)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -229,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             before_restart=bool(args.before_restart),
             max_bytes=args.max_bytes,
+            target_pid=args.pid,
+            pid_file=args.pid_file,
         )
 
     if args.cmd == "serve":
