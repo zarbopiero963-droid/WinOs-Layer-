@@ -348,16 +348,23 @@ def handle_request(req: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             return err(-32000, str(e))
     if method == "resources/list":
-        visible = _visible_app_ids_from_params(params)
+        denied = _require_mcp_auth_or_error(rid)
+        if denied is not None:
+            return denied
+        # N021: visibility from auth principal (not client-supplied _meta alone).
+        visible = _resolve_tools_visible_app_ids(params)
         _maybe_emit_list_changed(visible)
         return ok({"resources": list_registry_mcp_resources(visible_app_ids=visible)})
     if method == "resources/read":
+        denied = _require_mcp_auth_or_error(rid)
+        if denied is not None:
+            return denied
         if not isinstance(params, dict):
             return err(-32602, "resources/read: params must be an object")
         uri = params.get("uri")
         if not uri:
             return err(-32602, "resources/read: uri is required")
-        visible = _visible_app_ids_from_params(params)
+        visible = _resolve_tools_visible_app_ids(params)
         _maybe_emit_list_changed(visible)
         outcome = read_registry_mcp_resource(str(uri), visible_app_ids=visible)
         if outcome.get("ok") is False and outcome.get("denied"):

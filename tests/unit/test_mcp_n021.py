@@ -89,7 +89,7 @@ def test_initialize_advertises_resources_list_changed():
 
 def test_resources_list_includes_verified_registry_uri():
     rec, _ = _register_verified()
-    resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
+    resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "resources/list", "params": _mcp_params()})
     assert "error" not in resp, resp
     uris = [r["uri"] for r in resp["result"]["resources"]]
     expected = f"winos://api/{rec.id}"
@@ -107,7 +107,7 @@ def test_resources_read_returns_registry_state_without_secrets():
     uri = f"winos://api/{rec.id}"
     resp = handle_request({
         "jsonrpc": "2.0", "id": 2, "method": "resources/read",
-        "params": {"uri": uri},
+        "params": _mcp_params({"uri": uri}),
     })
     assert "error" not in resp, resp
     contents = resp["result"]["contents"]
@@ -155,7 +155,7 @@ def test_unverified_absent_from_resources_list():
         "permissions": [],
         "description": "partial",
     })
-    resp = handle_request({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})
+    resp = handle_request({"jsonrpc": "2.0", "id": 3, "method": "resources/list", "params": _mcp_params()})
     uris = [r["uri"] for r in resp["result"]["resources"]]
     assert not any("api_" in u and "/x" in u for u in uris) or all(
         "PARTIAL" not in json.dumps(resp)
@@ -169,17 +169,17 @@ def test_unverified_absent_from_resources_list():
 def test_runtime_revoke_removes_resource_and_blocks_read():
     rec, reg = _register_verified()
     uri = f"winos://api/{rec.id}"
-    listed = handle_request({"jsonrpc": "2.0", "id": 4, "method": "resources/list"})
+    listed = handle_request({"jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": _mcp_params()})
     assert uri in [r["uri"] for r in listed["result"]["resources"]]
 
     reg.set_status(rec.id, ApiStatus.DISABLED)
 
-    listed2 = handle_request({"jsonrpc": "2.0", "id": 5, "method": "resources/list"})
+    listed2 = handle_request({"jsonrpc": "2.0", "id": 5, "method": "resources/list", "params": _mcp_params()})
     assert uri not in [r["uri"] for r in listed2["result"]["resources"]]
 
     denied = handle_request({
         "jsonrpc": "2.0", "id": 6, "method": "resources/read",
-        "params": {"uri": uri},
+        "params": _mcp_params({"uri": uri}),
     })
     assert denied["error"]["code"] in (-32001, -32602, -32002), denied
     assert "revoked" in denied["error"]["message"].lower() or "not available" in denied["error"]["message"].lower() or "not found" in denied["error"]["message"].lower() or "disabled" in denied["error"]["message"].lower()
@@ -188,12 +188,12 @@ def test_runtime_revoke_removes_resource_and_blocks_read():
 def test_list_changed_notification_after_revoke():
     reset_mcp_session_state()
     rec, reg = _register_verified()
-    handle_request({"jsonrpc": "2.0", "id": 7, "method": "resources/list"})
+    handle_request({"jsonrpc": "2.0", "id": 7, "method": "resources/list", "params": _mcp_params()})
     take_pending_notifications()  # clear snapshot baseline
 
     reg.set_status(rec.id, ApiStatus.DISABLED)
     # Next list/read path should enqueue notifications
-    handle_request({"jsonrpc": "2.0", "id": 8, "method": "resources/list"})
+    handle_request({"jsonrpc": "2.0", "id": 8, "method": "resources/list", "params": _mcp_params()})
     notes = take_pending_notifications()
     methods = [n.get("method") for n in notes]
     assert "notifications/resources/list_changed" in methods or "notifications/tools/list_changed" in methods
@@ -267,13 +267,17 @@ def test_rest_mcp_deny_parity_on_revoke():
 
 
 def test_cross_user_resource_hidden_by_app_scopes():
+    """N021: visibility follows auth-derived app_scopes, not client _meta alone."""
     rec, _ = _register_verified(application_id="secret-app", capability="secret-app.op")
     uri = f"winos://api/{rec.id}"
 
-    # Scoped principal: only allowed-app
+    get_auth_registry().set_app_scopes("dev-key-change-me", ["allowed-app"])
+
+    # Authenticated but scoped to allowed-app — secret-app hidden even if client
+    # _meta claims secret-app.
     resp = handle_request({
         "jsonrpc": "2.0", "id": 11, "method": "resources/list",
-        "params": {"_meta": {"app_scopes": ["allowed-app"]}},
+        "params": _mcp_params(api_key="dev-key-change-me", app_scopes=["secret-app"]),
     })
     assert "error" not in resp, resp
     uris = [r["uri"] for r in resp["result"]["resources"]]
@@ -281,16 +285,28 @@ def test_cross_user_resource_hidden_by_app_scopes():
 
     denied = handle_request({
         "jsonrpc": "2.0", "id": 12, "method": "resources/read",
-        "params": {"uri": uri, "_meta": {"app_scopes": ["allowed-app"]}},
+        "params": _mcp_params(
+            {"uri": uri},
+            api_key="dev-key-change-me",
+            app_scopes=["secret-app"],
+        ),
     })
     assert "error" in denied
 
-    # Unrestricted sees it
+    # Unauthenticated resources/list must fail closed under require_auth.
+    unauth = handle_request({
+        "jsonrpc": "2.0", "id": 12_1, "method": "resources/list",
+        "params": {"_meta": {"app_scopes": ["secret-app"]}},
+    })
+    assert unauth["error"]["code"] == -32001
+
+    # Admin / unbound principal sees it
     ok = handle_request({
         "jsonrpc": "2.0", "id": 13, "method": "resources/list",
-        "params": {},
+        "params": _mcp_params(),
     })
     assert uri in [r["uri"] for r in ok["result"]["resources"]]
+
 
 
 def test_restart_clears_then_reregister_restores_resource():
@@ -298,13 +314,13 @@ def test_restart_clears_then_reregister_restores_resource():
     uri = f"winos://api/{rec.id}"
     assert uri in [
         r["uri"]
-        for r in handle_request({"jsonrpc": "2.0", "id": 14, "method": "resources/list"})["result"]["resources"]
+        for r in handle_request({"jsonrpc": "2.0", "id": 14, "method": "resources/list", "params": _mcp_params()})["result"]["resources"]
     ]
     # Simulate process restart of in-memory registry
     reset_api_registry()
-    empty = handle_request({"jsonrpc": "2.0", "id": 15, "method": "resources/list"})
+    empty = handle_request({"jsonrpc": "2.0", "id": 15, "method": "resources/list", "params": _mcp_params()})
     assert uri not in [r["uri"] for r in empty["result"]["resources"]]
     rec2, _ = _register_verified()
     uri2 = f"winos://api/{rec2.id}"
-    again = handle_request({"jsonrpc": "2.0", "id": 16, "method": "resources/list"})
+    again = handle_request({"jsonrpc": "2.0", "id": 16, "method": "resources/list", "params": _mcp_params()})
     assert uri2 in [r["uri"] for r in again["result"]["resources"]]
