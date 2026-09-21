@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -191,7 +190,10 @@ def test_start_records_the_identity_of_what_it_started():
 
 
 def test_start_refuses_and_records_nothing_when_the_policy_says_no():
-    out = procs.start_process("/bin/sh", ["-c", "sleep 30"])
+    # `/bin/sh` non esiste su Windows e verrebbe rifiutato come percorso non
+    # assoluto: il codice sarebbe quello sbagliato e il test proverebbe altro.
+    # L'interprete corrente c'e' su entrambe le piattaforme.
+    out = procs.start_process(sys.executable, ["-c", "print('pwned')"])
     assert out["ok"] is False
     assert out["code"] == INTERPRETER_INLINE_CODE_FORBIDDEN
     assert ident.get_registry().known_pids() == []
