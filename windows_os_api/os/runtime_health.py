@@ -29,8 +29,9 @@ def probe_ui_ready(*, control_center_index: Path | None = None) -> dict[str, Any
     if control_center_index is not None:
         idx = control_center_index
     else:
-        # repo_root/control_center/index.html (parents: os -> windows_os_api -> root)
-        idx = Path(__file__).resolve().parents[2] / "control_center" / "index.html"
+        # windows_os_api/control_center/index.html (parents: os -> windows_os_api)
+        # Audit H63-N043: parents[2]/repo_root/control_center was wrong → false UI_UNAVAILABLE.
+        idx = Path(__file__).resolve().parents[1] / "control_center" / "index.html"
     ready = idx.is_file()
     out: dict[str, Any] = {"ready": ready, "path": str(idx.name)}
     if not ready:

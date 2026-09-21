@@ -77,12 +77,25 @@ def reset_metrics() -> None:
         _metrics = None
 
 
+# Reused across samples: a fresh psutil.Process().cpu_percent(None) is always 0
+# on the first call (audit H63-N043). Keep one Process for this PID.
+_CPU_PROC = None
+_CPU_PROC_PID: int | None = None
+
+
 def _process_resource_gauges() -> dict[str, float]:
     out: dict[str, float] = {}
     try:
         import psutil
 
-        proc = psutil.Process(os.getpid())
+        global _CPU_PROC, _CPU_PROC_PID
+        pid = os.getpid()
+        if _CPU_PROC is None or _CPU_PROC_PID != pid:
+            _CPU_PROC = psutil.Process(pid)
+            _CPU_PROC_PID = pid
+            # Prime so the next sample is meaningful (first call is defined as 0.0).
+            _CPU_PROC.cpu_percent(interval=None)
+        proc = _CPU_PROC
         with proc.oneshot():
             out["process.cpu_percent"] = float(proc.cpu_percent(interval=None))
             mem = proc.memory_info()

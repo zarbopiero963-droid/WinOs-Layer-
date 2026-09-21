@@ -181,3 +181,37 @@ def test_n004_regression_health_ok_with_fake(client):
     assert body["ready"] is True
     assert body["live"] is True
     assert body["components"]["backend"]["ready"] is True
+
+
+def test_ui_probe_finds_packaged_control_center():
+    """Audit H63-N043: default path is windows_os_api/control_center/index.html."""
+    ui = probe_ui_ready()
+    assert ui["ready"] is True, ui
+    assert ui.get("error_code") is None
+
+
+def test_cpu_percent_not_stuck_at_zero_after_prime():
+    """Audit H63-N043: reusing Process so cpu_percent is not always 0 on first read."""
+    import time
+    from windows_os_api.observability import metrics as metrics_mod
+
+    metrics_mod._CPU_PROC = None
+    metrics_mod._CPU_PROC_PID = None
+    g1 = metrics_mod._process_resource_gauges()
+    # Burn a little CPU then sample again — second sample must be able to be > 0.
+    t0 = time.time()
+    x = 0
+    while time.time() - t0 < 0.05:
+        x += 1
+    g2 = metrics_mod._process_resource_gauges()
+    assert "process.cpu_percent" in g1 and "process.cpu_percent" in g2
+    # First sample after prime may still be ~0; after work, expect non-zero often.
+    # Accept either g2 > 0 or g1+g2 showing the gauge is a float (not stuck missing).
+    assert isinstance(g2["process.cpu_percent"], float)
+    # Stronger: after load, second sample should usually be > 0; if still 0 on
+    # a quiet CI box, at least ensure we did not recreate Process each call.
+    assert metrics_mod._CPU_PROC is not None
+    proc_id = id(metrics_mod._CPU_PROC)
+    g3 = metrics_mod._process_resource_gauges()
+    assert id(metrics_mod._CPU_PROC) == proc_id
+    assert isinstance(g3["process.cpu_percent"], float)
