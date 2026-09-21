@@ -76,6 +76,10 @@ class AIProviderClient:
             kwargs: dict[str, Any] = {
                 "timeout": timeout,
                 "follow_redirects": False,
+                # N027: never honor HTTP(S)_PROXY / ALL_PROXY / SSL env trust.
+                # Destination must be the validated URL only (no env proxy hop).
+                "trust_env": False,
+                "proxy": None,
             }
             if transport is not None:
                 kwargs["transport"] = transport
