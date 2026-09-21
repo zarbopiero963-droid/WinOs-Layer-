@@ -642,10 +642,16 @@ class FakeBackend:
         return {"path": path, "size": len(data), "text": text, "base64": base64.b64encode(data).decode()}
 
     def fs_write(self, path: str, content: str) -> dict[str, Any]:
-        target = self._safe_path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": path, "bytes": len(content.encode())}
+        # N049: nofollow anche sul fake, cosi' i test portabili vedono lo stesso rifiuto.
+        from windows_os_api.os.filesystem import paths as fspaths
+
+        try:
+            target = fspaths.write_bytes_nofollow(
+                self.sandbox, path, content.encode("utf-8")
+            )
+        except fspaths.PathRejected as exc:
+            raise PermissionError(str(exc)) from exc
+        return {"ok": True, "path": path, "bytes": len(content.encode()), "abs_path": str(target)}
 
     def fs_delete(self, path: str) -> dict[str, Any]:
         target = self._safe_path(path)

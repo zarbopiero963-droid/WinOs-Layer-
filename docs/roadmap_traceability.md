@@ -796,3 +796,23 @@ pytest tests/unit/test_process_tree_n048.py -q
 ```
 
 Full installed W/L H63-N048 not claimed PASS here (MANUAL_ONLY / #21).
+
+## N049 — Filesystem e terminale: confini completi
+
+Contratto (#67 / H63-N049, B-OS, Q04): sandbox uniforme su read/write/delete/
+hash/stat; handle-safe contro reparse/symlink/TOCTOU; terminale argv/allowlist
+invarianti. Coverage: R12 R21 W049 L049 G06 G08 G13 G20. Out of scope: N050+,
+N005 D6, chiusura #67/#63/#21, claim H63-N049 installed W/L PASS.
+
+**Gate nel service.** `os/filesystem/paths.py` attraversa ogni componente con
+`lstat` e apre con `O_NOFOLLOW`; dopo l'open riverifica via `/proc/self/fd`
+che l'inode stia sotto la sandbox. Il falso successo Phase 0 (swap file→symlink
+fra resolve e write) diventa `PATH_SYMLINK_REFUSED` e il file fuori sandbox
+resta intatto. `hash_file` / `stat_file` chiudono il contratto inventario.
+Il terminale resta allowlist/`shell=False` (encoded-shell rifiutato).
+
+```bash
+pytest tests/unit/test_fs_terminal_n049.py -q
+```
+
+Full installed W/L H63-N049 not claimed PASS here (MANUAL_ONLY / #21).
