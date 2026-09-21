@@ -400,3 +400,31 @@ def test_planner_ai_hint_does_not_raise_confidence(ai_tmp, monkeypatch):
     # Injection in hint must not clear confirmation when confidence low / risk high
     if out["confidence"] < 0.8 or out["risk"] in ("medium", "high"):
         assert out["requires_confirmation"] is True
+
+
+def test_owned_httpx_client_disables_trust_env(monkeypatch):
+    """N027: owned Client must not honor HTTP(S)_PROXY from the environment."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    from windows_os_api.apps.ai.provider import AIProviderClient
+    from windows_os_api.apps.ai.settings_store import AIRuntimeSettings
+
+    settings = AIRuntimeSettings(
+        provider="openai",
+        api_key="sk-testkey1234567890",
+        base_url="https://api.openai.com",
+        model="gpt-4o-mini",
+    )
+    client = AIProviderClient(settings, resolve_dns=False)
+    try:
+        assert client._owns_client is True
+        assert client._client.trust_env is False
+        # No proxy mounted from env
+        mounts = getattr(client._client, "_mounts", {}) or {}
+        assert not any(
+            str(k).startswith("http://") or str(k).startswith("https://")
+            for k in mounts
+        ) or all(v is None or getattr(v, "proxy", None) in (None, "") for v in mounts.values())
+    finally:
+        client.close()
