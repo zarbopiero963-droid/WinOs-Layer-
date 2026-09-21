@@ -16,6 +16,7 @@ from windows_os_api.core.events.webhooks import (
     HEADER_SIGNATURE,
     HEADER_TIMESTAMP,
     WEBHOOK_EVENT_TYPES,
+    UrllibTransport,
     WebhookDeliveryError,
     WebhookDestination,
     WebhookDispatcher,
@@ -390,3 +391,16 @@ def test_rest_register_list_delete_destination(tmp_sandbox, monkeypatch):
 
     reset_auth_registry()
     get_settings.cache_clear()
+
+
+def test_default_dispatcher_uses_urllib_transport():
+    """Audit H63-N041: production singleton must not stay on NullTransport."""
+    from windows_os_api.core.events.webhooks import (
+        UrllibTransport,
+        get_webhook_dispatcher,
+        reset_webhook_dispatcher,
+    )
+
+    reset_webhook_dispatcher()
+    disp = get_webhook_dispatcher()
+    assert isinstance(disp.transport, UrllibTransport)
