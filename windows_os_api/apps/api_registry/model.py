@@ -484,15 +484,33 @@ _REGISTRY_LOCK = threading.Lock()
 
 
 def get_api_registry() -> ApiRegistry:
+    """Process singleton — persistent across restarts (N015).
+
+    First call loads ``api_registry.json`` (or ``.bak``) via ``load_registry``
+    and wraps it in ``PersistentApiRegistry`` so mutations save atomically.
+    Tests use ``reset_api_registry()`` for an empty in-memory registry.
+    """
     global _REGISTRY
     with _REGISTRY_LOCK:
         if _REGISTRY is None:
-            _REGISTRY = ApiRegistry()
+            # Lazy import: store.py imports ApiRegistry from this module.
+            from windows_os_api.apps.api_registry.store import (
+                PersistentApiRegistry,
+                load_registry,
+            )
+
+            report = load_registry()
+            _REGISTRY = PersistentApiRegistry.from_loaded(report.registry)
         return _REGISTRY
 
 
 def reset_api_registry() -> ApiRegistry:
-    """Replace the process singleton (tests) and drop proof ledger."""
+    """Replace the process singleton (tests) and drop proof ledger.
+
+    Returns a plain in-memory ``ApiRegistry`` (no auto-save) so unit tests do
+    not require a store path. Production code paths call ``get_api_registry``
+    without reset and get the persistent singleton.
+    """
     clear_verification_proofs()
     global _REGISTRY
     with _REGISTRY_LOCK:

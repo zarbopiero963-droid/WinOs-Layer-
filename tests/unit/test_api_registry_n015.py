@@ -322,3 +322,30 @@ def test_missing_store_loads_empty(store_tmpdir):
     report = load_registry()
     assert report.registry.list() == []
     assert report.skipped == []
+
+
+def test_get_api_registry_runtime_is_persistent_and_survives_reload(store_tmpdir):
+    """Audit H63-N015: runtime singleton must be PersistentApiRegistry (not plain)."""
+    from windows_os_api.apps.api_registry.model import get_api_registry, reset_api_registry
+
+    reset_api_registry()  # clear singleton so next get loads from store env
+    # Force None singleton after reset leaves plain ApiRegistry — simulate cold start:
+    import windows_os_api.apps.api_registry.model as model
+
+    with model._REGISTRY_LOCK:
+        model._REGISTRY = None
+
+    reg = get_api_registry()
+    assert isinstance(reg, PersistentApiRegistry)
+    rec = reg.register(_base(name="Persist Probe", path="/v1/apps/example/persist-probe", capability="ex.persist"))
+    api_id = rec.id
+
+    # Simulate process restart: drop singleton, get again from store.
+    with model._REGISTRY_LOCK:
+        model._REGISTRY = None
+    reg2 = get_api_registry()
+    assert isinstance(reg2, PersistentApiRegistry)
+    assert reg2 is not reg
+    got = reg2.get(api_id)
+    assert got is not None
+    assert got.id == api_id
