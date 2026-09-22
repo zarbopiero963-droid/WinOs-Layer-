@@ -112,19 +112,21 @@ pytest tests/unit/test_fixture_isolation_n002.py -q
 
 Out of scope: harness prodotto installato (N003), farm matrix completa.
 
-## N003 — Harness del prodotto installato (preflight + hook fail-closed)
+## N003 — Harness del prodotto installato (download/install/client esterni)
 
-Contratto (#67 / H63-N003, famiglie Q00/Q01) — **scaffolding fail-closed**:
+Contratto (#67 / H63-N003, famiglie Q00/Q01) — **implementazione completa harness**:
 
 1. Porta destinazione occupata → blocco (`require_port_free`).
 2. `FakeBackend` / `backend==fake` rilevato → blocco.
 3. Checksum artifact assente o hash mismatch → blocco.
 4. API key di sessione **realmente generata** (`secrets.token_urlsafe`); chiavi
    statiche di suite/smoke rifiutate.
-5. `download_artifact`: solo path locale + checksum; URL http(s) → fail-closed.
-6. `install_artifact`: sempre fail-closed (install OS reale → #21).
-7. Stub client esterni tcp/mcp/ws/browser → `require_external_client` fail-closed;
-   `clients_implemented=()` (nessun false-success).
+5. `download_artifact`: path locale **oppure** HTTP(S) verificato (no-redirect,
+   checksum); ftp e hash errato → fail-closed.
+6. `install_artifact` + `teardown_install`: layout isolato Windows/Linux sotto
+   `install_root` (binary + VERSION + helper installer); systemd/Inno nativi → #21.
+7. Client esterni reali tcp/mcp/ws/browser (`clients_implemented` popolato);
+   non è Starlette TestClient in-process.
 
 Helpers: `tests/harness/installed_product_preflight.py`.
 
@@ -132,8 +134,8 @@ Helpers: `tests/harness/installed_product_preflight.py`.
 pytest tests/unit/test_installed_product_preflight_n003.py -q
 ```
 
-**Non** certifica download/install Windows+Linux su prodotto reale (#21), né
-MANUAL_ONLY desktop/hardware come PASS. Quelli restano aperti / NEEDS_MANUAL.
+**Non** certifica da solo il dossier #21 H63-N003 su artifact scaricato da release
+CDN con systemd/Inno, né MANUAL_ONLY desktop/hardware come PASS.
 
 Out of scope: altri lotti, segreti reali, bypass gate, farm matrix completa.
 
